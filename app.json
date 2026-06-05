@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "Captured",
-    "slug": "Captured",
+    "name": "Mems",
+    "slug": "Mems",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "captured",
+    "scheme": "mems",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"
@@ -34,11 +34,20 @@
             "imageWidth": 76
           }
         }
-      ]
+      ],
+      "expo-web-browser",
+      "expo-secure-store",
+      "expo-image"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "9fcd1584-0eec-41e3-b2af-6438952999fe"
+      }
     }
   }
 }
