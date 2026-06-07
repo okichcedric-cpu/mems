@@ -496,57 +496,50 @@ export default function CollectionsPage() {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        {/* Left — logo + collection count */}
+        {/* Left actions */}
         <View style={styles.headerLeft}>
+          <TouchableOpacity
+            style={styles.iconButton}
+            onPress={() => router.replace("/")}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="home-outline" size={22} color="#111" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.iconButton}
+            onPress={() => router.push("/subscription")}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons
+              name={subscriptionStatus?.isSubscribed ? "star" : "star-outline"}
+              size={22}
+              color={subscriptionStatus?.isSubscribed ? "#4AE8A0" : "#111"}
+            />
+          </TouchableOpacity>
+        </View>
+
+        {/* Centered logo */}
+        <TouchableOpacity
+          style={styles.headerCenter}
+          onPress={() => router.replace("/")}
+        >
           <RNImage
             source={require("@/assets/images/icon.png")}
             style={styles.headerLogo}
             resizeMode="contain"
           />
-          <View style={styles.headerMeta}>
-            <Text style={styles.subtitle} numberOfLines={1}>
-              {collections.length} collection
-              {collections.length !== 1 ? "s" : ""}
-            </Text>
-            {subscriptionStatus?.isSubscribed &&
-              subscriptionStatus.expiresAt && (
-                <Text style={styles.subscriptionBadge} numberOfLines={1}>
-                  Pro · renews{" "}
-                  {new Date(subscriptionStatus.expiresAt).toLocaleDateString(
-                    "en-KE",
-                    {
-                      day: "numeric",
-                      month: "short",
-                      year: "numeric",
-                    },
-                  )}
-                </Text>
-              )}
-          </View>
-        </View>
+        </TouchableOpacity>
 
-        {/* Right — action buttons */}
-        {/* Right — action buttons */}
-        <View style={styles.headerActions}>
-          {/* + New button — icon on mobile, text on web */}
+        {/* Right actions */}
+        <View style={styles.headerRight}>
           <TouchableOpacity
-            style={styles.newButton}
+            style={styles.iconButton}
             onPress={() => setShowNewCollection(true)}
           >
-            {Platform.OS === "web" ? (
-              <Text style={styles.newButtonText}>+ New</Text>
-            ) : (
-              <Ionicons name="add" size={22} color="#fff" />
-            )}
+            <Ionicons name="add-circle-outline" size={24} color="#111" />
           </TouchableOpacity>
-
-          {/* Sign Out button — icon on mobile, text on web */}
-          <TouchableOpacity style={styles.signOutButton} onPress={signOut}>
-            {Platform.OS === "web" ? (
-              <Text style={styles.signOutText}>Sign Out</Text>
-            ) : (
-              <Ionicons name="log-out-outline" size={20} color="#666" />
-            )}
+          <TouchableOpacity style={styles.iconButton} onPress={signOut}>
+            <Ionicons name="log-out-outline" size={22} color="#111" />
           </TouchableOpacity>
         </View>
       </View>
@@ -680,7 +673,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingTop: Platform.OS === "web" ? 16 : 56,
     paddingBottom: 12,
     backgroundColor: "#fff",
@@ -688,58 +681,74 @@ const styles = StyleSheet.create({
     borderBottomColor: "#eee",
     minHeight: Platform.OS === "web" ? 64 : 100,
   },
-  headerLogo: {
-    height: Platform.OS === "web" ? 36 : SCREEN_WIDTH * 0.1,
-    width: Platform.OS === "web" ? 36 : SCREEN_WIDTH * 0.1,
-    resizeMode: "contain",
-    flexShrink: 0,
-  },
-  headerMeta: {
-    flex: 1,
-    minWidth: 0,
-  },
   headerLeft: {
-    flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: Platform.OS === "web" ? 8 : 8,
-    minWidth: 0,
-    marginRight: 8,
+    gap: 4,
+    flex: 1,
+  },
+  headerCenter: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  headerLogo: {
+    height: Platform.OS === "web" ? 40 : SCREEN_WIDTH * 0.12,
+    width: Platform.OS === "web" ? 40 : SCREEN_WIDTH * 0.12,
+    resizeMode: "contain",
+  },
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
   },
   subtitle: {
-    fontSize: Platform.OS === "web" ? 12 : Math.min(12, SCREEN_WIDTH * 0.031),
+    fontSize: Math.min(12, SCREEN_WIDTH * 0.031),
     color: "#999",
+    marginTop: 2,
+  },
+  subscriptionBadge: {
+    fontSize: 10,
+    color: "#4AE8A0",
+    fontWeight: "600",
+    marginTop: 2,
+  },
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   newButton: {
     backgroundColor: "#111",
-    paddingHorizontal: Platform.OS === "web" ? 14 : 0,
-    paddingVertical: Platform.OS === "web" ? 8 : 0,
-    width: Platform.OS === "web" ? undefined : 36,
-    height: Platform.OS === "web" ? undefined : 36,
-    borderRadius: Platform.OS === "web" ? 20 : 18,
-    alignItems: "center",
-    justifyContent: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
   },
   newButtonText: {
     color: "#fff",
     fontWeight: "600",
-    fontSize: 13,
+    fontSize: Math.min(13, SCREEN_WIDTH * 0.034),
   },
   signOutButton: {
-    paddingHorizontal: Platform.OS === "web" ? 12 : 0,
-    paddingVertical: Platform.OS === "web" ? 8 : 0,
-    width: Platform.OS === "web" ? undefined : 36,
-    height: Platform.OS === "web" ? undefined : 36,
-    borderRadius: Platform.OS === "web" ? 20 : 18,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: "#ddd",
-    alignItems: "center",
-    justifyContent: "center",
   },
   signOutText: {
-    fontSize: 13,
+    fontSize: Math.min(13, SCREEN_WIDTH * 0.034),
     color: "#666",
   },
+
   // ── Grid ─────────────────────────────────────────────────
   grid: {
     padding: 16,
