@@ -12,8 +12,8 @@ export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
 
+  // Handle deep links for mobile subscription callback
   useEffect(() => {
-    // Handle deep links for mobile subscription callback
     if (Platform.OS !== "web") {
       const subscription = Linking.addEventListener("url", ({ url }) => {
         if (url.includes("subscription-callback")) {
@@ -24,17 +24,18 @@ export default function RootLayout() {
     }
   }, []);
 
+  // Inject global CSS on web
   useEffect(() => {
-    // Inject CSS for web to disable image dragging
     if (Platform.OS === "web") {
       const style = document.createElement("style");
       style.textContent = `
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 0; }
         img {
           -webkit-user-drag: none;
           user-drag: none;
           user-select: none;
           -webkit-user-select: none;
-          pointer-events: none;
         }
       `;
       document.head.appendChild(style);
@@ -44,12 +45,15 @@ export default function RootLayout() {
     }
   }, []);
 
+  // Listen for auth state changes
   useEffect(() => {
+    // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setLoading(false);
     });
 
+    // Listen for login/logout events
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -60,21 +64,38 @@ export default function RootLayout() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Handle routing based on session
   useEffect(() => {
     if (loading) return;
-    if (segments.length === 0) return;
+
     const inAuthGroup = segments[0] === "login";
-    if (!session && !inAuthGroup) router.replace("/login");
-    if (session && inAuthGroup) router.replace("/");
+    const inPublicGroup =
+      segments[0] === "terms" ||
+      segments[0] === "privacy" ||
+      segments[0] === "subscription-callback";
+
+    if (!session && !inAuthGroup && !inPublicGroup) {
+      // Not logged in and not on a public page — go to login
+      router.replace("/login");
+    } else if (session && inAuthGroup) {
+      // Logged in but on login page — go to home
+      router.replace("/");
+    }
   }, [session, segments, loading]);
 
+  // Show spinner while checking session
   if (loading) {
     return (
       <GestureHandlerRootView style={{ flex: 1 }}>
         <View
-          style={{ flex: 1, justifyContent: "center", alignItems: "center" }}
+          style={{
+            flex: 1,
+            justifyContent: "center",
+            alignItems: "center",
+            backgroundColor: "#fff",
+          }}
         >
-          <ActivityIndicator size="large" color="#000" />
+          <ActivityIndicator size="large" color="#111" />
         </View>
       </GestureHandlerRootView>
     );
