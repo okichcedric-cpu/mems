@@ -25,14 +25,14 @@ serve(async (req) => {
       );
     }
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    );
-
     const supabaseAuth = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_ANON_KEY")!,
+    );
+
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
     const { data: { user } } = await supabaseAuth.auth.getUser(
@@ -52,17 +52,33 @@ serve(async (req) => {
       .eq("user_id", user.id)
       .maybeSingle();
 
-    const isSubscribed = subscription?.status === "active" &&
-      subscription?.current_period_end &&
+    // Active and cancelled subscriptions both grant access until period ends
+    const isSubscribed =
+      (subscription?.status === "active" ||
+        subscription?.status === "cancelled") &&
+      subscription?.current_period_end !== null &&
       new Date(subscription.current_period_end) > new Date();
 
+    const wasSubscribed =
+      !!subscription && subscription.status !== "free";
+
     return new Response(
-  JSON.stringify({
-    isSubscribed: !!isSubscribed,
-    plan: subscription?.plan ?? "free",
-    expiresAt: subscription?.current_period_end ?? null,
-    wasSubscribed: !!subscription && subscription.status !== 'free',
-    limits: isSubscribed ? null : FREE_LIMITS,
-  }),
-  { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-);
+      JSON.stringify({
+        isSubscribed: !!isSubscribed,
+        plan: subscription?.plan ?? "free",
+        expiresAt: subscription?.current_period_end ?? null,
+        wasSubscribed,
+        limits: isSubscribed ? null : FREE_LIMITS,
+      }),
+      {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
+  } catch (error) {
+    return new Response(
+      JSON.stringify({ isSubscribed: false, limits: FREE_LIMITS }),
+      { status: 200, headers: corsHeaders }
+    );
+  }
+});

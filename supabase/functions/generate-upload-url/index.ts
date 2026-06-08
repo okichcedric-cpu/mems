@@ -41,13 +41,32 @@ serve(async (req) => {
 
     const { key, contentType, width, height } = await req.json();
 
-    // Security check — user can only upload to their own folder
-    if (!key.startsWith(`${user.id}/`)) {
-      return new Response(
-        JSON.stringify({ error: "Forbidden — invalid key path" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    // Allow if owner OR if collection is shared with this user
+const isOwner = key.startsWith(`${user.id}/`);
+let hasAccess = isOwner;
+
+if (!isOwner) {
+  const ownerId = key.split('/')[0];
+  const collectionName = key.split('/')[1];
+  const userEmail = user.email ?? '';
+
+  const { data: share } = await supabase
+    .from('shared_collections')
+    .select('id')
+    .eq('owner_id', ownerId)
+    .eq('collection_name', collectionName)
+    .or(`recipient_email.eq.${userEmail},recipient_email.eq.${userEmail.toLowerCase()}`)
+    .maybeSingle();
+
+  hasAccess = !!share;
+}
+
+if (!hasAccess) {
+  return new Response(
+    JSON.stringify({ error: "Forbidden" }),
+    { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
 
     const s3 = new S3Client({
       region: Deno.env.get("AWS_REGION")!,

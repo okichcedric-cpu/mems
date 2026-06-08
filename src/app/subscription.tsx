@@ -1,3 +1,4 @@
+import { supabase } from "@/utils/supabase";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
@@ -21,6 +22,7 @@ export default function SubscriptionPage() {
   const router = useRouter();
   const [status, setStatus] = useState<SubscriptionStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [cancelling, setCancelling] = useState(false);
   const [subscribing, setSubscribing] = useState<"monthly" | "yearly" | null>(
     null,
   );
@@ -55,6 +57,57 @@ export default function SubscriptionPage() {
       }
     } finally {
       setSubscribing(null);
+    }
+  }
+
+  // Add cancel function
+  async function handleCancel() {
+    const confirmed =
+      Platform.OS === "web"
+        ? window.confirm(
+            "Are you sure you want to cancel? You will keep access until your current period ends.",
+          )
+        : await new Promise<boolean>((resolve) => {
+            Alert.alert(
+              "Cancel Subscription",
+              "Are you sure? You will keep access until your current period ends.",
+              [
+                {
+                  text: "Keep Subscription",
+                  style: "cancel",
+                  onPress: () => resolve(false),
+                },
+                {
+                  text: "Cancel",
+                  style: "destructive",
+                  onPress: () => resolve(true),
+                },
+              ],
+            );
+          });
+
+    if (!confirmed) return;
+
+    setCancelling(true);
+    try {
+      const { error } = await supabase.functions.invoke("cancel-subscription");
+      if (error) throw new Error(error.message);
+      const updated = await checkSubscription();
+      setStatus(updated);
+      if (Platform.OS === "web") {
+        window.alert(
+          "Subscription cancelled. You have access until your period ends.",
+        );
+      } else {
+        Alert.alert(
+          "Cancelled",
+          "Your subscription has been cancelled. You keep access until your period ends.",
+        );
+      }
+    } catch (error: any) {
+      Alert.alert("Error", error.message);
+    } finally {
+      setCancelling(false);
     }
   }
 
@@ -196,7 +249,7 @@ export default function SubscriptionPage() {
                         <Text style={styles.planName}>Monthly</Text>
                         <Text style={styles.planDesc}>Billed every month</Text>
                       </View>
-                      <Text style={styles.planPrice}>KES 500</Text>
+                      <Text style={styles.planPrice}>KES 130</Text>
                     </>
                   )}
                 </TouchableOpacity>
@@ -208,7 +261,7 @@ export default function SubscriptionPage() {
                   disabled={!!subscribing}
                 >
                   <View style={styles.saveBadge}>
-                    <Text style={styles.saveBadgeText}>Save 17%</Text>
+                    <Text style={styles.saveBadgeText}>Save 14%</Text>
                   </View>
                   {subscribing === "yearly" ? (
                     <ActivityIndicator color="#fff" />
@@ -228,7 +281,7 @@ export default function SubscriptionPage() {
                         </Text>
                       </View>
                       <Text style={[styles.planPrice, { color: "#fff" }]}>
-                        KES 5,000
+                        KES 1,350
                       </Text>
                     </>
                   )}
@@ -236,9 +289,27 @@ export default function SubscriptionPage() {
               </View>
             )}
 
+            {status?.isSubscribed &&
+              status.plan !== "free" &&
+              status.expiresAt && (
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={handleCancel}
+                  disabled={cancelling}
+                >
+                  {cancelling ? (
+                    <ActivityIndicator size="small" color="#ff4444" />
+                  ) : (
+                    <Text style={styles.cancelButtonText}>
+                      Cancel subscription
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              )}
+
             {/* Footer note */}
             <Text style={styles.footerNote}>
-              Payments are processed securely by Pesapal.{"\n"}
+              Payments are processed securely.{"\n"}
               Cancel anytime — access continues until period ends.
             </Text>
           </>
@@ -442,5 +513,15 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 18,
     marginTop: 8,
+  },
+  cancelButton: {
+    marginTop: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  cancelButtonText: {
+    fontSize: 13,
+    color: "#ff4444",
+    textDecorationLine: "underline",
   },
 });
