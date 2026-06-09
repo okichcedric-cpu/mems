@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import { Session } from "@supabase/supabase-js";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
@@ -6,10 +7,8 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Animated,
   Dimensions,
   Modal,
-  PanResponder,
   Platform,
   RefreshControl,
   ScrollView,
@@ -19,21 +18,16 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import PaywallModal from "../../components/PaywallModal";
-import {
-  deleteCollection,
-  deleteFromS3,
-  getPhotoMetadata,
-  getSignedPhotoUrl,
-  listPhotos,
-  uploadToS3,
-} from "../../utils/s3";
+import { deleteCollection, deleteFromS3, uploadToS3 } from "../../utils/s3";
 import {
   getCollectionShares,
   shareCollection,
   unshareCollection,
 } from "../../utils/sharing";
-import { checkSubscription } from "../../utils/subscription";
+import {
+  checkSubscription,
+  SubscriptionStatus,
+} from "../../utils/subscription";
 import { supabase } from "../../utils/supabase";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
@@ -43,6 +37,7 @@ const COLUMN_WIDTH = (SCREEN_WIDTH - 32) / 2;
 type Photo = {
   key: string;
   url: string;
+  thumbUrl?: string;
   width: number;
   height: number;
 };
@@ -66,19 +61,15 @@ export default function CollectionPage() {
   const [sharing, setSharing] = useState(false);
   const [sharedWith, setSharedWith] = useState<string[]>([]);
   const [effectiveOwnerId, setEffectiveOwnerId] = useState<string | null>(null);
-  const isOwner = session?.user?.id === (effectiveOwnerId ?? session?.user?.id);
   const [subscriptionStatus, setSubscriptionStatus] =
     useState<SubscriptionStatus | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
-  const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(
-    null,
-  );
-  const swipeX = new Animated.Value(0);
+
+  const isOwner = session?.user?.id === (effectiveOwnerId ?? session?.user?.id);
 
   const leftColumn = photos.filter((_, i) => i % 2 === 0);
   const rightColumn = photos.filter((_, i) => i % 2 !== 0);
 
-  // Deterministic colour per email
   function getAvatarColor(email: string): string {
     const colors = [
       "#E8704A",
@@ -105,10 +96,7 @@ export default function CollectionPage() {
         setEffectiveOwnerId(owner);
         fetchPhotos(session, owner);
         loadShares();
-        // In useEffect
-        checkSubscription().then((status) => {
-          setSubscriptionStatus(status);
-        });
+        checkSubscription().then(setSubscriptionStatus);
       } else {
         setLoading(false);
       }
@@ -116,38 +104,36 @@ export default function CollectionPage() {
   }, []);
 
   async function fetchPhotos(currentSession: Session, ownerId?: string) {
-    const isOwner =
-      session?.user?.id === (effectiveOwnerId ?? session?.user?.id);
+    const owner = ownerId ?? effectiveOwnerId ?? currentSession.user.id;
     try {
-      const objects = await listPhotos(owner, collectionName);
-      const validObjects = objects.filter(
-        (obj) => obj.Key && !obj.Key.includes("/thumbs/"),
+      const { data, error } = await supabase.functions.invoke("list-photos", {
+        body: {
+          userId: owner,
+          collectionName,
+          includeUrls: true,
+        },
+      });
+
+      if (error) throw new Error(error.message);
+
+      const photoList = (data?.photos || []).filter(
+        (p: any) => p.Key && !p.Key.includes("/thumbs/"),
       );
-      if (validObjects.length === 0) {
+
+      if (photoList.length === 0) {
         setPhotos([]);
         return;
       }
 
-      const photosWithUrls = await Promise.allSettled(
-        validObjects.map(async (obj) => {
-          const url = await getSignedPhotoUrl(obj.Key!);
-          let width = 1,
-            height = 1;
-          try {
-            const dimensions = await getPhotoMetadata(obj.Key!);
-            width = dimensions.width || 1;
-            height = dimensions.height || 1;
-          } catch {}
-          return { key: obj.Key!, url, width, height };
-        }),
+      setPhotos(
+        photoList.map((p: any) => ({
+          key: p.Key,
+          url: p.url,
+          thumbUrl: p.thumbUrl ?? p.url,
+          width: p.metadata?.width ?? 1,
+          height: p.metadata?.height ?? 1,
+        })),
       );
-
-      const successful = photosWithUrls
-        .filter(
-          (r): r is PromiseFulfilledResult<Photo> => r.status === "fulfilled",
-        )
-        .map((r) => r.value);
-      setPhotos(successful);
     } catch (error: any) {
       Alert.alert("Error", error.message);
     } finally {
@@ -161,41 +147,6 @@ export default function CollectionPage() {
     if (session) fetchPhotos(session);
   }, [session]);
 
-  // Helper to open photo at index
-  function openPhoto(index: number) {
-    setSelectedPhotoIndex(index);
-  }
-
-  // Navigate to next/previous photo
-  function goToNext() {
-    if (selectedPhotoIndex === null) return;
-    const next = selectedPhotoIndex + 1;
-    if (next < photos.length) setSelectedPhotoIndex(next);
-  }
-
-  function goToPrev() {
-    if (selectedPhotoIndex === null) return;
-    const prev = selectedPhotoIndex - 1;
-    if (prev >= 0) setSelectedPhotoIndex(prev);
-  }
-
-  // Swipe handler for mobile
-  const panResponder = PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dx) > 10,
-    onPanResponderMove: (_, gs) => {
-      swipeX.setValue(gs.dx);
-    },
-    onPanResponderRelease: (_, gs) => {
-      if (gs.dx < -80) {
-        goToNext();
-      } else if (gs.dx > 80) {
-        goToPrev();
-      }
-      Animated.spring(swipeX, { toValue: 0, useNativeDriver: true }).start();
-    },
-  });
-
   async function uploadPhoto() {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
@@ -206,7 +157,6 @@ export default function CollectionPage() {
       return;
     }
 
-    // Check photo limit
     let subStatus = subscriptionStatus;
     if (!subStatus) {
       subStatus = await checkSubscription();
@@ -229,7 +179,6 @@ export default function CollectionPage() {
     if (result.canceled || !session) return;
     setUploading(true);
     try {
-      // Use effectiveOwnerId so photos go into the owner's folder
       const uploadOwnerId = effectiveOwnerId ?? session.user.id;
       await Promise.all(
         result.assets.map(async (asset) => {
@@ -366,7 +315,6 @@ export default function CollectionPage() {
       setShareEmail("");
       setShowShareModal(false);
       await loadShares();
-
       setTimeout(() => {
         if (Platform.OS === "web") {
           window.alert(`Collection shared with ${email} ✓`);
@@ -424,27 +372,17 @@ export default function CollectionPage() {
       <TouchableOpacity
         key={item.key}
         style={[styles.photoContainer, { height }]}
-        onPress={() => openPhoto(photos.indexOf(item))}
+        onPress={() => setSelectedPhoto(item)}
         activeOpacity={0.85}
       >
         <View style={styles.photoPlaceholder} />
         <Image
-          source={{ uri: item.url }}
+          source={{ uri: item.thumbUrl ?? item.url }}
           style={[styles.photo, StyleSheet.absoluteFill]}
-          contentFit="contain"
+          contentFit="cover"
           cachePolicy="memory-disk"
           recyclingKey={item.key}
-          transition={{ duration: 300, effect: "cross-dissolve" }}
-          onLoad={(e) => {
-            if (!hasDimensions) {
-              const { width, height } = e.source;
-              setPhotos((prev) =>
-                prev.map((p) =>
-                  p.key === item.key ? { ...p, width, height } : p,
-                ),
-              );
-            }
-          }}
+          transition={{ duration: 200, effect: "cross-dissolve" }}
         />
       </TouchableOpacity>
     );
@@ -454,13 +392,25 @@ export default function CollectionPage() {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backButton}
-        >
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
+        {/* Left — back + home */}
+        <View style={styles.headerLeft}>
+          <TouchableOpacity
+            style={styles.iconButton}
+            onPress={() => router.back()}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="arrow-back" size={22} color="#111" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.iconButton}
+            onPress={() => router.replace("/")}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="home-outline" size={22} color="#111" />
+          </TouchableOpacity>
+        </View>
 
+        {/* Center — collection name + photo count */}
         <View style={styles.headerCenter}>
           <Text style={styles.title} numberOfLines={1}>
             {collectionName}
@@ -470,10 +420,26 @@ export default function CollectionPage() {
           </Text>
         </View>
 
+        {/* Right — upload (all users) + share + delete (owner only) */}
         <View style={styles.headerRight}>
+          {/* Upload — owner AND shared recipients */}
+          <TouchableOpacity
+            style={styles.iconButton}
+            onPress={uploadPhoto}
+            disabled={uploading}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            {uploading ? (
+              <ActivityIndicator color="#111" size="small" />
+            ) : (
+              <Ionicons name="add-circle-outline" size={24} color="#111" />
+            )}
+          </TouchableOpacity>
+
+          {/* Share — owner only */}
           {isOwner && (
             <TouchableOpacity
-              style={styles.shareButton}
+              style={styles.shareTextButton}
               onPress={() => {
                 loadShares();
                 setShowShareModal(true);
@@ -498,63 +464,24 @@ export default function CollectionPage() {
                   )}
                 </View>
               ) : (
-                <Text style={styles.shareButtonText}>Share</Text>
+                <Text style={styles.shareTextButtonLabel}>Share</Text>
               )}
             </TouchableOpacity>
           )}
 
-          {/* Upload button — visible to owner AND shared recipients */}
-          <TouchableOpacity
-            style={styles.uploadButton}
-            onPress={uploadPhoto}
-            disabled={uploading}
-          >
-            {uploading ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <Text style={styles.uploadButtonText}>+ Add</Text>
-            )}
-          </TouchableOpacity>
-
-          {/* Share and delete — owner only */}
+          {/* Delete collection — owner only */}
           {isOwner && (
-            <>
-              <TouchableOpacity
-                style={styles.shareButton}
-                onPress={() => {
-                  loadShares();
-                  setShowShareModal(true);
-                }}
-              >
-                {sharedWith.length > 0 ? (
-                  <View style={styles.shareButtonWithAvatars}>
-                    <View
-                      style={[
-                        styles.shareButtonAvatar,
-                        { backgroundColor: getAvatarColor(sharedWith[0]) },
-                      ]}
-                    >
-                      <Text style={styles.shareButtonAvatarLetter}>
-                        {sharedWith[0][0].toUpperCase()}
-                      </Text>
-                    </View>
-                    {sharedWith.length > 1 && (
-                      <Text style={styles.shareButtonCount}>
-                        +{sharedWith.length - 1}
-                      </Text>
-                    )}
-                  </View>
-                ) : (
-                  <Text style={styles.shareButtonText}>Share</Text>
-                )}
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.deleteCollectionButton}
-                onPress={handleDeleteCollection}
-              >
-                <Text style={styles.deleteCollectionText}>🗑</Text>
-              </TouchableOpacity>
-            </>
+            <TouchableOpacity
+              style={styles.iconButton}
+              onPress={handleDeleteCollection}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons
+                name="trash-outline"
+                size={22}
+                color="rgba(255,60,60,0.8)"
+              />
+            </TouchableOpacity>
           )}
         </View>
       </View>
@@ -637,96 +564,33 @@ export default function CollectionPage() {
       )}
 
       {/* Full Screen Photo Viewer */}
-      {/* Full Screen Photo Viewer */}
       <Modal
-        visible={selectedPhotoIndex !== null}
+        visible={!!selectedPhoto}
         transparent
         animationType="fade"
         statusBarTranslucent
       >
         <View style={styles.modalBackdrop}>
-          {/* Close button */}
           <TouchableOpacity
             style={styles.modalClose}
-            onPress={() => setSelectedPhotoIndex(null)}
+            onPress={() => setSelectedPhoto(null)}
             hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
           >
             <Text style={styles.modalCloseText}>✕</Text>
           </TouchableOpacity>
-
-          {/* Photo counter */}
-          {selectedPhotoIndex !== null && (
-            <Text style={styles.photoCounter}>
-              {selectedPhotoIndex + 1} / {photos.length}
-            </Text>
-          )}
-
-          {/* Image with swipe on mobile */}
-          {selectedPhotoIndex !== null &&
-            (Platform.OS === "web" ? (
-              // Web — show arrows
-              <View style={styles.webViewerRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.arrowButton,
-                    selectedPhotoIndex === 0 && styles.arrowButtonDisabled,
-                  ]}
-                  onPress={goToPrev}
-                  disabled={selectedPhotoIndex === 0}
-                >
-                  <Text style={styles.arrowText}>‹</Text>
-                </TouchableOpacity>
-
-                <View style={styles.modalCard}>
-                  <Image
-                    source={{ uri: photos[selectedPhotoIndex].url }}
-                    style={styles.modalImage}
-                    contentFit="contain"
-                  />
-                </View>
-
-                <TouchableOpacity
-                  style={[
-                    styles.arrowButton,
-                    selectedPhotoIndex === photos.length - 1 &&
-                      styles.arrowButtonDisabled,
-                  ]}
-                  onPress={goToNext}
-                  disabled={selectedPhotoIndex === photos.length - 1}
-                >
-                  <Text style={styles.arrowText}>›</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              // Mobile — swipe gesture
-              <Animated.View
-                style={[
-                  styles.modalCard,
-                  { transform: [{ translateX: swipeX }] },
-                ]}
-                {...panResponder.panHandlers}
-              >
-                <Image
-                  source={{ uri: photos[selectedPhotoIndex].url }}
-                  style={styles.modalImage}
-                  contentFit="contain"
-                />
-              </Animated.View>
-            ))}
-
-          {/* Swipe hint on mobile */}
-          {Platform.OS !== "web" && photos.length > 1 && (
-            <Text style={styles.swipeHint}>← swipe to navigate →</Text>
-          )}
-
-          {/* Delete button — owner only */}
-          {isOwner && selectedPhotoIndex !== null && (
+          <View style={styles.modalCard}>
+            {selectedPhoto && (
+              <Image
+                source={{ uri: selectedPhoto.url }}
+                style={styles.modalImage}
+                contentFit="contain"
+              />
+            )}
+          </View>
+          {isOwner && selectedPhoto && (
             <TouchableOpacity
               style={styles.deleteButton}
-              onPress={() => {
-                const photo = photos[selectedPhotoIndex];
-                if (photo) deletePhoto(photo);
-              }}
+              onPress={() => deletePhoto(selectedPhoto)}
             >
               <Text style={styles.deleteButtonText}>🗑 Delete Photo</Text>
             </TouchableOpacity>
@@ -817,16 +681,6 @@ export default function CollectionPage() {
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
-      {/* Paywall Modal ← ADD HERE */}
-      <PaywallModal
-        visible={showPaywall}
-        reason="photos"
-        onClose={() => setShowPaywall(false)}
-        onSubscribed={async () => {
-          const status = await checkSubscription();
-          setSubscriptionStatus(status);
-        }}
-      />
     </View>
   );
 }
@@ -839,42 +693,44 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingTop: 56,
-    paddingBottom: 16,
+    paddingHorizontal: 12,
+    paddingTop: Platform.OS === "web" ? 16 : 56,
+    paddingBottom: 12,
     backgroundColor: "#fff",
     borderBottomWidth: 1,
     borderBottomColor: "#eee",
+    minHeight: Platform.OS === "web" ? 64 : 100,
   },
-  backButton: { paddingRight: 8 },
-  backText: { fontSize: 15, color: "#111", fontWeight: "500" },
-  headerCenter: { flex: 1, alignItems: "center" },
-  title: { fontSize: 18, fontWeight: "700", color: "#111" },
-  subtitle: { fontSize: 12, color: "#999", marginTop: 2 },
-  headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
-  uploadButton: {
-    backgroundColor: "#111",
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
+  headerLeft: {
+    flexDirection: "row",
     alignItems: "center",
+    gap: 4,
+    flex: 1,
   },
-  uploadButtonText: { color: "#fff", fontWeight: "600", fontSize: 13 },
-  deleteCollectionButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "rgba(255,60,60,0.12)",
+  headerCenter: {
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "rgba(255,60,60,0.3)",
   },
-  deleteCollectionText: { fontSize: 16 },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  title: { fontSize: 15, fontWeight: "700", color: "#111" },
+  subtitle: { fontSize: 11, color: "#999", marginTop: 2 },
 
   // ── Share button ─────────────────────────────────────────
-  shareButton: {
-    paddingHorizontal: 12,
+  shareTextButton: {
+    paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1,
@@ -882,7 +738,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  shareButtonText: { fontSize: 13, color: "#111", fontWeight: "600" },
+  shareTextButtonLabel: {
+    fontSize: 13,
+    color: "#111",
+    fontWeight: "600",
+  },
   shareButtonWithAvatars: {
     flexDirection: "row",
     alignItems: "center",
@@ -1069,44 +929,35 @@ const styles = StyleSheet.create({
     color: "rgba(220,40,40,0.9)",
     fontWeight: "600",
   },
-  webViewerRow: {
-    flexDirection: "row",
+
+  // ── Unused legacy styles kept for safety ─────────────────
+  uploadButton: {
+    backgroundColor: "#111",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
     alignItems: "center",
-    gap: 12,
-    width: "100%",
+  },
+  uploadButtonText: { color: "#fff", fontWeight: "600", fontSize: 13 },
+  deleteCollectionButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,60,60,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,60,60,0.3)",
+  },
+  deleteCollectionText: { fontSize: 16 },
+  shareButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#111",
+    alignItems: "center",
     justifyContent: "center",
   },
-  arrowButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  arrowButtonDisabled: {
-    opacity: 0.2,
-  },
-  arrowText: {
-    color: "#fff",
-    fontSize: 32,
-    fontWeight: "300",
-    lineHeight: 36,
-  },
-  photoCounter: {
-    position: "absolute",
-    top: 56,
-    left: 0,
-    right: 0,
-    textAlign: "center",
-    color: "rgba(255,255,255,0.7)",
-    fontSize: 13,
-    fontWeight: "500",
-  },
-  swipeHint: {
-    marginTop: 12,
-    color: "rgba(255,255,255,0.4)",
-    fontSize: 12,
-    textAlign: "center",
-  },
+  shareButtonText: { fontSize: 13, color: "#111", fontWeight: "600" },
 });

@@ -21,13 +21,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import {
-  deleteCollection,
-  getCollectionPreviewUrls,
-  listCollections,
-  listPhotos,
-  uploadToS3,
-} from "../utils/s3";
+import { deleteCollection, listCollections, uploadToS3 } from "../utils/s3";
 import { getSharedCollections } from "../utils/sharing";
 import { checkSubscription, SubscriptionStatus } from "../utils/subscription";
 import { supabase } from "../utils/supabase";
@@ -97,29 +91,49 @@ export default function CollectionsPage() {
 
   async function fetchCollections(currentSession: Session) {
     try {
-      // Step 1 — fetch owned collections
-      let ownedCollections: Collection[] = [];
+      // Step 1 — get collection names
       const names = await listCollections(currentSession.user.id);
+
+      // Step 2 — fetch all owned collections in parallel
+      // Each collection makes ONE call with includeUrls:true
+      // instead of two separate calls
+      let ownedCollections: Collection[] = [];
 
       if (names.length > 0) {
         const ownedData = await Promise.allSettled(
           names.map(async (name: string) => {
-            const [previewUrls, photos] = await Promise.all([
-              getCollectionPreviewUrls(currentSession.user.id, name),
-              listPhotos(currentSession.user.id, name),
-            ]);
-            const realPhotos = photos.filter(
+            const { data, error } = await supabase.functions.invoke(
+              "list-photos",
+              {
+                body: {
+                  userId: currentSession.user.id,
+                  collectionName: name,
+                  includeUrls: true,
+                },
+              },
+            );
+            if (error) throw new Error(error.message);
+
+            const allPhotos = (data?.photos || []).filter(
               (p: any) => p.Key && !p.Key.includes("/thumbs/"),
             );
+
+            // First 3 thumbnail URLs for the collage
+            const previewUrls = allPhotos
+              .slice(0, 3)
+              .map((p: any) => p.thumbUrl ?? p.url)
+              .filter(Boolean);
+
             return {
               name,
               previewUrls,
-              photoCount: realPhotos.length,
+              photoCount: allPhotos.length,
               ownerId: currentSession.user.id,
               isShared: false,
             };
           }),
         );
+
         ownedCollections = ownedData
           .filter(
             (r): r is PromiseFulfilledResult<Collection> =>
@@ -128,45 +142,73 @@ export default function CollectionsPage() {
           .map((r) => r.value);
       }
 
-      // Step 2 — fetch shared collections completely separately
+      // Show owned collections immediately while shared loads
+      setCollections(ownedCollections);
+      setLoading(false);
+
+      // Step 3 — fetch shared collections in parallel (not sequential)
       let sharedCollections: Collection[] = [];
-      const userEmail = currentSession.user.email ?? "";
-      const shared = await getSharedCollections(userEmail);
+      try {
+        const userEmail = currentSession.user.email ?? "";
+        const shared = await getSharedCollections(userEmail);
 
-      for (const { ownerId, ownerEmail, collectionName } of shared) {
-        try {
-          const photos = await listPhotos(ownerId, collectionName);
-          const realPhotos = photos.filter(
-            (p: any) => p.Key && !p.Key.includes("/thumbs/"),
+        if (shared.length > 0) {
+          const sharedData = await Promise.allSettled(
+            shared.map(async ({ ownerId, ownerEmail, collectionName }) => {
+              const { data, error } = await supabase.functions.invoke(
+                "list-photos",
+                {
+                  body: {
+                    userId: ownerId,
+                    collectionName,
+                    includeUrls: true,
+                  },
+                },
+              );
+              if (error) throw new Error(error.message);
+
+              const allPhotos = (data?.photos || []).filter(
+                (p: any) => p.Key && !p.Key.includes("/thumbs/"),
+              );
+
+              // Skip empty collections — owner likely deleted them
+              if (allPhotos.length === 0) {
+                await supabase
+                  .from("shared_collections")
+                  .delete()
+                  .eq("owner_id", ownerId)
+                  .eq("collection_name", collectionName);
+                throw new Error("empty");
+              }
+
+              const previewUrls = allPhotos
+                .slice(0, 3)
+                .map((p: any) => p.thumbUrl ?? p.url)
+                .filter(Boolean);
+
+              return {
+                name: collectionName,
+                previewUrls,
+                photoCount: allPhotos.length,
+                ownerId,
+                ownerEmail,
+                isShared: true,
+              };
+            }),
           );
 
-          // Skip empty collections — owner likely deleted them
-          if (realPhotos.length === 0) {
-            await supabase
-              .from("shared_collections")
-              .delete()
-              .eq("owner_id", ownerId)
-              .eq("collection_name", collectionName);
-            continue;
-          }
-
-          const previewUrls = await getCollectionPreviewUrls(
-            ownerId,
-            collectionName,
-          );
-          sharedCollections.push({
-            name: collectionName,
-            previewUrls,
-            photoCount: realPhotos.length,
-            ownerId,
-            ownerEmail,
-            isShared: true,
-          });
-        } catch {
-          // Collection no longer accessible — skip it
+          sharedCollections = sharedData
+            .filter(
+              (r): r is PromiseFulfilledResult<Collection> =>
+                r.status === "fulfilled",
+            )
+            .map((r) => r.value);
         }
+      } catch {
+        // Shared collections failing never blocks owned ones
       }
 
+      // Update with both owned + shared
       setCollections([...ownedCollections, ...sharedCollections]);
     } catch (error: any) {
       Alert.alert("Error", error.message);

@@ -137,19 +137,19 @@ export async function getCollectionPreviewUrls(
   userId: string,
   collectionName: string,
 ): Promise<string[]> {
-  const photos = await listPhotos(userId, collectionName);
+  // Use includeUrls to get thumbnails in one call
+  const { data, error } = await supabase.functions.invoke('list-photos', {
+    body: { userId, collectionName, includeUrls: true },
+  });
+  if (error) return [];
 
-  const first3 = photos
-    .filter((obj: any) => obj.Key && !obj.Key.includes('/thumbs/'))
+  const photos = (data?.photos || [])
+    .filter((p: any) => p.Key && !p.Key.includes('/thumbs/'))
     .slice(0, 3);
 
-  const urls = await Promise.allSettled(
-    first3.map((obj: any) => getSignedThumbnailUrl(obj.Key!)),
-  );
-
-  return urls
-    .filter((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled')
-    .map((r) => r.value);
+  return photos
+    .map((p: any) => p.thumbUrl ?? p.url)
+    .filter(Boolean);
 }
 
 // ── Delete ────────────────────────────────────────────────────────────────────
