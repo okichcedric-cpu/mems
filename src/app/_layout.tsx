@@ -72,6 +72,7 @@ export default function RootLayout() {
     const inPublicGroup =
       segments[0] === "terms" ||
       segments[0] === "privacy" ||
+      segments[0] === "about" ||
       segments[0] === "subscription-callback";
 
     if (!session && !inAuthGroup && !inPublicGroup) {

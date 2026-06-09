@@ -24,7 +24,6 @@ WebBrowser.maybeCompleteAuthSession();
 const redirectTo = makeRedirectUri();
 const SCREEN_WIDTH = Dimensions.get("window").width;
 
-// On web cap the form width for aesthetics
 const FORM_WIDTH =
   Platform.OS === "web" ? Math.min(420, SCREEN_WIDTH * 0.9) : SCREEN_WIDTH - 48;
 
@@ -135,7 +134,7 @@ export default function LoginScreen() {
     }
   }
 
-  // Email confirmation screen after signup
+  // Email confirmation screen
   if (showConfirmation) {
     return (
       <View style={styles.container}>
@@ -174,7 +173,6 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* Card — centered on web, full width on mobile */}
         <View style={styles.card}>
           {/* Logo */}
           <View style={styles.logoContainer}>
@@ -184,6 +182,22 @@ export default function LoginScreen() {
               resizeMode="contain"
             />
           </View>
+
+          {/* Tagline — shown subtly below the logo */}
+          <Text style={styles.tagline}>
+            Your life's best moments,{"\n"}all in one place.
+          </Text>
+
+          {/* About link — subtle, doesn't disrupt flow */}
+          <TouchableOpacity
+            style={styles.aboutLink}
+            onPress={() => router.push("/about")}
+          >
+            <Text style={styles.aboutLinkText}>What is Mems? ›</Text>
+          </TouchableOpacity>
+
+          {/* Divider between hero and form */}
+          <View style={[styles.sectionDivider, { width: FORM_WIDTH }]} />
 
           {/* Mode toggle */}
           <View style={[styles.modeToggle, { width: FORM_WIDTH }]}>
@@ -224,7 +238,7 @@ export default function LoginScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Form */}
+          {/* Email/password form */}
           <View style={[styles.form, { width: FORM_WIDTH }]}>
             <TextInput
               style={styles.input}
@@ -296,7 +310,7 @@ export default function LoginScreen() {
             <Text style={styles.googleButtonText}>Continue with Google</Text>
           </TouchableOpacity>
 
-          {/* Footer */}
+          {/* Footer links */}
           <View style={[styles.footerContainer, { width: FORM_WIDTH }]}>
             <Text style={styles.footer}>By continuing you agree to our </Text>
             <TouchableOpacity onPress={() => router.push("/terms")}>
@@ -326,30 +340,57 @@ const styles = StyleSheet.create({
     paddingHorizontal: Platform.OS === "web" ? 24 : 0,
   },
 
-  // ── Card — elevated box on web, flat on mobile ─────────────
+  // ── Card ─────────────────────────────────────────────────
   card: {
     width: Platform.OS === "web" ? "auto" : "100%",
     backgroundColor: "#fff",
     borderRadius: Platform.OS === "web" ? 20 : 0,
     padding: Platform.OS === "web" ? 40 : 24,
     alignItems: "center",
-    // Web shadow
     ...Platform.select({
-      web: {
-        boxShadow: "0 4px 24px rgba(0,0,0,0.08)",
-      },
+      web: { boxShadow: "0 4px 24px rgba(0,0,0,0.08)" },
       default: {},
     }),
   },
 
-  // ── Logo ──────────────────────────────────────────────────
+  // ── Logo ─────────────────────────────────────────────────
   logoContainer: {
     alignItems: "center",
-    marginBottom: 28,
+    marginBottom: 12,
   },
   logo: {
     width: Platform.OS === "web" ? 80 : Math.min(100, SCREEN_WIDTH * 0.25),
     height: Platform.OS === "web" ? 80 : Math.min(100, SCREEN_WIDTH * 0.25),
+  },
+
+  // ── Tagline ───────────────────────────────────────────────
+  tagline: {
+    fontSize: Platform.OS === "web" ? 15 : 14,
+    color: "#888",
+    textAlign: "center",
+    lineHeight: 22,
+    fontStyle: "italic",
+    marginBottom: 8,
+    letterSpacing: 0.2,
+  },
+
+  // ── About link ────────────────────────────────────────────
+  aboutLink: {
+    marginBottom: 20,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  aboutLinkText: {
+    fontSize: 13,
+    color: "#4A90E8",
+    fontWeight: "500",
+  },
+
+  // ── Section divider ───────────────────────────────────────
+  sectionDivider: {
+    height: 1,
+    backgroundColor: "#f0f0f0",
+    marginBottom: 20,
   },
 
   // ── Mode toggle ───────────────────────────────────────────
@@ -449,9 +490,6 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 24,
   },
-  googleIcon: {
-    fontSize: 18,
-  },
   googleButtonText: {
     fontSize: 15,
     color: "#111",
@@ -459,22 +497,23 @@ const styles = StyleSheet.create({
   },
 
   // ── Footer ────────────────────────────────────────────────
-  footer: {
-    fontSize: 12,
-    color: "#999",
-    textAlign: "center",
-    lineHeight: 18,
-  },
-  footerLink: {
-    color: "#111",
-    fontWeight: "500",
-  },
   footerContainer: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "center",
     alignItems: "center",
     gap: 2,
+  },
+  footer: {
+    fontSize: 12,
+    color: "#999",
+    lineHeight: 18,
+  },
+  footerLink: {
+    fontSize: 12,
+    color: "#111",
+    fontWeight: "500",
+    lineHeight: 18,
   },
 
   // ── Confirmation ──────────────────────────────────────────

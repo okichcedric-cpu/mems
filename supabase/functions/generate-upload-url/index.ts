@@ -14,59 +14,71 @@ serve(async (req) => {
   }
 
   try {
-    // Verify the user is authenticated
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: corsHeaders,
+      });
     }
 
-    // Validate JWT with Supabase
-    const supabase = createClient(
+    // Verify user JWT
+    const supabaseAuth = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_ANON_KEY")!,
     );
-    const { data: { user }, error: authError } = await supabase.auth.getUser(
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser(
       authHeader.replace("Bearer ", "")
     );
-
     if (authError || !user) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: corsHeaders,
+      });
     }
 
     const { key, contentType, width, height } = await req.json();
 
+    if (!key) {
+      return new Response(JSON.stringify({ error: "Missing key" }), {
+        status: 400, headers: corsHeaders,
+      });
+    }
+
+    // Extract owner ID and collection name from key
+    const keyParts = key.split("/");
+    const ownerId = keyParts[0];
+    const collectionName = keyParts[1];
+
+    // Use service role to check share records without RLS interference
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+
     // Allow if owner OR if collection is shared with this user
-const isOwner = key.startsWith(`${user.id}/`);
-let hasAccess = isOwner;
+    const isOwner = ownerId === user.id;
+    let hasAccess = isOwner;
 
-if (!isOwner) {
-  const ownerId = key.split('/')[0];
-  const collectionName = key.split('/')[1];
-  const userEmail = user.email ?? '';
+    if (!isOwner) {
+      const userEmail = user.email ?? "";
+      const userEmailLower = userEmail.toLowerCase();
 
-  const { data: share } = await supabase
-    .from('shared_collections')
-    .select('id')
-    .eq('owner_id', ownerId)
-    .eq('collection_name', collectionName)
-    .or(`recipient_email.eq.${userEmail},recipient_email.eq.${userEmail.toLowerCase()}`)
-    .maybeSingle();
+      const { data: share } = await supabase
+        .from("shared_collections")
+        .select("id")
+        .eq("owner_id", ownerId)
+        .eq("collection_name", collectionName)
+        .or(`recipient_email.eq.${userEmail},recipient_email.eq.${userEmailLower}`)
+        .maybeSingle();
 
-  hasAccess = !!share;
-}
+      hasAccess = !!share;
+      console.log("Share check for upload:", userEmail, "on", collectionName, "->", hasAccess);
+    }
 
-if (!hasAccess) {
-  return new Response(
-    JSON.stringify({ error: "Forbidden" }),
-    { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-  );
-}
+    if (!hasAccess) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403, headers: corsHeaders,
+      });
+    }
 
     const s3 = new S3Client({
       region: Deno.env.get("AWS_REGION")!,
@@ -87,7 +99,7 @@ if (!hasAccess) {
           height: String(height ?? 1),
         },
       }),
-      { expiresIn: 300 } // 5 minutes to complete upload
+      { expiresIn: 300 }
     );
 
     return new Response(
@@ -95,10 +107,9 @@ if (!hasAccess) {
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("generate-upload-url error:", error);
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    console.error("generate-upload-url error:", error.message);
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500, headers: corsHeaders,
+    });
   }
 });
