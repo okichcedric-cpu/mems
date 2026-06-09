@@ -7,8 +7,10 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Dimensions,
   Modal,
+  PanResponder,
   Platform,
   RefreshControl,
   ScrollView,
@@ -55,7 +57,6 @@ export default function CollectionPage() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null);
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareEmail, setShareEmail] = useState("");
   const [sharing, setSharing] = useState(false);
@@ -64,7 +65,10 @@ export default function CollectionPage() {
   const [subscriptionStatus, setSubscriptionStatus] =
     useState<SubscriptionStatus | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
-
+  const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(
+    null,
+  );
+  const swipeX = new Animated.Value(0);
   const isOwner = session?.user?.id === (effectiveOwnerId ?? session?.user?.id);
 
   const leftColumn = photos.filter((_, i) => i % 2 === 0);
@@ -293,6 +297,41 @@ export default function CollectionPage() {
     }
   }
 
+  // Helper to open photo at index
+  function openPhoto(index: number) {
+    setSelectedPhotoIndex(index);
+  }
+
+  // Navigate to next/previous photo
+  function goToNext() {
+    if (selectedPhotoIndex === null) return;
+    const next = selectedPhotoIndex + 1;
+    if (next < photos.length) setSelectedPhotoIndex(next);
+  }
+
+  function goToPrev() {
+    if (selectedPhotoIndex === null) return;
+    const prev = selectedPhotoIndex - 1;
+    if (prev >= 0) setSelectedPhotoIndex(prev);
+  }
+
+  // Swipe handler for mobile
+  const panResponder = PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dx) > 10,
+    onPanResponderMove: (_, gs) => {
+      swipeX.setValue(gs.dx);
+    },
+    onPanResponderRelease: (_, gs) => {
+      if (gs.dx < -80) {
+        goToNext();
+      } else if (gs.dx > 80) {
+        goToPrev();
+      }
+      Animated.spring(swipeX, { toValue: 0, useNativeDriver: true }).start();
+    },
+  });
+
   async function handleShare() {
     if (!shareEmail.trim()) {
       if (Platform.OS === "web") {
@@ -372,7 +411,7 @@ export default function CollectionPage() {
       <TouchableOpacity
         key={item.key}
         style={[styles.photoContainer, { height }]}
-        onPress={() => setSelectedPhoto(item)}
+        onPress={() => openPhoto(photos.indexOf(item))}
         activeOpacity={0.85}
       >
         <View style={styles.photoPlaceholder} />
@@ -564,33 +603,96 @@ export default function CollectionPage() {
       )}
 
       {/* Full Screen Photo Viewer */}
+      {/* Full Screen Photo Viewer */}
       <Modal
-        visible={!!selectedPhoto}
+        visible={selectedPhotoIndex !== null}
         transparent
         animationType="fade"
         statusBarTranslucent
       >
         <View style={styles.modalBackdrop}>
+          {/* Close button */}
           <TouchableOpacity
             style={styles.modalClose}
-            onPress={() => setSelectedPhoto(null)}
+            onPress={() => setSelectedPhotoIndex(null)}
             hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
           >
             <Text style={styles.modalCloseText}>✕</Text>
           </TouchableOpacity>
-          <View style={styles.modalCard}>
-            {selectedPhoto && (
-              <Image
-                source={{ uri: selectedPhoto.url }}
-                style={styles.modalImage}
-                contentFit="contain"
-              />
-            )}
-          </View>
-          {isOwner && selectedPhoto && (
+
+          {/* Photo counter */}
+          {selectedPhotoIndex !== null && (
+            <Text style={styles.photoCounter}>
+              {selectedPhotoIndex + 1} / {photos.length}
+            </Text>
+          )}
+
+          {/* Image with swipe on mobile */}
+          {selectedPhotoIndex !== null &&
+            (Platform.OS === "web" ? (
+              // Web — show arrows
+              <View style={styles.webViewerRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.arrowButton,
+                    selectedPhotoIndex === 0 && styles.arrowButtonDisabled,
+                  ]}
+                  onPress={goToPrev}
+                  disabled={selectedPhotoIndex === 0}
+                >
+                  <Text style={styles.arrowText}>‹</Text>
+                </TouchableOpacity>
+
+                <View style={styles.modalCard}>
+                  <Image
+                    source={{ uri: photos[selectedPhotoIndex].url }}
+                    style={styles.modalImage}
+                    contentFit="contain"
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={[
+                    styles.arrowButton,
+                    selectedPhotoIndex === photos.length - 1 &&
+                      styles.arrowButtonDisabled,
+                  ]}
+                  onPress={goToNext}
+                  disabled={selectedPhotoIndex === photos.length - 1}
+                >
+                  <Text style={styles.arrowText}>›</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              // Mobile — swipe gesture
+              <Animated.View
+                style={[
+                  styles.modalCard,
+                  { transform: [{ translateX: swipeX }] },
+                ]}
+                {...panResponder.panHandlers}
+              >
+                <Image
+                  source={{ uri: photos[selectedPhotoIndex].url }}
+                  style={styles.modalImage}
+                  contentFit="contain"
+                />
+              </Animated.View>
+            ))}
+
+          {/* Swipe hint on mobile */}
+          {Platform.OS !== "web" && photos.length > 1 && (
+            <Text style={styles.swipeHint}>← swipe to navigate →</Text>
+          )}
+
+          {/* Delete button — owner only */}
+          {isOwner && selectedPhotoIndex !== null && (
             <TouchableOpacity
               style={styles.deleteButton}
-              onPress={() => deletePhoto(selectedPhoto)}
+              onPress={() => {
+                const photo = photos[selectedPhotoIndex];
+                if (photo) deletePhoto(photo);
+              }}
             >
               <Text style={styles.deleteButtonText}>🗑 Delete Photo</Text>
             </TouchableOpacity>
@@ -960,4 +1062,44 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   shareButtonText: { fontSize: 13, color: "#111", fontWeight: "600" },
+  webViewerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    width: "100%",
+    justifyContent: "center",
+  },
+  arrowButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  arrowButtonDisabled: {
+    opacity: 0.2,
+  },
+  arrowText: {
+    color: "#fff",
+    fontSize: 32,
+    fontWeight: "300",
+    lineHeight: 36,
+  },
+  photoCounter: {
+    position: "absolute",
+    top: 56,
+    left: 0,
+    right: 0,
+    textAlign: "center",
+    color: "rgba(255,255,255,0.7)",
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  swipeHint: {
+    marginTop: 12,
+    color: "rgba(255,255,255,0.4)",
+    fontSize: 12,
+    textAlign: "center",
+  },
 });
