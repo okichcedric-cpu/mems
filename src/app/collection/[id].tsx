@@ -448,14 +448,8 @@ export default function CollectionPage() {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.headerCenter}>
-          <Text style={styles.title} numberOfLines={1}>
-            {collectionName}
-          </Text>
-          <Text style={styles.subtitle}>
-            {photos.length} photo{photos.length !== 1 ? "s" : ""}
-          </Text>
-        </View>
+        {/* Center intentionally empty — name moves below header */}
+        <View style={styles.headerCenter} />
 
         <View style={styles.headerRight}>
           {/* Upload — larger touch target, filled background, works on all screens */}
@@ -520,6 +514,16 @@ export default function CollectionPage() {
             </TouchableOpacity>
           )}
         </View>
+      </View>
+
+      {/* Collection name banner — sits below header with gradient */}
+      <View style={styles.collectionBanner}>
+        <Text style={styles.collectionBannerTitle} numberOfLines={1}>
+          {collectionName}
+        </Text>
+        <Text style={styles.collectionBannerSubtitle}>
+          {photos.length} photo{photos.length !== 1 ? "s" : ""}
+        </Text>
       </View>
 
       {/* Avatar strip */}
@@ -799,7 +803,7 @@ const styles = StyleSheet.create({
     minHeight: Platform.OS === "web" ? 64 : 100,
   },
   headerLeft: { flexDirection: "row", alignItems: "center", gap: 4, flex: 1 },
-  headerCenter: { alignItems: "center", justifyContent: "center" },
+  headerCenter: { flex: 0 },
   headerRight: {
     flexDirection: "row",
     alignItems: "center",
@@ -816,6 +820,38 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 15, fontWeight: "700", color: "#111" },
   subtitle: { fontSize: 11, color: "#999", marginTop: 2 },
+
+  // ── Collection name banner ────────────────────────────────
+  collectionBanner: {
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 12,
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 8,
+      },
+      android: { elevation: 3 },
+      web: { boxShadow: "0 2px 12px rgba(0,0,0,0.06)" } as any,
+    }),
+  },
+  collectionBannerTitle: {
+    fontSize: Platform.OS === "web" ? 22 : 20,
+    fontWeight: "800",
+    color: "#111",
+    letterSpacing: -0.3,
+  },
+  collectionBannerSubtitle: {
+    fontSize: 12,
+    color: "#999",
+    marginTop: 3,
+    fontWeight: "500",
+  },
 
   // ── Upload button — larger, filled, consistent across all screens ─
   uploadIconButton: {

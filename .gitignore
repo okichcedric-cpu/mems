@@ -47,3 +47,5 @@ app-example
 .env
 .env .local
 .env .production
+
+CLAUDE.md
