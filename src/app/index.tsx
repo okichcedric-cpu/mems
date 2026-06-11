@@ -536,10 +536,6 @@ export default function CollectionsPage() {
 
   return (
     <View style={styles.container}>
-      <meta
-        name="google-site-verification"
-        content="oxQomr7wHo8I7ZQXURRQJyjx-NNFBQXLDqnFYoaRqY8"
-      />
       {/* Header */}
       <View style={styles.header}>
         {/* Left actions */}
