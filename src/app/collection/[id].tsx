@@ -69,7 +69,6 @@ export default function CollectionPage() {
     null,
   );
 
-  // ← useRef keeps swipeX stable across renders
   const swipeX = useRef(new Animated.Value(0)).current;
 
   const isOwner = session?.user?.id === (effectiveOwnerId ?? session?.user?.id);
@@ -169,7 +168,6 @@ export default function CollectionPage() {
     });
   }
 
-  // ← panResponder defined with useRef so it's stable
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -183,17 +181,13 @@ export default function CollectionPage() {
         } else if (gs.dx > 80) {
           goToPrev();
         }
-        Animated.spring(swipeX, {
-          toValue: 0,
-          useNativeDriver: true,
-        }).start();
+        Animated.spring(swipeX, { toValue: 0, useNativeDriver: true }).start();
       },
     }),
   ).current;
 
   async function uploadPhoto() {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-
     if (status !== "granted") {
       Alert.alert(
         "Permission needed",
@@ -272,7 +266,7 @@ export default function CollectionPage() {
     if (!confirmed) return;
 
     try {
-      setSelectedPhotoIndex(null); // ← fixed: was setSelectedPhoto(null)
+      setSelectedPhotoIndex(null);
       setPhotos((prev) => prev.filter((p) => p.key !== photo.key));
       await deleteFromS3(photo.key);
       if (session) await fetchPhotos(session);
@@ -464,19 +458,21 @@ export default function CollectionPage() {
         </View>
 
         <View style={styles.headerRight}>
+          {/* Upload — larger touch target, filled background, works on all screens */}
           <TouchableOpacity
-            style={styles.iconButton}
+            style={styles.uploadIconButton}
             onPress={uploadPhoto}
             disabled={uploading}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            activeOpacity={0.7}
           >
             {uploading ? (
-              <ActivityIndicator color="#111" size="small" />
+              <ActivityIndicator color="#fff" size="small" />
             ) : (
-              <Ionicons name="add-circle-outline" size={24} color="#111" />
+              <Ionicons name="add" size={22} color="#fff" />
             )}
           </TouchableOpacity>
 
+          {/* Share — owner only */}
           {isOwner && (
             <TouchableOpacity
               style={styles.shareTextButton}
@@ -509,6 +505,7 @@ export default function CollectionPage() {
             </TouchableOpacity>
           )}
 
+          {/* Delete — owner only */}
           {isOwner && (
             <TouchableOpacity
               style={styles.iconButton}
@@ -579,7 +576,7 @@ export default function CollectionPage() {
         <View style={styles.centered}>
           <Text style={styles.emptyIcon}>📷</Text>
           <Text style={styles.emptyTitle}>No photos yet</Text>
-          <Text style={styles.emptyText}>Tap + Add to upload photos</Text>
+          <Text style={styles.emptyText}>Tap + to upload photos</Text>
         </View>
       ) : (
         <ScrollView
@@ -602,7 +599,6 @@ export default function CollectionPage() {
         </ScrollView>
       )}
 
-      {/* Full Screen Photo Viewer */}
       {/* Full Screen Photo Viewer */}
       <Modal
         visible={selectedPhotoIndex !== null}
@@ -629,9 +625,8 @@ export default function CollectionPage() {
 
           {selectedPhotoIndex !== null &&
             (Platform.OS === "web" ? (
-              /* ── Web layout: arrow | photo | arrow ── */
+              /* Web — arrow | photo | arrow */
               <View style={styles.webViewerWrapper}>
-                {/* Left arrow */}
                 <TouchableOpacity
                   onPress={goToPrev}
                   disabled={selectedPhotoIndex === 0}
@@ -643,7 +638,6 @@ export default function CollectionPage() {
                   <Text style={styles.webArrowText}>‹</Text>
                 </TouchableOpacity>
 
-                {/* Photo */}
                 <View style={styles.webPhotoCard}>
                   <Image
                     source={{ uri: photos[selectedPhotoIndex].url }}
@@ -652,7 +646,6 @@ export default function CollectionPage() {
                   />
                 </View>
 
-                {/* Right arrow */}
                 <TouchableOpacity
                   onPress={goToNext}
                   disabled={selectedPhotoIndex === photos.length - 1}
@@ -666,7 +659,7 @@ export default function CollectionPage() {
                 </TouchableOpacity>
               </View>
             ) : (
-              /* ── Mobile layout: swipe gesture ── */
+              /* Mobile — swipe */
               <Animated.View
                 style={[
                   styles.mobilePhotoCard,
@@ -810,29 +803,44 @@ const styles = StyleSheet.create({
   headerRight: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 6,
     flex: 1,
     justifyContent: "flex-end",
   },
   iconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
   },
   title: { fontSize: 15, fontWeight: "700", color: "#111" },
   subtitle: { fontSize: 11, color: "#999", marginTop: 2 },
 
+  // ── Upload button — larger, filled, consistent across all screens ─
+  uploadIconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#111",
+    alignItems: "center",
+    justifyContent: "center",
+    ...Platform.select({
+      web: { cursor: "pointer" } as any,
+      default: {},
+    }),
+  },
+
   // ── Share button ─────────────────────────────────────────
   shareTextButton: {
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: "#111",
     alignItems: "center",
     justifyContent: "center",
+    minHeight: 44,
   },
   shareTextButtonLabel: { fontSize: 13, color: "#111", fontWeight: "600" },
   shareButtonWithAvatars: {
@@ -952,39 +960,14 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     backgroundColor: "#000",
   },
-  webViewerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 16,
-    width: "100%",
-    zIndex: 20, // ← above the modalCard
-  },
-  arrowButton: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: "rgba(255,255,255,0.15)",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 30, // ← highest so never hidden
-  },
-  arrowButtonDisabled: { opacity: 0.15 },
-  modalCard: {
-    width: Platform.OS === "web" ? "70%" : SCREEN_WIDTH - 24, // ← narrower on web
+  mobilePhotoCard: {
+    width: SCREEN_WIDTH - 24,
     height: SCREEN_HEIGHT * 0.72,
     borderRadius: 16,
     overflow: "hidden",
     backgroundColor: "#000",
-    zIndex: 10,
   },
   modalImage: { width: "100%", height: "100%" },
-  swipeHint: {
-    marginTop: 12,
-    color: "rgba(255,255,255,0.35)",
-    fontSize: 12,
-    textAlign: "center",
-  },
   swipeHint: {
     marginTop: 12,
     color: "rgba(255,255,255,0.35)",
@@ -1091,43 +1074,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "rgba(220,40,40,0.9)",
     fontWeight: "600",
-  },
-
-  // ── Legacy (kept for safety) ──────────────────────────────
-  uploadButton: {
-    backgroundColor: "#111",
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    alignItems: "center",
-  },
-  uploadButtonText: { color: "#fff", fontWeight: "600", fontSize: 13 },
-  deleteCollectionButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "rgba(255,60,60,0.12)",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "rgba(255,60,60,0.3)",
-  },
-  deleteCollectionText: { fontSize: 16 },
-  shareButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#111",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  shareButtonText: { fontSize: 13, color: "#111", fontWeight: "600" },
-  mobilePhotoCard: {
-    width: SCREEN_WIDTH - 24,
-    height: SCREEN_HEIGHT * 0.72,
-    borderRadius: 16,
-    overflow: "hidden",
-    backgroundColor: "#000",
   },
 });
