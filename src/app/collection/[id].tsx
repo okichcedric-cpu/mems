@@ -65,7 +65,31 @@ export default function CollectionPage() {
   const [subscriptionStatus, setSubscriptionStatus] =
     useState<SubscriptionStatus | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
-  const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(null);
+  const [toast, setToast] = useState<{ message: string; emoji: string } | null>(
+    null,
+  );
+  const toastAnim = useRef(new Animated.Value(0)).current;
+
+  function showToast(message: string, emoji: string = "✨") {
+    setToast({ message, emoji });
+    Animated.sequence([
+      Animated.spring(toastAnim, {
+        toValue: 1,
+        useNativeDriver: true,
+        tension: 80,
+        friction: 10,
+      }),
+      Animated.delay(3000),
+      Animated.timing(toastAnim, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+    ]).start(() => setToast(null));
+  }
+  const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(
+    null,
+  );
 
   const swipeX = useRef(new Animated.Value(0)).current;
   // Ref for the hidden file input — created imperatively on web to avoid JSX syntax issues
@@ -77,8 +101,14 @@ export default function CollectionPage() {
 
   function getAvatarColor(email: string): string {
     const colors = [
-      "#E8704A", "#4A90E8", "#7B4AE8", "#4AE8A0",
-      "#E84A7B", "#E8C84A", "#4AE8D8", "#A04AE8",
+      "#E8704A",
+      "#4A90E8",
+      "#7B4AE8",
+      "#4AE8A0",
+      "#E84A7B",
+      "#E8C84A",
+      "#4AE8D8",
+      "#A04AE8",
     ];
     let hash = 0;
     for (let i = 0; i < email.length; i++) {
@@ -147,13 +177,15 @@ export default function CollectionPage() {
           const photoList = (data?.photos || []).filter(
             (p: any) => p.Key && !p.Key.includes("/thumbs/"),
           );
-          setPhotos(photoList.map((p: any) => ({
-            key: p.Key,
-            url: p.url,
-            thumbUrl: p.thumbUrl ?? p.url,
-            width: p.metadata?.width ?? 1,
-            height: p.metadata?.height ?? 1,
-          })));
+          setPhotos(
+            photoList.map((p: any) => ({
+              key: p.Key,
+              url: p.url,
+              thumbUrl: p.thumbUrl ?? p.url,
+              width: p.metadata?.width ?? 1,
+              height: p.metadata?.height ?? 1,
+            })),
+          );
         }
       } catch (error: any) {
         window.alert("Upload failed: " + error.message);
@@ -269,7 +301,15 @@ export default function CollectionPage() {
       const realPhotos = photos.filter((p) => !p.key.includes("/thumbs/"));
       const maxPhotos = subStatus?.limits?.maxPhotosPerCollection ?? 10;
       if (!subStatus?.isSubscribed && realPhotos.length >= maxPhotos) {
-        setShowPaywall(true);
+        if (!isOwner) {
+          // Shared collection — friendly toast, not paywall
+          showToast(
+            `This collection has ${realPhotos.length} photos. Subscribe to add more.`,
+            "📸",
+          );
+        } else {
+          setShowPaywall(true);
+        }
         return;
       }
       if (fileInputRef.current) fileInputRef.current.click();
@@ -279,7 +319,10 @@ export default function CollectionPage() {
     // Native mobile — use ImagePicker
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
-      Alert.alert("Permission needed", "Please allow access to your photo library.");
+      Alert.alert(
+        "Permission needed",
+        "Please allow access to your photo library.",
+      );
       return;
     }
 
@@ -292,7 +335,15 @@ export default function CollectionPage() {
     const realPhotos = photos.filter((p) => !p.key.includes("/thumbs/"));
     const maxPhotos = subStatus?.limits?.maxPhotosPerCollection ?? 10;
     if (!subStatus?.isSubscribed && realPhotos.length >= maxPhotos) {
-      setShowPaywall(true);
+      if (!isOwner) {
+        // Shared collection — friendly toast, not paywall
+        showToast(
+          `This collection has ${realPhotos.length} photos. Subscribe to add more.`,
+          "📸",
+        );
+      } else {
+        setShowPaywall(true);
+      }
       return;
     }
 
@@ -309,7 +360,14 @@ export default function CollectionPage() {
       await Promise.all(
         result.assets.map(async (asset) => {
           const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
-          await uploadToS3(uploadOwnerId, collectionName, fileName, asset.uri, asset.width, asset.height);
+          await uploadToS3(
+            uploadOwnerId,
+            collectionName,
+            fileName,
+            asset.uri,
+            asset.width,
+            asset.height,
+          );
         }),
       );
       await fetchPhotos(session);
@@ -329,8 +387,16 @@ export default function CollectionPage() {
               "Delete Photo",
               "Are you sure you want to delete this photo?",
               [
-                { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-                { text: "Delete", style: "destructive", onPress: () => resolve(true) },
+                {
+                  text: "Cancel",
+                  style: "cancel",
+                  onPress: () => resolve(false),
+                },
+                {
+                  text: "Delete",
+                  style: "destructive",
+                  onPress: () => resolve(true),
+                },
               ],
             );
           });
@@ -356,14 +422,24 @@ export default function CollectionPage() {
   async function handleDeleteCollection() {
     const confirmed =
       Platform.OS === "web"
-        ? window.confirm(`Are you sure you want to delete "${collectionName}" and all its photos? This cannot be undone.`)
+        ? window.confirm(
+            `Are you sure you want to delete "${collectionName}" and all its photos? This cannot be undone.`,
+          )
         : await new Promise<boolean>((resolve) => {
             Alert.alert(
               "Delete Collection",
               `Are you sure you want to delete "${collectionName}" and all its photos? This cannot be undone.`,
               [
-                { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-                { text: "Delete All", style: "destructive", onPress: () => resolve(true) },
+                {
+                  text: "Cancel",
+                  style: "cancel",
+                  onPress: () => resolve(false),
+                },
+                {
+                  text: "Delete All",
+                  style: "destructive",
+                  onPress: () => resolve(true),
+                },
               ],
             );
           });
@@ -406,7 +482,12 @@ export default function CollectionPage() {
     if (!session?.user?.email) return;
     setSharing(true);
     try {
-      await shareCollection(session.user.id, session.user.email, collectionName, shareEmail.trim());
+      await shareCollection(
+        session.user.id,
+        session.user.email,
+        collectionName,
+        shareEmail.trim(),
+      );
       const email = shareEmail.trim();
       setShareEmail("");
       setShowShareModal(false);
@@ -435,8 +516,16 @@ export default function CollectionPage() {
         ? window.confirm(`Remove access for ${email}?`)
         : await new Promise<boolean>((resolve) => {
             Alert.alert("Remove Access", `Remove access for ${email}?`, [
-              { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-              { text: "Remove", style: "destructive", onPress: () => resolve(true) },
+              {
+                text: "Cancel",
+                style: "cancel",
+                onPress: () => resolve(false),
+              },
+              {
+                text: "Remove",
+                style: "destructive",
+                onPress: () => resolve(true),
+              },
             ]);
           });
     if (!confirmed) return;
@@ -508,10 +597,11 @@ export default function CollectionPage() {
             disabled={uploading}
             activeOpacity={0.7}
           >
-            {uploading
-              ? <ActivityIndicator color="#fff" size="small" />
-              : <Ionicons name="add" size={22} color="#fff" />
-            }
+            {uploading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Ionicons name="add" size={22} color="#fff" />
+            )}
           </TouchableOpacity>
 
           {/* Share — owner only */}
@@ -525,13 +615,20 @@ export default function CollectionPage() {
             >
               {sharedWith.length > 0 ? (
                 <View style={styles.shareButtonWithAvatars}>
-                  <View style={[styles.shareButtonAvatar, { backgroundColor: getAvatarColor(sharedWith[0]) }]}>
+                  <View
+                    style={[
+                      styles.shareButtonAvatar,
+                      { backgroundColor: getAvatarColor(sharedWith[0]) },
+                    ]}
+                  >
                     <Text style={styles.shareButtonAvatarLetter}>
                       {sharedWith[0][0].toUpperCase()}
                     </Text>
                   </View>
                   {sharedWith.length > 1 && (
-                    <Text style={styles.shareButtonCount}>+{sharedWith.length - 1}</Text>
+                    <Text style={styles.shareButtonCount}>
+                      +{sharedWith.length - 1}
+                    </Text>
                   )}
                 </View>
               ) : (
@@ -547,7 +644,11 @@ export default function CollectionPage() {
               onPress={handleDeleteCollection}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <Ionicons name="trash-outline" size={22} color="rgba(255,60,60,0.8)" />
+              <Ionicons
+                name="trash-outline"
+                size={22}
+                color="rgba(255,60,60,0.8)"
+              />
             </TouchableOpacity>
           )}
         </View>
@@ -567,7 +668,10 @@ export default function CollectionPage() {
       {sharedWith.length > 0 && (
         <TouchableOpacity
           style={styles.avatarStrip}
-          onPress={() => { loadShares(); setShowShareModal(true); }}
+          onPress={() => {
+            loadShares();
+            setShowShareModal(true);
+          }}
           activeOpacity={0.8}
         >
           <View style={styles.avatarRow}>
@@ -580,12 +684,21 @@ export default function CollectionPage() {
                   { backgroundColor: getAvatarColor(email) },
                 ]}
               >
-                <Text style={styles.avatarLetter}>{email[0].toUpperCase()}</Text>
+                <Text style={styles.avatarLetter}>
+                  {email[0].toUpperCase()}
+                </Text>
               </View>
             ))}
             {sharedWith.length > 5 && (
-              <View style={[styles.avatar, { marginLeft: -10, backgroundColor: "#999" }]}>
-                <Text style={styles.avatarLetter}>+{sharedWith.length - 5}</Text>
+              <View
+                style={[
+                  styles.avatar,
+                  { marginLeft: -10, backgroundColor: "#999" },
+                ]}
+              >
+                <Text style={styles.avatarLetter}>
+                  +{sharedWith.length - 5}
+                </Text>
               </View>
             )}
           </View>
@@ -610,7 +723,9 @@ export default function CollectionPage() {
       ) : (
         <ScrollView
           contentContainerStyle={styles.grid}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.columns}>
@@ -618,7 +733,9 @@ export default function CollectionPage() {
               {leftColumn.map((item, index) => renderPhoto(item, index * 2))}
             </View>
             <View style={styles.column}>
-              {rightColumn.map((item, index) => renderPhoto(item, index * 2 + 1))}
+              {rightColumn.map((item, index) =>
+                renderPhoto(item, index * 2 + 1),
+              )}
             </View>
           </View>
         </ScrollView>
@@ -646,13 +763,16 @@ export default function CollectionPage() {
             </Text>
           )}
 
-          {selectedPhotoIndex !== null && (
-            Platform.OS === "web" ? (
+          {selectedPhotoIndex !== null &&
+            (Platform.OS === "web" ? (
               <View style={styles.webViewerWrapper}>
                 <TouchableOpacity
                   onPress={goToPrev}
                   disabled={selectedPhotoIndex === 0}
-                  style={[styles.webArrow, selectedPhotoIndex === 0 && styles.webArrowDisabled]}
+                  style={[
+                    styles.webArrow,
+                    selectedPhotoIndex === 0 && styles.webArrowDisabled,
+                  ]}
                 >
                   <Text style={styles.webArrowText}>‹</Text>
                 </TouchableOpacity>
@@ -666,14 +786,21 @@ export default function CollectionPage() {
                 <TouchableOpacity
                   onPress={goToNext}
                   disabled={selectedPhotoIndex === photos.length - 1}
-                  style={[styles.webArrow, selectedPhotoIndex === photos.length - 1 && styles.webArrowDisabled]}
+                  style={[
+                    styles.webArrow,
+                    selectedPhotoIndex === photos.length - 1 &&
+                      styles.webArrowDisabled,
+                  ]}
                 >
                   <Text style={styles.webArrowText}>›</Text>
                 </TouchableOpacity>
               </View>
             ) : (
               <Animated.View
-                style={[styles.mobilePhotoCard, { transform: [{ translateX: swipeX }] }]}
+                style={[
+                  styles.mobilePhotoCard,
+                  { transform: [{ translateX: swipeX }] },
+                ]}
                 {...panResponder.panHandlers}
               >
                 <Image
@@ -682,8 +809,7 @@ export default function CollectionPage() {
                   contentFit="contain"
                 />
               </Animated.View>
-            )
-          )}
+            ))}
 
           {Platform.OS !== "web" && photos.length > 1 && (
             <Text style={styles.swipeHint}>← swipe to navigate →</Text>
@@ -704,7 +830,12 @@ export default function CollectionPage() {
       </Modal>
 
       {/* Share Modal */}
-      <Modal visible={showShareModal} transparent animationType="fade" statusBarTranslucent>
+      <Modal
+        visible={showShareModal}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+      >
         <TouchableOpacity
           style={styles.shareOverlayBackdrop}
           activeOpacity={1}
@@ -741,10 +872,11 @@ export default function CollectionPage() {
                 onPress={handleShare}
                 disabled={sharing}
               >
-                {sharing
-                  ? <ActivityIndicator color="#fff" size="small" />
-                  : <Text style={styles.shareSubmitText}>Send</Text>
-                }
+                {sharing ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.shareSubmitText}>Send</Text>
+                )}
               </TouchableOpacity>
             </View>
 
@@ -753,10 +885,19 @@ export default function CollectionPage() {
                 <Text style={styles.shareListTitle}>Shared with</Text>
                 {sharedWith.map((email) => (
                   <View key={email} style={styles.shareListRow}>
-                    <View style={[styles.shareListAvatar, { backgroundColor: getAvatarColor(email) }]}>
-                      <Text style={styles.shareListAvatarLetter}>{email[0].toUpperCase()}</Text>
+                    <View
+                      style={[
+                        styles.shareListAvatar,
+                        { backgroundColor: getAvatarColor(email) },
+                      ]}
+                    >
+                      <Text style={styles.shareListAvatarLetter}>
+                        {email[0].toUpperCase()}
+                      </Text>
                     </View>
-                    <Text style={styles.shareListEmail} numberOfLines={1}>{email}</Text>
+                    <Text style={styles.shareListEmail} numberOfLines={1}>
+                      {email}
+                    </Text>
                     <TouchableOpacity
                       style={styles.removeButton}
                       onPress={() => handleUnshare(email)}
@@ -771,6 +912,39 @@ export default function CollectionPage() {
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
+      {/* Toast notification */}
+      {toast && (
+        <Animated.View
+          style={[
+            styles.toast,
+            {
+              opacity: toastAnim,
+              transform: [
+                {
+                  translateY: toastAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [20, 0],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
+          <Text style={styles.toastEmoji}>{toast.emoji}</Text>
+          <View style={styles.toastTextContainer}>
+            <Text style={styles.toastMessage}>{toast.message}</Text>
+            <Text style={styles.toastAction}>
+              Tap ★ to subscribe for unlimited
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => router.push("/subscription")}
+            style={styles.toastButton}
+          >
+            <Text style={styles.toastButtonText}>Upgrade</Text>
+          </TouchableOpacity>
+        </Animated.View>
+      )}
     </View>
   );
 }
@@ -868,22 +1042,41 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   shareTextButtonLabel: { fontSize: 13, color: "#111", fontWeight: "600" },
-  shareButtonWithAvatars: { flexDirection: "row", alignItems: "center", gap: 4 },
-  shareButtonAvatar: { width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center" },
+  shareButtonWithAvatars: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  shareButtonAvatar: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   shareButtonAvatarLetter: { color: "#fff", fontSize: 11, fontWeight: "700" },
   shareButtonCount: { fontSize: 12, color: "#111", fontWeight: "600" },
 
   // ── Avatar strip ─────────────────────────────────────────
   avatarStrip: {
-    flexDirection: "row", alignItems: "center",
-    paddingHorizontal: 16, paddingVertical: 10,
-    backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#f0f0f0", gap: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
+    gap: 10,
   },
   avatarRow: { flexDirection: "row", alignItems: "center" },
   avatar: {
-    width: 32, height: 32, borderRadius: 16,
-    alignItems: "center", justifyContent: "center",
-    borderWidth: 2, borderColor: "#fff",
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#fff",
   },
   avatarLetter: { color: "#fff", fontSize: 13, fontWeight: "700" },
   avatarStripLabel: { fontSize: 13, color: "#666", fontWeight: "500" },
@@ -894,7 +1087,10 @@ const styles = StyleSheet.create({
   column: { flex: 1, gap: 8 },
   photoContainer: { width: "100%", borderRadius: 12, overflow: "hidden" },
   photo: { width: "100%", height: "100%" },
-  photoPlaceholder: { ...StyleSheet.absoluteFillObject, backgroundColor: "#e8e8e8" },
+  photoPlaceholder: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "#e8e8e8",
+  },
   centered: { flex: 1, justifyContent: "center", alignItems: "center", gap: 8 },
   emptyIcon: { fontSize: 48 },
   emptyTitle: { fontSize: 18, fontWeight: "600", color: "#333" },
@@ -902,88 +1098,220 @@ const styles = StyleSheet.create({
 
   // ── Photo viewer ─────────────────────────────────────────
   modalBackdrop: {
-    flex: 1, backgroundColor: "rgba(0,0,0,0.92)",
-    justifyContent: "center", alignItems: "center",
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.92)",
+    justifyContent: "center",
+    alignItems: "center",
   },
   modalClose: {
-    position: "absolute", top: 52, right: 24,
+    position: "absolute",
+    top: 52,
+    right: 24,
     backgroundColor: "rgba(255,255,255,0.2)",
-    width: 44, height: 44, borderRadius: 22,
-    alignItems: "center", justifyContent: "center", zIndex: 50,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 50,
   },
   modalCloseText: { color: "#fff", fontSize: 16, fontWeight: "700" },
   photoCounter: {
-    position: "absolute", top: 56, left: 0, right: 0,
-    textAlign: "center", color: "rgba(255,255,255,0.7)",
-    fontSize: 13, fontWeight: "500", zIndex: 50,
+    position: "absolute",
+    top: 56,
+    left: 0,
+    right: 0,
+    textAlign: "center",
+    color: "rgba(255,255,255,0.7)",
+    fontSize: 13,
+    fontWeight: "500",
+    zIndex: 50,
   },
   webViewerWrapper: {
-    flexDirection: "row", alignItems: "center",
-    justifyContent: "center", width: "100%", paddingHorizontal: 16, gap: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    paddingHorizontal: 16,
+    gap: 12,
   },
   webArrow: {
-    width: 56, height: 56, borderRadius: 28,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: "rgba(255,255,255,0.15)",
-    alignItems: "center", justifyContent: "center", flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
   },
   webArrowDisabled: { opacity: 0.15 },
-  webArrowText: { color: "#fff", fontSize: 40, fontWeight: "200", lineHeight: 44, textAlign: "center" },
+  webArrowText: {
+    color: "#fff",
+    fontSize: 40,
+    fontWeight: "200",
+    lineHeight: 44,
+    textAlign: "center",
+  },
   webPhotoCard: {
-    flex: 1, height: SCREEN_HEIGHT * 0.75,
-    borderRadius: 16, overflow: "hidden", backgroundColor: "#000",
+    flex: 1,
+    height: SCREEN_HEIGHT * 0.75,
+    borderRadius: 16,
+    overflow: "hidden",
+    backgroundColor: "#000",
   },
   mobilePhotoCard: {
-    width: SCREEN_WIDTH - 24, height: SCREEN_HEIGHT * 0.72,
-    borderRadius: 16, overflow: "hidden", backgroundColor: "#000",
+    width: SCREEN_WIDTH - 24,
+    height: SCREEN_HEIGHT * 0.72,
+    borderRadius: 16,
+    overflow: "hidden",
+    backgroundColor: "#000",
   },
   modalImage: { width: "100%", height: "100%" },
-  swipeHint: { marginTop: 12, color: "rgba(255,255,255,0.35)", fontSize: 12, textAlign: "center" },
+  swipeHint: {
+    marginTop: 12,
+    color: "rgba(255,255,255,0.35)",
+    fontSize: 12,
+    textAlign: "center",
+  },
   deleteButton: {
-    marginTop: 16, paddingHorizontal: 28, paddingVertical: 14,
-    backgroundColor: "rgba(255,60,60,0.9)", borderRadius: 24,
-    alignItems: "center", minWidth: 160,
+    marginTop: 16,
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    backgroundColor: "rgba(255,60,60,0.9)",
+    borderRadius: 24,
+    alignItems: "center",
+    minWidth: 160,
   },
   deleteButtonText: { color: "#fff", fontWeight: "600", fontSize: 15 },
 
   // ── Share overlay ────────────────────────────────────────
   shareOverlayBackdrop: {
-    flex: 1, backgroundColor: "rgba(0,0,0,0.4)",
-    justifyContent: "center", alignItems: "center", padding: 24,
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
   },
   shareOverlayCard: {
-    width: "100%", backgroundColor: "#fff", borderRadius: 20, padding: 20,
-    shadowColor: "#000", shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15, shadowRadius: 24, elevation: 10,
+    width: "100%",
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 10,
   },
   shareModalHeader: {
-    flexDirection: "row", justifyContent: "space-between",
-    alignItems: "center", marginBottom: 16,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
   },
   shareModalTitle: { fontSize: 18, fontWeight: "700", color: "#111" },
   shareModalClose: { fontSize: 18, color: "#999", padding: 4 },
   shareInputRow: { flexDirection: "row", gap: 8, marginBottom: 4 },
   shareInput: {
-    flex: 1, borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12,
-    paddingHorizontal: 14, paddingVertical: 11, fontSize: 14,
-    color: "#111", backgroundColor: "#fafafa",
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    fontSize: 14,
+    color: "#111",
+    backgroundColor: "#fafafa",
   },
   shareSubmitButton: {
-    backgroundColor: "#111", paddingHorizontal: 18, borderRadius: 12,
-    alignItems: "center", justifyContent: "center", minWidth: 64,
+    backgroundColor: "#111",
+    paddingHorizontal: 18,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 64,
   },
   shareSubmitText: { color: "#fff", fontWeight: "600", fontSize: 14 },
-  shareList: { marginTop: 16, borderTopWidth: 1, borderTopColor: "#f0f0f0", paddingTop: 12 },
-  shareListTitle: {
-    fontSize: 12, fontWeight: "600", color: "#999",
-    textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10,
+  shareList: {
+    marginTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: "#f0f0f0",
+    paddingTop: 12,
   },
-  shareListRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, gap: 10 },
-  shareListAvatar: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  shareListTitle: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#999",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 10,
+  },
+  shareListRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    gap: 10,
+  },
+  shareListAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   shareListAvatarLetter: { color: "#fff", fontSize: 14, fontWeight: "700" },
   shareListEmail: { flex: 1, fontSize: 14, color: "#333" },
   removeButton: {
-    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12,
-    backgroundColor: "rgba(255,60,60,0.08)", borderWidth: 1, borderColor: "rgba(255,60,60,0.2)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,60,60,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255,60,60,0.2)",
   },
-  removeButtonText: { fontSize: 12, color: "rgba(220,40,40,0.9)", fontWeight: "600" },
+  // ── Toast ─────────────────────────────────────────────────
+  toast: {
+    position: "absolute",
+    bottom: 32,
+    left: 16,
+    right: 16,
+    backgroundColor: "#1a1a1a",
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 12,
+    zIndex: 999,
+  },
+  toastEmoji: { fontSize: 26 },
+  toastTextContainer: { flex: 1 },
+  toastMessage: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#fff",
+    lineHeight: 18,
+  },
+  toastAction: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.5)",
+    marginTop: 2,
+  },
+  toastButton: {
+    backgroundColor: "#4AE8A0",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    flexShrink: 0,
+  },
+  toastButtonText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#111",
+  },
 });
