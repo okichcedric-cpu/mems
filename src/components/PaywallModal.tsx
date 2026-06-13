@@ -144,10 +144,10 @@ export default function PaywallModal({
             <View style={[styles.tier, styles.tierPaid]}>
               <Text style={[styles.tierLabel, styles.tierLabelPaid]}>Pro</Text>
               <Text style={[styles.tierItem, styles.tierItemPaid]}>
-                ✓ Unlimited collections
+                ✓ 20 collections
               </Text>
               <Text style={[styles.tierItem, styles.tierItemPaid]}>
-                ✓ Unlimited photos
+                ✓ 75 photos each
               </Text>
               <Text style={[styles.tierItem, styles.tierItemPaid]}>
                 ✓ Share collections

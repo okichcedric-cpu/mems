@@ -291,45 +291,25 @@ export default function CollectionsPage() {
     }
     if (!session) return;
 
-    // Check collection limit for free users
     const ownedCollections = collections.filter((c) => !c.isShared);
-    if (
-      !subscriptionStatus?.isSubscribed &&
-      ownedCollections.length >=
-        (subscriptionStatus?.limits?.maxCollections ?? 3)
-    ) {
-      setShowNewCollection(false);
-      setPaywallReason(
-        subscriptionStatus?.wasSubscribed ? "renewal" : "collections",
-      );
-      setShowPaywall(true);
-      return;
-    }
+    const maxCollections = subscriptionStatus?.limits?.maxCollections ?? 3;
+    const isSubscribed = subscriptionStatus?.isSubscribed ?? false;
 
-    // Check photo limit for free users
-    const maxPhotos = subscriptionStatus?.limits?.maxPhotosPerCollection ?? 10;
-    if (
-      !subscriptionStatus?.isSubscribed &&
-      selectedAssets.length > maxPhotos
-    ) {
-      Alert.alert(
-        "Too many photos",
-        `Free accounts can add up to ${maxPhotos} photos per collection. Please select fewer photos or subscribe for unlimited uploads.`,
-        [
-          { text: "Reduce Photos", style: "cancel" },
-          {
-            text: "Subscribe",
-            onPress: () => {
-              setShowNewCollection(false);
-              setPaywallReason(
-                subscriptionStatus?.wasSubscribed ? "renewal" : "photos",
-              );
-              setShowPaywall(true);
-            },
-          },
-        ],
-      );
-      return;
+    if (ownedCollections.length >= maxCollections) {
+      if (isSubscribed) {
+        // Pro user hit 20 — show toast not paywall
+        showCollectionLimitToast(maxCollections);
+        setShowNewCollection(false);
+        return;
+      } else {
+        // Free user hit 3 — show paywall
+        setShowNewCollection(false);
+        setPaywallReason(
+          subscriptionStatus?.wasSubscribed ? "renewal" : "collections",
+        );
+        setShowPaywall(true);
+        return;
+      }
     }
 
     if (

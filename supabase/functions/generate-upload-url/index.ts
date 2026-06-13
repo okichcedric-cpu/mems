@@ -43,6 +43,19 @@ serve(async (req) => {
       });
     }
 
+    // Reject non-image content types
+const allowedTypes = [
+  "image/jpeg", "image/jpg", "image/png", "image/webp",
+  "image/heic", "image/heif", "image/gif", "image/bmp",
+];
+
+if (contentType && !allowedTypes.some(t => contentType.startsWith("image/"))) {
+  return new Response(
+    JSON.stringify({ error: "Only image files are allowed" }),
+    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
     // Extract owner ID and collection name from key
     const keyParts = key.split("/");
     const ownerId = keyParts[0];

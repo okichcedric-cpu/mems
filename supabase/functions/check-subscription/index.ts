@@ -11,6 +11,11 @@ const FREE_LIMITS = {
   maxPhotosPerCollection: 10,
 };
 
+const PRO_LIMITS = {
+  maxCollections: 20,
+  maxPhotosPerCollection: 75,
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -52,15 +57,13 @@ serve(async (req) => {
       .eq("user_id", user.id)
       .maybeSingle();
 
-    // Active and cancelled subscriptions both grant access until period ends
     const isSubscribed =
       (subscription?.status === "active" ||
         subscription?.status === "cancelled") &&
       subscription?.current_period_end !== null &&
       new Date(subscription.current_period_end) > new Date();
 
-    const wasSubscribed =
-      !!subscription && subscription.status !== "free";
+    const wasSubscribed = !!subscription && subscription.status !== "free";
 
     return new Response(
       JSON.stringify({
@@ -68,7 +71,7 @@ serve(async (req) => {
         plan: subscription?.plan ?? "free",
         expiresAt: subscription?.current_period_end ?? null,
         wasSubscribed,
-        limits: isSubscribed ? null : FREE_LIMITS,
+        limits: isSubscribed ? PRO_LIMITS : FREE_LIMITS,
       }),
       {
         status: 200,

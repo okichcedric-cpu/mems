@@ -185,13 +185,13 @@ export default function SubscriptionPage() {
                   icon: "images-outline",
                   label: "Collections",
                   free: "Up to 3",
-                  pro: "Unlimited",
+                  pro: "Up to 20",
                 },
                 {
                   icon: "camera-outline",
                   label: "Photos per collection",
                   free: "Up to 10",
-                  pro: "Unlimited",
+                  pro: "Up to 75",
                 },
                 {
                   icon: "share-outline",

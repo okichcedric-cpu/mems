@@ -65,13 +65,28 @@ export default function CollectionPage() {
   const [subscriptionStatus, setSubscriptionStatus] =
     useState<SubscriptionStatus | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
-  const [toast, setToast] = useState<{ message: string; emoji: string } | null>(
+  const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(
     null,
   );
+
+  // Toast system
+  const [toast, setToast] = useState<{
+    message: string;
+    emoji: string;
+    subtext?: string;
+    showUpgrade?: boolean;
+  } | null>(null);
   const toastAnim = useRef(new Animated.Value(0)).current;
 
-  function showToast(message: string, emoji: string = "✨") {
-    setToast({ message, emoji });
+  function showToast(
+    message: string,
+    emoji: string = "✨",
+    subtext?: string,
+    showUpgrade: boolean = false,
+  ) {
+    // Reset animation value before starting
+    toastAnim.setValue(0);
+    setToast({ message, emoji, subtext, showUpgrade });
     Animated.sequence([
       Animated.spring(toastAnim, {
         toValue: 1,
@@ -79,7 +94,7 @@ export default function CollectionPage() {
         tension: 80,
         friction: 10,
       }),
-      Animated.delay(3000),
+      Animated.delay(3500),
       Animated.timing(toastAnim, {
         toValue: 0,
         duration: 300,
@@ -87,12 +102,8 @@ export default function CollectionPage() {
       }),
     ]).start(() => setToast(null));
   }
-  const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(
-    null,
-  );
 
   const swipeX = useRef(new Animated.Value(0)).current;
-  // Ref for the hidden file input — created imperatively on web to avoid JSX syntax issues
   const fileInputRef = useRef<any>(null);
 
   const isOwner = session?.user?.id === (effectiveOwnerId ?? session?.user?.id);
@@ -132,7 +143,7 @@ export default function CollectionPage() {
     });
   }, []);
 
-  // Create hidden file input imperatively on web — avoids JSX <input> syntax error
+  // Create hidden file input imperatively on web
   useEffect(() => {
     if (Platform.OS !== "web") return;
 
@@ -145,8 +156,18 @@ export default function CollectionPage() {
     fileInputRef.current = input;
 
     const handleChange = async (event: Event) => {
-      const files = (event.target as HTMLInputElement).files;
-      if (!files || files.length === 0) return;
+      const allFiles = (event.target as HTMLInputElement).files;
+      if (!allFiles || allFiles.length === 0) return;
+
+      // Filter images only
+      const files = Array.from(allFiles).filter((f) =>
+        f.type.startsWith("image/"),
+      );
+      if (files.length === 0) {
+        window.alert("Please select image files only (JPG, PNG, HEIC, etc.)");
+        input.value = "";
+        return;
+      }
 
       setUploading(true);
       try {
@@ -157,7 +178,7 @@ export default function CollectionPage() {
         const currentOwner = fileInputRef.current?._ownerId ?? sess.user.id;
 
         await Promise.all(
-          Array.from(files).map(async (file: File) => {
+          files.map(async (file: File) => {
             const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
             const uri = await new Promise<string>((resolve, reject) => {
               const reader = new FileReader();
@@ -169,7 +190,6 @@ export default function CollectionPage() {
           }),
         );
 
-        // Refresh photos
         const { data, error } = await supabase.functions.invoke("list-photos", {
           body: { userId: currentOwner, collectionName, includeUrls: true },
         });
@@ -205,7 +225,7 @@ export default function CollectionPage() {
     };
   }, [collectionName]);
 
-  // Keep owner ID available to the file input handler via a custom property
+  // Keep owner ID synced to the file input handler
   useEffect(() => {
     if (fileInputRef.current && effectiveOwnerId) {
       fileInputRef.current._ownerId = effectiveOwnerId;
@@ -280,38 +300,65 @@ export default function CollectionPage() {
         swipeX.setValue(gs.dx);
       },
       onPanResponderRelease: (_, gs) => {
-        if (gs.dx < -80) {
-          goToNext();
-        } else if (gs.dx > 80) {
-          goToPrev();
-        }
+        if (gs.dx < -80) goToNext();
+        else if (gs.dx > 80) goToPrev();
         Animated.spring(swipeX, { toValue: 0, useNativeDriver: true }).start();
       },
     }),
   ).current;
 
+  // Central limit check — returns true if upload can proceed, false if blocked
+  function checkPhotoLimit(
+    subStatus: SubscriptionStatus | null,
+    photoCount: number,
+  ): boolean {
+    const isSubscribed = subStatus?.isSubscribed ?? false;
+    const maxPhotos = subStatus?.limits?.maxPhotosPerCollection ?? 10;
+
+    if (photoCount < maxPhotos) return true; // Under limit — allow
+
+    if (isSubscribed) {
+      // Pro user hit their 75 photo limit
+      showToast(
+        `You've reached the ${maxPhotos} photo limit for this collection.`,
+        "📸",
+        "Delete some photos to add more.",
+        false,
+      );
+      return false;
+    }
+
+    if (!isOwner) {
+      // Non-subscribed recipient of a shared collection
+      showToast(
+        `This collection has reached the ${maxPhotos} photo limit.`,
+        "📸",
+        "Subscribe to Mems Pro to add more photos.",
+        true,
+      );
+      return false;
+    }
+
+    // Non-subscribed owner — show paywall
+    setShowPaywall(true);
+    return false;
+  }
+
   async function uploadPhoto() {
+    // Fetch fresh subscription status
+    let subStatus = subscriptionStatus;
+    if (!subStatus) {
+      subStatus = await checkSubscription();
+      setSubscriptionStatus(subStatus);
+    }
+
+    const realPhotos = photos.filter((p) => !p.key.includes("/thumbs/"));
+
+    // Check limit before opening picker
+    if (!checkPhotoLimit(subStatus, realPhotos.length)) return;
+
     // Desktop web — trigger hidden file input
     if (Platform.OS === "web") {
-      let subStatus = subscriptionStatus;
-      if (!subStatus) {
-        subStatus = await checkSubscription();
-        setSubscriptionStatus(subStatus);
-      }
-      const realPhotos = photos.filter((p) => !p.key.includes("/thumbs/"));
-      const maxPhotos = subStatus?.limits?.maxPhotosPerCollection ?? 10;
-      if (!subStatus?.isSubscribed && realPhotos.length >= maxPhotos) {
-        if (!isOwner) {
-          // Shared collection — friendly toast, not paywall
-          showToast(
-            `This collection has ${realPhotos.length} photos. Subscribe to add more.`,
-            "📸",
-          );
-        } else {
-          setShowPaywall(true);
-        }
-        return;
-      }
       if (fileInputRef.current) fileInputRef.current.click();
       return;
     }
@@ -323,27 +370,6 @@ export default function CollectionPage() {
         "Permission needed",
         "Please allow access to your photo library.",
       );
-      return;
-    }
-
-    let subStatus = subscriptionStatus;
-    if (!subStatus) {
-      subStatus = await checkSubscription();
-      setSubscriptionStatus(subStatus);
-    }
-
-    const realPhotos = photos.filter((p) => !p.key.includes("/thumbs/"));
-    const maxPhotos = subStatus?.limits?.maxPhotosPerCollection ?? 10;
-    if (!subStatus?.isSubscribed && realPhotos.length >= maxPhotos) {
-      if (!isOwner) {
-        // Shared collection — friendly toast, not paywall
-        showToast(
-          `This collection has ${realPhotos.length} photos. Subscribe to add more.`,
-          "📸",
-        );
-      } else {
-        setShowPaywall(true);
-      }
       return;
     }
 
@@ -586,11 +612,9 @@ export default function CollectionPage() {
           </TouchableOpacity>
         </View>
 
-        {/* Center empty — collection name lives in the banner below */}
         <View style={styles.headerCenter} />
 
         <View style={styles.headerRight}>
-          {/* Upload — all users */}
           <TouchableOpacity
             style={styles.uploadIconButton}
             onPress={uploadPhoto}
@@ -604,7 +628,6 @@ export default function CollectionPage() {
             )}
           </TouchableOpacity>
 
-          {/* Share — owner only */}
           {isOwner && (
             <TouchableOpacity
               style={styles.shareTextButton}
@@ -637,7 +660,6 @@ export default function CollectionPage() {
             </TouchableOpacity>
           )}
 
-          {/* Delete — owner only */}
           {isOwner && (
             <TouchableOpacity
               style={styles.iconButton}
@@ -661,6 +683,9 @@ export default function CollectionPage() {
         </Text>
         <Text style={styles.collectionBannerSubtitle}>
           {photos.length} photo{photos.length !== 1 ? "s" : ""}
+          {subscriptionStatus?.limits?.maxPhotosPerCollection
+            ? ` · ${subscriptionStatus.limits.maxPhotosPerCollection} max`
+            : ""}
         </Text>
       </View>
 
@@ -912,6 +937,7 @@ export default function CollectionPage() {
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
+
       {/* Toast notification */}
       {toast && (
         <Animated.View
@@ -929,20 +955,23 @@ export default function CollectionPage() {
               ],
             },
           ]}
+          pointerEvents="box-none"
         >
           <Text style={styles.toastEmoji}>{toast.emoji}</Text>
           <View style={styles.toastTextContainer}>
             <Text style={styles.toastMessage}>{toast.message}</Text>
-            <Text style={styles.toastAction}>
-              Tap ★ to subscribe for unlimited
-            </Text>
+            {toast.subtext ? (
+              <Text style={styles.toastSubtext}>{toast.subtext}</Text>
+            ) : null}
           </View>
-          <TouchableOpacity
-            onPress={() => router.push("/subscription")}
-            style={styles.toastButton}
-          >
-            <Text style={styles.toastButtonText}>Upgrade</Text>
-          </TouchableOpacity>
+          {toast.showUpgrade && (
+            <TouchableOpacity
+              onPress={() => router.push("/subscription")}
+              style={styles.toastButton}
+            >
+              <Text style={styles.toastButtonText}>Upgrade</Text>
+            </TouchableOpacity>
+          )}
         </Animated.View>
       )}
     </View>
@@ -1269,6 +1298,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(255,60,60,0.2)",
   },
+  removeButtonText: {
+    fontSize: 12,
+    color: "rgba(220,40,40,0.9)",
+    fontWeight: "600",
+  },
+
   // ── Toast ─────────────────────────────────────────────────
   toast: {
     position: "absolute",
@@ -1284,7 +1319,7 @@ const styles = StyleSheet.create({
     gap: 12,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.3,
     shadowRadius: 16,
     elevation: 12,
     zIndex: 999,
@@ -1297,10 +1332,11 @@ const styles = StyleSheet.create({
     color: "#fff",
     lineHeight: 18,
   },
-  toastAction: {
+  toastSubtext: {
     fontSize: 11,
     color: "rgba(255,255,255,0.5)",
-    marginTop: 2,
+    marginTop: 3,
+    lineHeight: 15,
   },
   toastButton: {
     backgroundColor: "#4AE8A0",
