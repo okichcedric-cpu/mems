@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Dimensions,
   Modal,
   Platform,
@@ -59,6 +60,8 @@ export default function CollectionsPage() {
   const [paywallReason, setPaywallReason] = useState<
     "collections" | "photos" | "renewal"
   >("collections");
+  const [collectionToast, setCollectionToast] = useState<string | null>(null);
+  const collectionToastAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -368,6 +371,24 @@ export default function CollectionsPage() {
         },
       ],
     );
+  }
+
+  function showCollectionLimitToast(limit: number) {
+    setCollectionToast(`You've reached your limit of ${limit} collections.`);
+    Animated.sequence([
+      Animated.spring(collectionToastAnim, {
+        toValue: 1,
+        useNativeDriver: true,
+        tension: 80,
+        friction: 10,
+      }),
+      Animated.delay(3500),
+      Animated.timing(collectionToastAnim, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+    ]).start(() => setCollectionToast(null));
   }
 
   async function signOut() {
@@ -683,6 +704,33 @@ export default function CollectionsPage() {
           setSubscriptionStatus(status);
         }}
       />
+      {/* Collection limit toast — for Pro users who hit 20 collections */}
+      {collectionToast && (
+        <Animated.View
+          style={[
+            styles.toast,
+            {
+              opacity: collectionToastAnim,
+              transform: [
+                {
+                  translateY: collectionToastAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [20, 0],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
+          <Text style={styles.toastEmoji}>🗂️</Text>
+          <View style={styles.toastTextContainer}>
+            <Text style={styles.toastMessage}>{collectionToast}</Text>
+            <Text style={styles.toastSubtext}>
+              Delete a collection to make room for a new one.
+            </Text>
+          </View>
+        </Animated.View>
+      )}
     </View>
   );
 }
@@ -968,4 +1016,36 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   createButtonText: { fontSize: 15, color: "#fff", fontWeight: "600" },
+  toast: {
+    position: "absolute",
+    bottom: 32,
+    left: 16,
+    right: 16,
+    backgroundColor: "#1a1a1a",
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 12,
+    zIndex: 999,
+  },
+  toastEmoji: { fontSize: 26 },
+  toastTextContainer: { flex: 1 },
+  toastMessage: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#fff",
+    lineHeight: 18,
+  },
+  toastSubtext: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.5)",
+    marginTop: 2,
+  },
 });
