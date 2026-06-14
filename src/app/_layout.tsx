@@ -24,6 +24,12 @@ export default function RootLayout() {
     }
   }, []);
 
+  useEffect(() => {
+    if (Platform.OS === "web" && typeof document !== "undefined") {
+      document.title = "Mems";
+    }
+  }, []);
+
   // Inject global CSS on web
   useEffect(() => {
     if (Platform.OS === "web") {
@@ -47,18 +53,27 @@ export default function RootLayout() {
 
   // Listen for auth state changes
   useEffect(() => {
-    // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setLoading(false);
     });
 
-    // Listen for login/logout events
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setLoading(false);
+
+      if (Platform.OS === "web" && typeof window !== "undefined") {
+        const url = window.location.href;
+        if (url.includes("access_token") || url.includes("refresh_token")) {
+          window.history.replaceState(
+            {},
+            document.title,
+            window.location.pathname,
+          );
+        }
+      }
     });
 
     return () => subscription.unsubscribe();

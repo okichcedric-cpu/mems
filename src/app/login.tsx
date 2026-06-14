@@ -33,7 +33,13 @@ async function signInWithGoogle() {
   if (Platform.OS === "web") {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: window.location.origin },
+      options: {
+        redirectTo: window.location.origin, // ← just the domain, no path
+        queryParams: {
+          access_type: "offline",
+          prompt: "consent",
+        },
+      },
     });
     if (error) Alert.alert("Error", error.message);
   } else {
