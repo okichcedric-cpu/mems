@@ -3,17 +3,35 @@ import { createClient } from "npm:@supabase/supabase-js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
 };
 
-const FREE_LIMITS = {
-  maxCollections: 3,
-  maxPhotosPerCollection: 10,
-};
-
-const PRO_LIMITS = {
-  maxCollections: 20,
-  maxPhotosPerCollection: 75,
+const TIERS = {
+  free: {
+    label: "Free",
+    maxCollections: 3,
+    maxPhotosPerCollection: 10,
+    price: 0,
+  },
+  small: {
+    label: "Small Album",
+    maxCollections: 15,
+    maxPhotosPerCollection: 35,
+    price: 320,
+  },
+  medium: {
+    label: "Medium Album",
+    maxCollections: 30,
+    maxPhotosPerCollection: 50,
+    price: 600,
+  },
+  big: {
+    label: "Big Album",
+    maxCollections: 50,
+    maxPhotosPerCollection: 75,
+    price: 1150,
+  },
 };
 
 serve(async (req) => {
@@ -25,8 +43,8 @@ serve(async (req) => {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(
-        JSON.stringify({ isSubscribed: false, limits: FREE_LIMITS }),
-        { status: 200, headers: corsHeaders }
+        JSON.stringify({ tier: "free", limits: TIERS.free, isActive: false }),
+        { status: 200, headers: corsHeaders },
       );
     }
 
@@ -41,47 +59,46 @@ serve(async (req) => {
     );
 
     const { data: { user } } = await supabaseAuth.auth.getUser(
-      authHeader.replace("Bearer ", "")
+      authHeader.replace("Bearer ", ""),
     );
 
     if (!user) {
       return new Response(
-        JSON.stringify({ isSubscribed: false, limits: FREE_LIMITS }),
-        { status: 200, headers: corsHeaders }
+        JSON.stringify({ tier: "free", limits: TIERS.free, isActive: false }),
+        { status: 200, headers: corsHeaders },
       );
     }
 
     const { data: subscription } = await supabase
       .from("subscriptions")
-      .select("status, current_period_end, plan")
+      .select("status, tier, one_off, amount, currency")
       .eq("user_id", user.id)
       .maybeSingle();
 
-    const isSubscribed =
-      (subscription?.status === "active" ||
-        subscription?.status === "cancelled") &&
-      subscription?.current_period_end !== null &&
-      new Date(subscription.current_period_end) > new Date();
+    const isActive =
+      subscription?.status === "active" &&
+      ["small", "medium", "big"].includes(subscription?.tier ?? "");
 
-    const wasSubscribed = !!subscription && subscription.status !== "free";
+    const tier = isActive ? subscription!.tier : "free";
+    const limits = TIERS[tier as keyof typeof TIERS] ?? TIERS.free;
 
     return new Response(
       JSON.stringify({
-        isSubscribed: !!isSubscribed,
-        plan: subscription?.plan ?? "free",
-        expiresAt: subscription?.current_period_end ?? null,
-        wasSubscribed,
-        limits: isSubscribed ? PRO_LIMITS : FREE_LIMITS,
+        tier,
+        limits,
+        isActive,
+        amount: subscription?.amount ?? 0,
+        currency: subscription?.currency ?? "KES",
       }),
       {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      },
     );
   } catch (error) {
     return new Response(
-      JSON.stringify({ isSubscribed: false, limits: FREE_LIMITS }),
-      { status: 200, headers: corsHeaders }
+      JSON.stringify({ tier: "free", limits: TIERS.free, isActive: false }),
+      { status: 200, headers: corsHeaders },
     );
   }
 });
