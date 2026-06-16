@@ -17,9 +17,24 @@ import { supabase } from "../utils/supabase";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const IS_WEB = Platform.OS === "web";
-const CARD_WIDTH = IS_WEB
+// Use desktop layout only when screen is wide enough — mobile browsers get the toggle
+const IS_DESKTOP = IS_WEB && SCREEN_WIDTH >= 768;
+const CARD_WIDTH = IS_DESKTOP
   ? Math.min(260, (Math.min(SCREEN_WIDTH, 900) - 80) / 3)
   : SCREEN_WIDTH - 48;
+
+// Re-evaluate on window resize (handles mobile browser orientation changes)
+function useIsDesktop() {
+  const [isDesktop, setIsDesktop] = useState(IS_DESKTOP);
+  useEffect(() => {
+    if (!IS_WEB) return;
+    const handler = () => setIsDesktop(window.innerWidth >= 768);
+    window.addEventListener("resize", handler);
+    handler(); // run immediately in case already resized
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+  return isDesktop;
+}
 
 type Tier = "free" | "small" | "medium" | "big";
 type PaidTier = Exclude<Tier, "free">;
@@ -104,7 +119,11 @@ function featureValue(tier: PaidTier, key: string): string {
 
 export default function SubscriptionPage() {
   const router = useRouter();
+  const isDesktop = useIsDesktop(); // ← responsive to resize
   const [status, setStatus] = useState<SubStatus | null>(null);
+  const cardWidth = isDesktop
+    ? Math.min(260, (Math.min(SCREEN_WIDTH, 900) - 80) / 3)
+    : SCREEN_WIDTH - 48;
   const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState<Tier | null>(null);
   // Mobile-only: which tier is selected in the toggle
@@ -280,7 +299,7 @@ export default function SubscriptionPage() {
           <View style={styles.centered}>
             <ActivityIndicator size="large" color="#111" />
           </View>
-        ) : IS_WEB ? (
+        ) : isDesktop ? (
           /* ══════════════════════════════════════════
              WEB — three cards side by side
           ══════════════════════════════════════════ */
@@ -294,7 +313,7 @@ export default function SubscriptionPage() {
 
                 const cardStyle = [
                   styles.webCard,
-                  { width: CARD_WIDTH },
+                  { width: cardWidth },
                   isFeatured && styles.webCardFeatured,
                   isActive && { borderColor: config.accent, borderWidth: 2 },
                 ];
@@ -478,7 +497,7 @@ export default function SubscriptionPage() {
             <Animated.View
               style={[
                 styles.mobileCard,
-                { opacity: cardFade, width: CARD_WIDTH },
+                { opacity: cardFade, width: cardWidth },
               ]}
             >
               {(() => {
@@ -746,7 +765,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 20,
-    paddingTop: IS_WEB ? 20 : 56,
+    paddingTop: IS_DESKTOP ? 20 : 56,
     paddingBottom: 16,
     backgroundColor: "#fff",
     borderBottomWidth: 1,
@@ -765,7 +784,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   heroTitle: {
-    fontSize: IS_WEB ? 28 : 22,
+    fontSize: IS_DESKTOP ? 28 : 22,
     fontWeight: "800",
     color: "#111",
     textAlign: "center",
