@@ -17,20 +17,15 @@ import { supabase } from "../utils/supabase";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const IS_WEB = Platform.OS === "web";
-// Use desktop layout only when screen is wide enough — mobile browsers get the toggle
 const IS_DESKTOP = IS_WEB && SCREEN_WIDTH >= 768;
-const CARD_WIDTH = IS_DESKTOP
-  ? Math.min(260, (Math.min(SCREEN_WIDTH, 900) - 80) / 3)
-  : SCREEN_WIDTH - 48;
 
-// Re-evaluate on window resize (handles mobile browser orientation changes)
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState(IS_DESKTOP);
   useEffect(() => {
     if (!IS_WEB) return;
     const handler = () => setIsDesktop(window.innerWidth >= 768);
     window.addEventListener("resize", handler);
-    handler(); // run immediately in case already resized
+    handler();
     return () => window.removeEventListener("resize", handler);
   }, []);
   return isDesktop;
@@ -38,6 +33,7 @@ function useIsDesktop() {
 
 type Tier = "free" | "small" | "medium" | "big";
 type PaidTier = Exclude<Tier, "free">;
+type AllTier = Tier;
 
 type TierConfig = {
   label: string;
@@ -49,6 +45,18 @@ type TierConfig = {
   accent: string;
   bg: string;
   featured: boolean;
+};
+
+const FREE_TIER: TierConfig = {
+  label: "Free",
+  emoji: "📓",
+  tagline: "Start your memory journey — no payment needed",
+  maxCollections: 3,
+  maxPhotosPerCollection: 10,
+  price: 0,
+  accent: "#888",
+  bg: "#f5f5f5",
+  featured: false,
 };
 
 const TIERS: Record<PaidTier, TierConfig> = {
@@ -87,6 +95,9 @@ const TIERS: Record<PaidTier, TierConfig> = {
   },
 };
 
+const ALL_TIERS: AllTier[] = ["free", "small", "medium", "big"];
+const PAID_TIERS: PaidTier[] = ["small", "medium", "big"];
+
 const FEATURES: {
   icon: React.ComponentProps<typeof Ionicons>["name"];
   key: string;
@@ -103,38 +114,288 @@ const FEATURES: {
 type SubStatus = {
   tier: Tier;
   isActive: boolean;
-  limits: { maxCollections: number; maxPhotosPerCollection: number };
+  limits: {
+    maxCollections: number;
+    maxPhotosPerCollection: number;
+    label?: string;
+  };
 };
 
-function featureValue(tier: PaidTier, key: string): string {
+function getTierConfig(tier: AllTier): TierConfig {
+  return tier === "free" ? FREE_TIER : TIERS[tier as PaidTier];
+}
+
+function featureValue(tier: AllTier, key: string): string {
+  const config = getTierConfig(tier);
   switch (key) {
     case "collections":
-      return `${TIERS[tier].maxCollections}`;
+      return `${config.maxCollections}`;
     case "photos":
-      return `${TIERS[tier].maxPhotosPerCollection}`;
+      return `${config.maxPhotosPerCollection}`;
     default:
       return "✓";
   }
 }
 
+// ── Free card — web ────────────────────────────────────────
+function FreeCard({
+  isCurrentTier,
+  width,
+}: {
+  isCurrentTier: boolean;
+  width: number;
+}) {
+  const config = FREE_TIER;
+  return (
+    <View
+      style={[
+        freeCardStyles.card,
+        { width },
+        isCurrentTier && freeCardStyles.cardActive,
+      ]}
+    >
+      {isCurrentTier && (
+        <View style={freeCardStyles.badge}>
+          <Text style={freeCardStyles.badgeText}>✓ Current Plan</Text>
+        </View>
+      )}
+      <View style={[freeCardStyles.top, { backgroundColor: config.bg }]}>
+        <Text style={freeCardStyles.emoji}>{config.emoji}</Text>
+        <Text style={freeCardStyles.label}>{config.label}</Text>
+        <Text style={freeCardStyles.tagline}>{config.tagline}</Text>
+      </View>
+      <View style={freeCardStyles.stats}>
+        <View style={freeCardStyles.stat}>
+          <Text style={freeCardStyles.statValue}>{config.maxCollections}</Text>
+          <Text style={freeCardStyles.statLabel}>Albums</Text>
+        </View>
+        <View style={freeCardStyles.statDivider} />
+        <View style={freeCardStyles.stat}>
+          <Text style={freeCardStyles.statValue}>
+            {config.maxPhotosPerCollection}
+          </Text>
+          <Text style={freeCardStyles.statLabel}>Photos each</Text>
+        </View>
+      </View>
+      <View style={freeCardStyles.pricing}>
+        <Text style={freeCardStyles.price}>Free</Text>
+        <Text style={freeCardStyles.priceNote}>always</Text>
+      </View>
+      <View style={freeCardStyles.button}>
+        <Text style={freeCardStyles.buttonText}>
+          {isCurrentTier ? "✓ Your current plan" : "Always free"}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+// ── Free card — mobile ─────────────────────────────────────
+function FreeCardMobile({ isCurrentTier }: { isCurrentTier: boolean }) {
+  const config = FREE_TIER;
+  return (
+    <>
+      <View style={[styles.mobileCardHeader, { backgroundColor: config.bg }]}>
+        {isCurrentTier && (
+          <View
+            style={[styles.mobileCardBadge, { backgroundColor: config.accent }]}
+          >
+            <Text style={styles.mobileCardBadgeText}>✓ Current Plan</Text>
+          </View>
+        )}
+        <Text style={styles.mobileCardEmoji}>{config.emoji}</Text>
+        <Text style={styles.mobileCardLabel}>Free Album</Text>
+        <Text style={styles.mobileCardTagline}>{config.tagline}</Text>
+      </View>
+
+      <View style={styles.mobileCardStats}>
+        <View style={styles.mobileCardStat}>
+          <Text style={[styles.mobileStatValue, { color: config.accent }]}>
+            {config.maxCollections}
+          </Text>
+          <Text style={styles.mobileStatLabel}>Collections</Text>
+        </View>
+        <View style={styles.mobileCardStatDivider} />
+        <View style={styles.mobileCardStat}>
+          <Text style={[styles.mobileStatValue, { color: config.accent }]}>
+            {config.maxPhotosPerCollection}
+          </Text>
+          <Text style={styles.mobileStatLabel}>Photos each</Text>
+        </View>
+        <View style={styles.mobileCardStatDivider} />
+        <View style={styles.mobileCardStat}>
+          <Text style={[styles.mobileStatValue, { color: config.accent }]}>
+            Free
+          </Text>
+          <Text style={styles.mobileStatLabel}>Always</Text>
+        </View>
+      </View>
+
+      <View style={styles.mobileFeatures}>
+        {[
+          "3 collections",
+          "10 photos per collection",
+          "Share with family & friends",
+          "Secure cloud storage",
+        ].map((feat) => (
+          <View key={feat} style={styles.mobileFeatureRow}>
+            <View
+              style={[
+                styles.mobileFeatureDot,
+                { backgroundColor: config.accent },
+              ]}
+            />
+            <Text style={styles.mobileFeatureText}>{feat}</Text>
+          </View>
+        ))}
+      </View>
+
+      <View
+        style={[
+          styles.mobileCardButton,
+          {
+            backgroundColor: "transparent",
+            borderWidth: 1,
+            borderColor: "#ddd",
+            margin: 20,
+          },
+        ]}
+      >
+        <Text style={[styles.mobileCardButtonText, { color: "#888" }]}>
+          {isCurrentTier ? "✓ Your current plan" : "Always free"}
+        </Text>
+      </View>
+    </>
+  );
+}
+
+// ── Comparison table ───────────────────────────────────────
+function ComparisonTable({
+  activeTier,
+  isActiveFree,
+  tableWidth,
+}: {
+  activeTier: PaidTier | null;
+  isActiveFree: boolean;
+  tableWidth: number;
+}) {
+  return (
+    <View style={[tableStyles.table, { width: tableWidth }]}>
+      <Text style={tableStyles.title}>Compare all plans</Text>
+
+      {/* Header */}
+      <View style={tableStyles.row}>
+        <View style={tableStyles.featureCol} />
+        {ALL_TIERS.map((tier) => {
+          const config = getTierConfig(tier);
+          const isActive = tier === "free" ? isActiveFree : activeTier === tier;
+          return (
+            <View key={tier} style={tableStyles.valueCol}>
+              <Text style={tableStyles.headerEmoji}>{config.emoji}</Text>
+              <Text
+                style={[
+                  tableStyles.headerLabel,
+                  { color: isActive ? config.accent : "#999" },
+                  isActive && { fontWeight: "800" },
+                ]}
+              >
+                {config.label}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+
+      <View style={tableStyles.divider} />
+
+      {FEATURES.map((feature, i) => (
+        <View
+          key={feature.key}
+          style={[tableStyles.row, i % 2 === 0 && tableStyles.rowAlt]}
+        >
+          <View style={tableStyles.featureCol}>
+            <Ionicons name={feature.icon} size={13} color="#999" />
+            <Text style={tableStyles.featureLabel}>{feature.label}</Text>
+          </View>
+          {ALL_TIERS.map((tier) => {
+            const config = getTierConfig(tier);
+            const isActive =
+              tier === "free" ? isActiveFree : activeTier === tier;
+            return (
+              <View key={tier} style={tableStyles.valueCol}>
+                <Text
+                  style={[
+                    tableStyles.value,
+                    isActive && { color: config.accent, fontWeight: "700" },
+                  ]}
+                >
+                  {featureValue(tier, feature.key)}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      ))}
+
+      <View style={tableStyles.divider} />
+
+      {/* Price row */}
+      <View style={tableStyles.row}>
+        <View style={tableStyles.featureCol}>
+          <Ionicons name="pricetag-outline" size={13} color="#999" />
+          <Text style={tableStyles.featureLabel}>Price (KES)</Text>
+        </View>
+        {ALL_TIERS.map((tier) => {
+          const config = getTierConfig(tier);
+          const isActive = tier === "free" ? isActiveFree : activeTier === tier;
+          return (
+            <View key={tier} style={tableStyles.valueCol}>
+              {tier === "free" ? (
+                <Text
+                  style={[
+                    tableStyles.price,
+                    { color: isActive ? config.accent : "#bbb" },
+                  ]}
+                >
+                  Free
+                </Text>
+              ) : (
+                <>
+                  <Text
+                    style={[
+                      tableStyles.price,
+                      { color: isActive ? config.accent : "#444" },
+                    ]}
+                  >
+                    {config.price.toLocaleString()}
+                  </Text>
+                  <Text style={tableStyles.priceSub}>once</Text>
+                </>
+              )}
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+// ── Main component ─────────────────────────────────────────
 export default function SubscriptionPage() {
   const router = useRouter();
-  const isDesktop = useIsDesktop(); // ← responsive to resize
+  const isDesktop = useIsDesktop();
   const [status, setStatus] = useState<SubStatus | null>(null);
-  const cardWidth = isDesktop
-    ? Math.min(260, (Math.min(SCREEN_WIDTH, 900) - 80) / 3)
-    : SCREEN_WIDTH - 48;
   const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState<Tier | null>(null);
-  // Mobile-only: which tier is selected in the toggle
-  const [selectedTier, setSelectedTier] = useState<PaidTier>("medium");
+  const [selectedTier, setSelectedTier] = useState<AllTier>("medium");
 
-  // Animated underline for mobile toggle
-  const toggleAnim = useRef(new Animated.Value(1)).current; // 0=small 1=medium 2=big
-  // Pulse for featured
+  const toggleAnim = useRef(new Animated.Value(1)).current; // index in ALL_TIERS (0=free)
   const pulseAnim = useRef(new Animated.Value(1)).current;
-  // Card fade for tier switch
   const cardFade = useRef(new Animated.Value(1)).current;
+
+  const cardWidth = isDesktop
+    ? Math.min(220, (Math.min(SCREEN_WIDTH, 960) - 100) / 4)
+    : SCREEN_WIDTH - 48;
 
   useEffect(() => {
     Animated.loop(
@@ -169,15 +430,14 @@ export default function SubscriptionPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  function switchTier(tier: PaidTier) {
-    // Fade out → switch → fade in
+  function switchTier(tier: AllTier) {
     Animated.timing(cardFade, {
       toValue: 0,
       duration: 120,
       useNativeDriver: true,
     }).start(() => {
       setSelectedTier(tier);
-      const idx = (["small", "medium", "big"] as PaidTier[]).indexOf(tier);
+      const idx = ALL_TIERS.indexOf(tier);
       Animated.timing(toggleAnim, {
         toValue: idx,
         duration: 200,
@@ -203,20 +463,37 @@ export default function SubscriptionPage() {
         ? `${window.location.origin}/subscription-callback`
         : "mems://subscription-callback";
 
-      const { data, error } = await supabase.functions.invoke(
-        "create-subscription",
-        {
-          body: { tier, callbackUrl },
-        },
-      );
-      if (error) throw new Error(error.message);
-
       if (IS_WEB) {
         const popup = window.open(
-          data.redirectUrl,
+          "",
           "pesapal",
           "width=620,height=720,left=200,top=80",
         );
+        if (!popup) {
+          const { data, error } = await supabase.functions.invoke(
+            "create-subscription",
+            {
+              body: { tier, callbackUrl },
+            },
+          );
+          if (error) throw new Error(error.message);
+          window.location.href = data.redirectUrl;
+          return;
+        }
+        popup.document.write(
+          `<html><body style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f9f9f9;flex-direction:column;gap:16px"><div style="font-size:48px">📸</div><div style="font-size:18px;font-weight:600">Opening secure payment...</div></body></html>`,
+        );
+        const { data, error } = await supabase.functions.invoke(
+          "create-subscription",
+          {
+            body: { tier, callbackUrl },
+          },
+        );
+        if (error) {
+          popup.close();
+          throw new Error(error.message);
+        }
+        popup.location.href = data.redirectUrl;
         const poll = setInterval(async () => {
           if (popup?.closed) {
             clearInterval(poll);
@@ -245,17 +522,15 @@ export default function SubscriptionPage() {
   }
 
   const activeTier = status?.isActive ? (status.tier as PaidTier) : null;
-  const tiers: PaidTier[] = ["small", "medium", "big"];
+  const isActiveFree = !status?.isActive;
 
-  // Pill position interpolation for mobile toggle
   const pillLeft = toggleAnim.interpolate({
-    inputRange: [0, 1, 2],
-    outputRange: ["0%", "33.33%", "66.66%"],
+    inputRange: [0, 1, 2, 3],
+    outputRange: ["0%", "25%", "50%", "75%"],
   });
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity
           onPress={() => router.back()}
@@ -271,7 +546,6 @@ export default function SubscriptionPage() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.page}
       >
-        {/* Hero */}
         <View style={styles.hero}>
           <Text style={styles.heroTitle}>Your life's best moments</Text>
           <Text style={styles.heroSub}>
@@ -279,7 +553,6 @@ export default function SubscriptionPage() {
           </Text>
         </View>
 
-        {/* Active plan pill */}
         {status?.isActive && activeTier && (
           <View
             style={[
@@ -294,42 +567,50 @@ export default function SubscriptionPage() {
             </Text>
           </View>
         )}
+        {isActiveFree && (
+          <View style={[styles.activePill, { backgroundColor: "#888" }]}>
+            <Ionicons name="checkmark-circle" size={14} color="#fff" />
+            <Text style={styles.activePillText}>📓 Free Plan is active</Text>
+          </View>
+        )}
 
         {loading ? (
           <View style={styles.centered}>
             <ActivityIndicator size="large" color="#111" />
           </View>
         ) : isDesktop ? (
-          /* ══════════════════════════════════════════
-             WEB — three cards side by side
-          ══════════════════════════════════════════ */
+          /* ══ DESKTOP — four cards side by side ══ */
           <>
             <View style={styles.webCardRow}>
-              {tiers.map((tier) => {
+              {/* Free card */}
+              <FreeCard isCurrentTier={isActiveFree} width={cardWidth} />
+
+              {/* Paid cards */}
+              {PAID_TIERS.map((tier) => {
                 const config = TIERS[tier];
                 const isActive = activeTier === tier;
                 const isFeatured = config.featured;
                 const isPurchasing = purchasing === tier;
-
+                const CardEl = isFeatured ? Animated.View : View;
                 const cardStyle = [
                   styles.webCard,
                   { width: cardWidth },
                   isFeatured && styles.webCardFeatured,
                   isActive && { borderColor: config.accent, borderWidth: 2 },
                 ];
-
-                const CardEl = isFeatured ? Animated.View : View;
-
                 return (
                   <CardEl
                     key={tier}
                     style={
                       isFeatured
-                        ? [cardStyle, { transform: [{ scale: pulseAnim }] }]
-                        : cardStyle
+                        ? ([
+                            cardStyle,
+                            { transform: [{ scale: pulseAnim }] },
+                          ] as any)
+                        : (cardStyle as any)
                     }
                   >
-                    {isFeatured && (
+                    {isFeatured && !isActive && (
                       <View
                         style={[
                           styles.webCardBadge,
@@ -351,7 +632,6 @@ export default function SubscriptionPage() {
                         <Text style={styles.webCardBadgeText}>✓ Your Plan</Text>
                       </View>
                     )}
-
                     <View
                       style={[
                         styles.webCardTop,
@@ -364,7 +644,6 @@ export default function SubscriptionPage() {
                         {config.tagline}
                       </Text>
                     </View>
-
                     <View style={styles.webCardStats}>
                       <View style={styles.webCardStat}>
                         <Text
@@ -390,7 +669,6 @@ export default function SubscriptionPage() {
                         <Text style={styles.webCardStatLabel}>Photos each</Text>
                       </View>
                     </View>
-
                     <View style={styles.webCardPricing}>
                       <Text style={styles.webCardCurrency}>KES</Text>
                       <Text
@@ -400,7 +678,6 @@ export default function SubscriptionPage() {
                       </Text>
                       <Text style={styles.webCardOnce}>once</Text>
                     </View>
-
                     <TouchableOpacity
                       style={[
                         styles.webCardButton,
@@ -440,29 +717,27 @@ export default function SubscriptionPage() {
               })}
             </View>
 
-            {/* Web comparison table */}
             <ComparisonTable
-              tiers={tiers}
               activeTier={activeTier}
-              tableWidth={Math.min(860, SCREEN_WIDTH - 48)}
+              isActiveFree={isActiveFree}
+              tableWidth={Math.min(960, SCREEN_WIDTH - 48)}
             />
           </>
         ) : (
-          /* ══════════════════════════════════════════
-             MOBILE — segmented toggle + single card
-          ══════════════════════════════════════════ */
+          /* ══ MOBILE — four-way toggle + single card ══ */
           <>
-            {/* Three-way pill toggle */}
+            {/* Toggle */}
             <View style={styles.toggleWrapper}>
-              <View style={styles.toggleTrack}>
-                {/* Animated sliding pill */}
+              <View style={[styles.toggleTrack]}>
                 <Animated.View
-                  style={[styles.togglePill, { left: pillLeft }]}
+                  style={[styles.togglePill, { left: pillLeft, width: "25%" }]}
                   pointerEvents="none"
                 />
-                {tiers.map((tier) => {
-                  const config = TIERS[tier];
+                {ALL_TIERS.map((tier) => {
+                  const config = getTierConfig(tier);
                   const isSelected = selectedTier === tier;
+                  const isTierActive =
+                    tier === "free" ? isActiveFree : activeTier === tier;
                   return (
                     <TouchableOpacity
                       key={tier}
@@ -479,7 +754,7 @@ export default function SubscriptionPage() {
                       >
                         {config.label}
                       </Text>
-                      {activeTier === tier && (
+                      {isTierActive && (
                         <View
                           style={[
                             styles.toggleDot,
@@ -493,180 +768,180 @@ export default function SubscriptionPage() {
               </View>
             </View>
 
-            {/* Single animated card */}
+            {/* Card */}
             <Animated.View
               style={[
                 styles.mobileCard,
                 { opacity: cardFade, width: cardWidth },
               ]}
             >
-              {(() => {
-                const config = TIERS[selectedTier];
-                const isActive = activeTier === selectedTier;
-                const isPurchasing = purchasing === selectedTier;
-
-                return (
-                  <>
-                    {/* Card header */}
-                    <View
-                      style={[
-                        styles.mobileCardHeader,
-                        { backgroundColor: config.bg },
-                      ]}
-                    >
-                      {config.featured && !isActive && (
-                        <View
-                          style={[
-                            styles.mobileCardBadge,
-                            { backgroundColor: config.accent },
-                          ]}
-                        >
-                          <Text style={styles.mobileCardBadgeText}>
-                            ⭐ Most Popular
-                          </Text>
-                        </View>
-                      )}
-                      {isActive && (
-                        <View
-                          style={[
-                            styles.mobileCardBadge,
-                            { backgroundColor: config.accent },
-                          ]}
-                        >
-                          <Text style={styles.mobileCardBadgeText}>
-                            ✓ Your Plan
-                          </Text>
-                        </View>
-                      )}
-                      <Text style={styles.mobileCardEmoji}>{config.emoji}</Text>
-                      <Text style={styles.mobileCardLabel}>
-                        {config.label} Album
-                      </Text>
-                      <Text style={styles.mobileCardTagline}>
-                        {config.tagline}
-                      </Text>
-                    </View>
-
-                    {/* Stats row */}
-                    <View style={styles.mobileCardStats}>
-                      <View style={styles.mobileCardStat}>
-                        <Text
-                          style={[
-                            styles.mobileStatValue,
-                            { color: config.accent },
-                          ]}
-                        >
-                          {config.maxCollections}
-                        </Text>
-                        <Text style={styles.mobileStatLabel}>Collections</Text>
-                      </View>
-                      <View style={styles.mobileCardStatDivider} />
-                      <View style={styles.mobileCardStat}>
-                        <Text
-                          style={[
-                            styles.mobileStatValue,
-                            { color: config.accent },
-                          ]}
-                        >
-                          {config.maxPhotosPerCollection}
-                        </Text>
-                        <Text style={styles.mobileStatLabel}>Photos each</Text>
-                      </View>
-                      <View style={styles.mobileCardStatDivider} />
-                      <View style={styles.mobileCardStat}>
-                        <Text
-                          style={[
-                            styles.mobileStatValue,
-                            { color: config.accent },
-                          ]}
-                        >
-                          KES {config.price.toLocaleString()}
-                        </Text>
-                        <Text style={styles.mobileStatLabel}>One-time</Text>
-                      </View>
-                    </View>
-
-                    {/* Features list */}
-                    <View style={styles.mobileFeatures}>
-                      {[
-                        `${config.maxCollections} collections`,
-                        `${config.maxPhotosPerCollection} photos per collection`,
-                        "Share with family & friends",
-                        "Secure cloud storage",
-                        "Yours forever — no renewals",
-                        "Multi-user uploads",
-                      ].map((feat) => (
-                        <View key={feat} style={styles.mobileFeatureRow}>
+              {selectedTier === "free" ? (
+                <FreeCardMobile isCurrentTier={isActiveFree} />
+              ) : (
+                (() => {
+                  const config = TIERS[selectedTier as PaidTier];
+                  const isActive = activeTier === selectedTier;
+                  const isPurchasing = purchasing === selectedTier;
+                  return (
+                    <>
+                      <View
+                        style={[
+                          styles.mobileCardHeader,
+                          { backgroundColor: config.bg },
+                        ]}
+                      >
+                        {config.featured && !isActive && (
                           <View
                             style={[
-                              styles.mobileFeatureDot,
+                              styles.mobileCardBadge,
                               { backgroundColor: config.accent },
                             ]}
-                          />
-                          <Text style={styles.mobileFeatureText}>{feat}</Text>
-                        </View>
-                      ))}
-                    </View>
-
-                    {/* CTA */}
-                    <TouchableOpacity
-                      style={[
-                        styles.mobileCardButton,
-                        {
-                          backgroundColor: isActive
-                            ? "transparent"
-                            : config.accent,
-                        },
-                        isActive && {
-                          borderWidth: 2,
-                          borderColor: config.accent,
-                        },
-                        isPurchasing && { opacity: 0.7 },
-                      ]}
-                      onPress={() => handlePurchase(selectedTier)}
-                      disabled={!!purchasing || isActive}
-                      activeOpacity={0.8}
-                    >
-                      {isPurchasing ? (
-                        <ActivityIndicator
-                          color={isActive ? config.accent : "#fff"}
-                          size="small"
-                        />
-                      ) : (
-                        <>
-                          <Text
+                          >
+                            <Text style={styles.mobileCardBadgeText}>
+                              ⭐ Most Popular
+                            </Text>
+                          </View>
+                        )}
+                        {isActive && (
+                          <View
                             style={[
-                              styles.mobileCardButtonText,
-                              isActive && { color: config.accent },
+                              styles.mobileCardBadge,
+                              { backgroundColor: config.accent },
                             ]}
                           >
-                            {isActive
-                              ? "✓ Active plan"
-                              : `Get ${config.label} — KES ${config.price.toLocaleString()}`}
-                          </Text>
-                          {!isActive && (
-                            <Text style={styles.mobileCardButtonSub}>
-                              One-time payment
+                            <Text style={styles.mobileCardBadgeText}>
+                              ✓ Your Plan
                             </Text>
-                          )}
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  </>
-                );
-              })()}
+                          </View>
+                        )}
+                        <Text style={styles.mobileCardEmoji}>
+                          {config.emoji}
+                        </Text>
+                        <Text style={styles.mobileCardLabel}>
+                          {config.label} Album
+                        </Text>
+                        <Text style={styles.mobileCardTagline}>
+                          {config.tagline}
+                        </Text>
+                      </View>
+                      <View style={styles.mobileCardStats}>
+                        <View style={styles.mobileCardStat}>
+                          <Text
+                            style={[
+                              styles.mobileStatValue,
+                              { color: config.accent },
+                            ]}
+                          >
+                            {config.maxCollections}
+                          </Text>
+                          <Text style={styles.mobileStatLabel}>
+                            Collections
+                          </Text>
+                        </View>
+                        <View style={styles.mobileCardStatDivider} />
+                        <View style={styles.mobileCardStat}>
+                          <Text
+                            style={[
+                              styles.mobileStatValue,
+                              { color: config.accent },
+                            ]}
+                          >
+                            {config.maxPhotosPerCollection}
+                          </Text>
+                          <Text style={styles.mobileStatLabel}>
+                            Photos each
+                          </Text>
+                        </View>
+                        <View style={styles.mobileCardStatDivider} />
+                        <View style={styles.mobileCardStat}>
+                          <Text
+                            style={[
+                              styles.mobileStatValue,
+                              { color: config.accent },
+                            ]}
+                          >
+                            KES {config.price.toLocaleString()}
+                          </Text>
+                          <Text style={styles.mobileStatLabel}>One-time</Text>
+                        </View>
+                      </View>
+                      <View style={styles.mobileFeatures}>
+                        {[
+                          `${config.maxCollections} collections`,
+                          `${config.maxPhotosPerCollection} photos per collection`,
+                          "Share with family & friends",
+                          "Secure cloud storage",
+                          "Yours forever — no renewals",
+                          "Multi-user uploads",
+                        ].map((feat) => (
+                          <View key={feat} style={styles.mobileFeatureRow}>
+                            <View
+                              style={[
+                                styles.mobileFeatureDot,
+                                { backgroundColor: config.accent },
+                              ]}
+                            />
+                            <Text style={styles.mobileFeatureText}>{feat}</Text>
+                          </View>
+                        ))}
+                      </View>
+                      <TouchableOpacity
+                        style={[
+                          styles.mobileCardButton,
+                          {
+                            backgroundColor: isActive
+                              ? "transparent"
+                              : config.accent,
+                          },
+                          isActive && {
+                            borderWidth: 2,
+                            borderColor: config.accent,
+                          },
+                          isPurchasing && { opacity: 0.7 },
+                        ]}
+                        onPress={() => handlePurchase(selectedTier as PaidTier)}
+                        disabled={!!purchasing || isActive}
+                        activeOpacity={0.8}
+                      >
+                        {isPurchasing ? (
+                          <ActivityIndicator
+                            color={isActive ? config.accent : "#fff"}
+                            size="small"
+                          />
+                        ) : (
+                          <>
+                            <Text
+                              style={[
+                                styles.mobileCardButtonText,
+                                isActive && { color: config.accent },
+                              ]}
+                            >
+                              {isActive
+                                ? "✓ Active plan"
+                                : `Get ${config.label} — KES ${config.price.toLocaleString()}`}
+                            </Text>
+                            {!isActive && (
+                              <Text style={styles.mobileCardButtonSub}>
+                                One-time payment
+                              </Text>
+                            )}
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    </>
+                  );
+                })()
+              )}
             </Animated.View>
 
-            {/* Mobile comparison table */}
             <ComparisonTable
-              tiers={tiers}
               activeTier={activeTier}
-              tableWidth={SCREEN_WIDTH - 32}
+              isActiveFree={isActiveFree}
+              tableWidth={cardWidth}
             />
           </>
         )}
 
-        {/* Footer */}
         <Text style={styles.footer}>
           Payments processed securely by Pesapal.{"\n"}
           Supports M-Pesa, Visa and Mastercard.
@@ -676,107 +951,87 @@ export default function SubscriptionPage() {
   );
 }
 
-// ── Shared comparison table component ──────────────────────
-
-function ComparisonTable({
-  tiers,
-  activeTier,
-  tableWidth,
-}: {
-  tiers: PaidTier[];
-  activeTier: PaidTier | null;
-  tableWidth: number;
-}) {
-  return (
-    <View style={[tableStyles.table, { width: tableWidth }]}>
-      <Text style={tableStyles.title}>Compare plans</Text>
-
-      {/* Header row */}
-      <View style={tableStyles.row}>
-        <View style={tableStyles.featureCol} />
-        {tiers.map((tier) => (
-          <View key={tier} style={tableStyles.valueCol}>
-            <Text style={tableStyles.headerEmoji}>{TIERS[tier].emoji}</Text>
-            <Text
-              style={[tableStyles.headerLabel, { color: TIERS[tier].accent }]}
-            >
-              {TIERS[tier].label}
-            </Text>
-          </View>
-        ))}
-      </View>
-
-      <View style={tableStyles.divider} />
-
-      {FEATURES.map((feature, i) => (
-        <View
-          key={feature.key}
-          style={[tableStyles.row, i % 2 === 0 && tableStyles.rowAlt]}
-        >
-          <View style={tableStyles.featureCol}>
-            <Ionicons name={feature.icon} size={13} color="#999" />
-            <Text style={tableStyles.featureLabel}>{feature.label}</Text>
-          </View>
-          {tiers.map((tier) => (
-            <View key={tier} style={tableStyles.valueCol}>
-              <Text
-                style={[
-                  tableStyles.value,
-                  activeTier === tier && {
-                    color: TIERS[tier].accent,
-                    fontWeight: "700",
-                  },
-                ]}
-              >
-                {featureValue(tier, feature.key)}
-              </Text>
-            </View>
-          ))}
-        </View>
-      ))}
-
-      <View style={tableStyles.divider} />
-
-      {/* Price row */}
-      <View style={tableStyles.row}>
-        <View style={tableStyles.featureCol}>
-          <Ionicons name="pricetag-outline" size={13} color="#999" />
-          <Text style={tableStyles.featureLabel}>Price (KES)</Text>
-        </View>
-        {tiers.map((tier) => (
-          <View key={tier} style={tableStyles.valueCol}>
-            <Text style={[tableStyles.price, { color: TIERS[tier].accent }]}>
-              {TIERS[tier].price.toLocaleString()}
-            </Text>
-            <Text style={tableStyles.priceSub}>once</Text>
-          </View>
-        ))}
-      </View>
-    </View>
-  );
-}
+// ── Styles ────────────────────────────────────────────────
+const freeCardStyles = StyleSheet.create({
+  card: {
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#e8e8e8",
+    ...Platform.select({
+      web: { boxShadow: "0 4px 20px rgba(0,0,0,0.05)" } as any,
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.06,
+        shadowRadius: 10,
+      },
+      android: { elevation: 3 },
+    }),
+  },
+  cardActive: { borderColor: "#888", borderWidth: 2 },
+  badge: { backgroundColor: "#888", paddingVertical: 5, alignItems: "center" },
+  badgeText: { fontSize: 11, fontWeight: "700", color: "#fff" },
+  top: { padding: 20, alignItems: "center", gap: 4 },
+  emoji: { fontSize: 34, marginBottom: 4 },
+  label: { fontSize: 17, fontWeight: "800", color: "#111" },
+  tagline: {
+    fontSize: 12,
+    color: "#666",
+    textAlign: "center",
+    lineHeight: 17,
+    marginTop: 4,
+  },
+  stats: {
+    flexDirection: "row",
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "#f0f0f0",
+  },
+  stat: { flex: 1, alignItems: "center", paddingVertical: 14 },
+  statValue: { fontSize: 26, fontWeight: "900", color: "#bbb" },
+  statLabel: { fontSize: 11, color: "#bbb", marginTop: 2 },
+  statDivider: { width: 1, backgroundColor: "#f0f0f0" },
+  pricing: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "center",
+    paddingTop: 16,
+    paddingBottom: 8,
+    gap: 6,
+  },
+  price: { fontSize: 26, fontWeight: "900", color: "#bbb" },
+  priceNote: { fontSize: 12, color: "#ddd", marginBottom: 4 },
+  button: {
+    margin: 16,
+    marginTop: 8,
+    borderRadius: 12,
+    padding: 13,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#eee",
+    backgroundColor: "#fafafa",
+  },
+  buttonText: { color: "#bbb", fontSize: 13, fontWeight: "600" },
+});
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f7f7f9" },
-
-  // ── Header ────────────────────────────────────────────────
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 20,
-    paddingTop: IS_DESKTOP ? 20 : 56,
+    paddingTop: IS_WEB ? 20 : 56,
     paddingBottom: 16,
     backgroundColor: "#fff",
     borderBottomWidth: 1,
     borderBottomColor: "#eee",
   },
   headerTitle: { fontSize: 17, fontWeight: "700", color: "#111" },
-
   page: { paddingBottom: 60, alignItems: "center" },
   centered: { paddingTop: 60 },
-
-  // ── Hero ─────────────────────────────────────────────────
   hero: {
     alignItems: "center",
     paddingTop: 28,
@@ -784,7 +1039,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   heroTitle: {
-    fontSize: IS_DESKTOP ? 28 : 22,
+    fontSize: IS_WEB ? 28 : 22,
     fontWeight: "800",
     color: "#111",
     textAlign: "center",
@@ -797,8 +1052,6 @@ const styles = StyleSheet.create({
     marginTop: 6,
     lineHeight: 20,
   },
-
-  // ── Active pill ───────────────────────────────────────────
   activePill: {
     flexDirection: "row",
     alignItems: "center",
@@ -810,11 +1063,11 @@ const styles = StyleSheet.create({
   },
   activePillText: { fontSize: 13, fontWeight: "600", color: "#fff" },
 
-  // ── Web cards ────────────────────────────────────────────
+  // Web cards
   webCardRow: {
     flexDirection: "row",
-    gap: 16,
-    paddingHorizontal: 24,
+    gap: 14,
+    paddingHorizontal: 20,
     paddingVertical: 20,
     alignItems: "flex-start",
     justifyContent: "center",
@@ -893,7 +1146,7 @@ const styles = StyleSheet.create({
   },
   webCardButtonText: { color: "#fff", fontSize: 14, fontWeight: "700" },
 
-  // ── Mobile toggle ─────────────────────────────────────────
+  // Mobile toggle
   toggleWrapper: { width: SCREEN_WIDTH - 32, marginBottom: 16, marginTop: 4 },
   toggleTrack: {
     flexDirection: "row",
@@ -901,13 +1154,12 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 4,
     position: "relative",
-    height: 52,
+    height: 56,
   },
   togglePill: {
     position: "absolute",
     top: 4,
-    width: "33.33%",
-    height: 44,
+    height: 48,
     backgroundColor: "#fff",
     borderRadius: 11,
     ...Platform.select({
@@ -927,8 +1179,8 @@ const styles = StyleSheet.create({
     gap: 2,
     zIndex: 1,
   },
-  toggleEmoji: { fontSize: 16 },
-  toggleLabel: { fontSize: 12, color: "#888", fontWeight: "500" },
+  toggleEmoji: { fontSize: 14 },
+  toggleLabel: { fontSize: 11, color: "#888", fontWeight: "500" },
   toggleDot: {
     width: 4,
     height: 4,
@@ -937,7 +1189,7 @@ const styles = StyleSheet.create({
     bottom: 4,
   },
 
-  // ── Mobile card ───────────────────────────────────────────
+  // Mobile card
   mobileCard: {
     backgroundColor: "#fff",
     borderRadius: 24,
@@ -970,7 +1222,6 @@ const styles = StyleSheet.create({
     marginTop: 6,
     lineHeight: 19,
   },
-
   mobileCardStats: {
     flexDirection: "row",
     borderTopWidth: 1,
@@ -978,10 +1229,9 @@ const styles = StyleSheet.create({
     borderColor: "#f0f0f0",
   },
   mobileCardStat: { flex: 1, alignItems: "center", paddingVertical: 16 },
-  mobileStatValue: { fontSize: 20, fontWeight: "900" },
+  mobileStatValue: { fontSize: 18, fontWeight: "900" },
   mobileStatLabel: { fontSize: 11, color: "#888", marginTop: 3 },
   mobileCardStatDivider: { width: 1, backgroundColor: "#f0f0f0" },
-
   mobileFeatures: {
     paddingHorizontal: 24,
     paddingTop: 20,
@@ -991,7 +1241,6 @@ const styles = StyleSheet.create({
   mobileFeatureRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   mobileFeatureDot: { width: 7, height: 7, borderRadius: 4 },
   mobileFeatureText: { fontSize: 14, color: "#444", lineHeight: 20 },
-
   mobileCardButton: {
     margin: 20,
     borderRadius: 14,
@@ -1005,7 +1254,6 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
 
-  // ── Footer ────────────────────────────────────────────────
   footer: {
     fontSize: 12,
     color: "#aaa",
@@ -1036,17 +1284,17 @@ const tableStyles = StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 11,
-    paddingHorizontal: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
   },
   rowAlt: { backgroundColor: "#fafafa" },
-  featureCol: { flex: 2, flexDirection: "row", alignItems: "center", gap: 7 },
-  featureLabel: { fontSize: 13, color: "#555" },
+  featureCol: { flex: 2, flexDirection: "row", alignItems: "center", gap: 6 },
+  featureLabel: { fontSize: 12, color: "#555" },
   valueCol: { flex: 1, alignItems: "center", gap: 1 },
-  headerEmoji: { fontSize: 18 },
-  headerLabel: { fontSize: 12, fontWeight: "700" },
-  value: { fontSize: 13, color: "#444", fontWeight: "500" },
-  price: { fontSize: 15, fontWeight: "800" },
+  headerEmoji: { fontSize: 16 },
+  headerLabel: { fontSize: 11, fontWeight: "700" },
+  value: { fontSize: 12, color: "#444", fontWeight: "500" },
+  price: { fontSize: 13, fontWeight: "800" },
   priceSub: { fontSize: 10, color: "#999" },
-  divider: { height: 1, backgroundColor: "#eee", marginHorizontal: 16 },
+  divider: { height: 1, backgroundColor: "#eee", marginHorizontal: 12 },
 });

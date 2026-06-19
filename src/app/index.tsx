@@ -5,11 +5,10 @@ import { Session } from "@supabase/supabase-js";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Animated,
   Dimensions,
   Modal,
   Platform,
@@ -22,7 +21,13 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { deleteCollection, listCollections, uploadToS3 } from "../utils/s3";
+import {
+  deleteCollection,
+  getCollectionPreviewUrls,
+  listCollections,
+  listPhotos,
+  uploadToS3,
+} from "../utils/s3";
 import { getSharedCollections } from "../utils/sharing";
 import { checkSubscription, SubscriptionStatus } from "../utils/subscription";
 import { supabase } from "../utils/supabase";
@@ -60,8 +65,6 @@ export default function CollectionsPage() {
   const [paywallReason, setPaywallReason] = useState<
     "collections" | "photos" | "renewal"
   >("collections");
-  const [collectionToast, setCollectionToast] = useState<string | null>(null);
-  const collectionToastAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -94,49 +97,29 @@ export default function CollectionsPage() {
 
   async function fetchCollections(currentSession: Session) {
     try {
-      // Step 1 — get collection names
-      const names = await listCollections(currentSession.user.id);
-
-      // Step 2 — fetch all owned collections in parallel
-      // Each collection makes ONE call with includeUrls:true
-      // instead of two separate calls
+      // Step 1 — fetch owned collections
       let ownedCollections: Collection[] = [];
+      const names = await listCollections(currentSession.user.id);
 
       if (names.length > 0) {
         const ownedData = await Promise.allSettled(
           names.map(async (name: string) => {
-            const { data, error } = await supabase.functions.invoke(
-              "list-photos",
-              {
-                body: {
-                  userId: currentSession.user.id,
-                  collectionName: name,
-                  includeUrls: true,
-                },
-              },
-            );
-            if (error) throw new Error(error.message);
-
-            const allPhotos = (data?.photos || []).filter(
+            const [previewUrls, photos] = await Promise.all([
+              getCollectionPreviewUrls(currentSession.user.id, name),
+              listPhotos(currentSession.user.id, name),
+            ]);
+            const realPhotos = photos.filter(
               (p: any) => p.Key && !p.Key.includes("/thumbs/"),
             );
-
-            // First 3 thumbnail URLs for the collage
-            const previewUrls = allPhotos
-              .slice(0, 3)
-              .map((p: any) => p.thumbUrl ?? p.url)
-              .filter(Boolean);
-
             return {
               name,
               previewUrls,
-              photoCount: allPhotos.length,
+              photoCount: realPhotos.length,
               ownerId: currentSession.user.id,
               isShared: false,
             };
           }),
         );
-
         ownedCollections = ownedData
           .filter(
             (r): r is PromiseFulfilledResult<Collection> =>
@@ -145,73 +128,45 @@ export default function CollectionsPage() {
           .map((r) => r.value);
       }
 
-      // Show owned collections immediately while shared loads
-      setCollections(ownedCollections);
-      setLoading(false);
-
-      // Step 3 — fetch shared collections in parallel (not sequential)
+      // Step 2 — fetch shared collections completely separately
       let sharedCollections: Collection[] = [];
-      try {
-        const userEmail = currentSession.user.email ?? "";
-        const shared = await getSharedCollections(userEmail);
+      const userEmail = currentSession.user.email ?? "";
+      const shared = await getSharedCollections(userEmail);
 
-        if (shared.length > 0) {
-          const sharedData = await Promise.allSettled(
-            shared.map(async ({ ownerId, ownerEmail, collectionName }) => {
-              const { data, error } = await supabase.functions.invoke(
-                "list-photos",
-                {
-                  body: {
-                    userId: ownerId,
-                    collectionName,
-                    includeUrls: true,
-                  },
-                },
-              );
-              if (error) throw new Error(error.message);
-
-              const allPhotos = (data?.photos || []).filter(
-                (p: any) => p.Key && !p.Key.includes("/thumbs/"),
-              );
-
-              // Skip empty collections — owner likely deleted them
-              if (allPhotos.length === 0) {
-                await supabase
-                  .from("shared_collections")
-                  .delete()
-                  .eq("owner_id", ownerId)
-                  .eq("collection_name", collectionName);
-                throw new Error("empty");
-              }
-
-              const previewUrls = allPhotos
-                .slice(0, 3)
-                .map((p: any) => p.thumbUrl ?? p.url)
-                .filter(Boolean);
-
-              return {
-                name: collectionName,
-                previewUrls,
-                photoCount: allPhotos.length,
-                ownerId,
-                ownerEmail,
-                isShared: true,
-              };
-            }),
+      for (const { ownerId, ownerEmail, collectionName } of shared) {
+        try {
+          const photos = await listPhotos(ownerId, collectionName);
+          const realPhotos = photos.filter(
+            (p: any) => p.Key && !p.Key.includes("/thumbs/"),
           );
 
-          sharedCollections = sharedData
-            .filter(
-              (r): r is PromiseFulfilledResult<Collection> =>
-                r.status === "fulfilled",
-            )
-            .map((r) => r.value);
+          // Skip empty collections — owner likely deleted them
+          if (realPhotos.length === 0) {
+            await supabase
+              .from("shared_collections")
+              .delete()
+              .eq("owner_id", ownerId)
+              .eq("collection_name", collectionName);
+            continue;
+          }
+
+          const previewUrls = await getCollectionPreviewUrls(
+            ownerId,
+            collectionName,
+          );
+          sharedCollections.push({
+            name: collectionName,
+            previewUrls,
+            photoCount: realPhotos.length,
+            ownerId,
+            ownerEmail,
+            isShared: true,
+          });
+        } catch {
+          // Collection no longer accessible — skip it
         }
-      } catch {
-        // Shared collections failing never blocks owned ones
       }
 
-      // Update with both owned + shared
       setCollections([...ownedCollections, ...sharedCollections]);
     } catch (error: any) {
       Alert.alert("Error", error.message);
@@ -294,25 +249,45 @@ export default function CollectionsPage() {
     }
     if (!session) return;
 
+    // Check collection limit for free users
     const ownedCollections = collections.filter((c) => !c.isShared);
-    const maxCollections = subscriptionStatus?.limits?.maxCollections ?? 3;
-    const isSubscribed = subscriptionStatus?.isSubscribed ?? false;
+    if (
+      !subscriptionStatus?.isSubscribed &&
+      ownedCollections.length >=
+        (subscriptionStatus?.limits?.maxCollections ?? 3)
+    ) {
+      setShowNewCollection(false);
+      setPaywallReason(
+        subscriptionStatus?.wasSubscribed ? "renewal" : "collections",
+      );
+      setShowPaywall(true);
+      return;
+    }
 
-    if (ownedCollections.length >= maxCollections) {
-      if (isSubscribed) {
-        // Pro user hit 20 — show toast not paywall
-        showCollectionLimitToast(maxCollections);
-        setShowNewCollection(false);
-        return;
-      } else {
-        // Free user hit 3 — show paywall
-        setShowNewCollection(false);
-        setPaywallReason(
-          subscriptionStatus?.wasSubscribed ? "renewal" : "collections",
-        );
-        setShowPaywall(true);
-        return;
-      }
+    // Check photo limit for free users
+    const maxPhotos = subscriptionStatus?.limits?.maxPhotosPerCollection ?? 10;
+    if (
+      !subscriptionStatus?.isSubscribed &&
+      selectedAssets.length > maxPhotos
+    ) {
+      Alert.alert(
+        "Too many photos",
+        `Free accounts can add up to ${maxPhotos} photos per collection. Please select fewer photos or subscribe for unlimited uploads.`,
+        [
+          { text: "Reduce Photos", style: "cancel" },
+          {
+            text: "Subscribe",
+            onPress: () => {
+              setShowNewCollection(false);
+              setPaywallReason(
+                subscriptionStatus?.wasSubscribed ? "renewal" : "photos",
+              );
+              setShowPaywall(true);
+            },
+          },
+        ],
+      );
+      return;
     }
 
     if (
@@ -371,24 +346,6 @@ export default function CollectionsPage() {
         },
       ],
     );
-  }
-
-  function showCollectionLimitToast(limit: number) {
-    setCollectionToast(`You've reached your limit of ${limit} collections.`);
-    Animated.sequence([
-      Animated.spring(collectionToastAnim, {
-        toValue: 1,
-        useNativeDriver: true,
-        tension: 80,
-        friction: 10,
-      }),
-      Animated.delay(3500),
-      Animated.timing(collectionToastAnim, {
-        toValue: 0,
-        duration: 300,
-        useNativeDriver: true,
-      }),
-    ]).start(() => setCollectionToast(null));
   }
 
   async function signOut() {
@@ -549,15 +506,25 @@ export default function CollectionsPage() {
             <Ionicons name="home-outline" size={22} color="#111" />
           </TouchableOpacity>
           <TouchableOpacity
-            style={styles.iconButton}
+            style={styles.tierButton}
             onPress={() => router.push("/subscription")}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Ionicons
-              name={subscriptionStatus?.isSubscribed ? "star" : "star-outline"}
-              size={22}
-              color={subscriptionStatus?.isSubscribed ? "#4AE8A0" : "#111"}
+              name={subscriptionStatus?.isActive ? "star" : "star-outline"}
+              size={16}
+              color={subscriptionStatus?.isActive ? "#4AE8A0" : "#888"}
             />
+            <Text
+              style={[
+                styles.tierLabel,
+                subscriptionStatus?.isActive && { color: "#4AE8A0" },
+              ]}
+            >
+              {subscriptionStatus?.isActive
+                ? `${subscriptionStatus.limits?.label ?? "Pro"}`
+                : "Free"}
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -704,33 +671,6 @@ export default function CollectionsPage() {
           setSubscriptionStatus(status);
         }}
       />
-      {/* Collection limit toast — for Pro users who hit 20 collections */}
-      {collectionToast && (
-        <Animated.View
-          style={[
-            styles.toast,
-            {
-              opacity: collectionToastAnim,
-              transform: [
-                {
-                  translateY: collectionToastAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [20, 0],
-                  }),
-                },
-              ],
-            },
-          ]}
-        >
-          <Text style={styles.toastEmoji}>🗂️</Text>
-          <View style={styles.toastTextContainer}>
-            <Text style={styles.toastMessage}>{collectionToast}</Text>
-            <Text style={styles.toastSubtext}>
-              Delete a collection to make room for a new one.
-            </Text>
-          </View>
-        </Animated.View>
-      )}
     </View>
   );
 }
@@ -779,6 +719,23 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
+  },
+  tierButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: "#f5f5f5",
+    borderWidth: 1,
+    borderColor: "#eee",
+  },
+  tierLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#888",
+    letterSpacing: 0.2,
   },
   subtitle: {
     fontSize: Math.min(12, SCREEN_WIDTH * 0.031),
@@ -1016,36 +973,4 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   createButtonText: { fontSize: 15, color: "#fff", fontWeight: "600" },
-  toast: {
-    position: "absolute",
-    bottom: 32,
-    left: 16,
-    right: 16,
-    backgroundColor: "#1a1a1a",
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 12,
-    zIndex: 999,
-  },
-  toastEmoji: { fontSize: 26 },
-  toastTextContainer: { flex: 1 },
-  toastMessage: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#fff",
-    lineHeight: 18,
-  },
-  toastSubtext: {
-    fontSize: 11,
-    color: "rgba(255,255,255,0.5)",
-    marginTop: 2,
-  },
 });
