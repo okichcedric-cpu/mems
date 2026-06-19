@@ -21,13 +21,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import {
-  deleteCollection,
-  getCollectionPreviewUrls,
-  listCollections,
-  listPhotos,
-  uploadToS3,
-} from "../utils/s3";
+import { deleteCollection, uploadToS3 } from "../utils/s3";
 import { getSharedCollections } from "../utils/sharing";
 import { checkSubscription, SubscriptionStatus } from "../utils/subscription";
 import { supabase } from "../utils/supabase";
@@ -70,25 +64,12 @@ export default function CollectionsPage() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session) {
-        fetchCollections(session);
-        checkSubscription().then((status) => {
-          setSubscriptionStatus(status);
-          // Show renewal prompt if subscription recently expired
-          if (
-            !status.isSubscribed &&
-            status.wasSubscribed &&
-            status.expiresAt
-          ) {
-            const expiredAt = new Date(status.expiresAt);
-            const now = new Date();
-            const daysSinceExpiry =
-              (now.getTime() - expiredAt.getTime()) / (1000 * 60 * 60 * 24);
-            if (daysSinceExpiry < 30) {
-              setPaywallReason("renewal");
-              setShowPaywall(true);
-            }
-          }
-        });
+        // ── Run collections and subscription check in PARALLEL ──
+        // This is the key performance fix — neither blocks the other
+        Promise.all([
+          fetchCollections(session),
+          checkSubscription().then(setSubscriptionStatus),
+        ]);
       } else {
         setLoading(false);
       }
@@ -97,29 +78,51 @@ export default function CollectionsPage() {
 
   async function fetchCollections(currentSession: Session) {
     try {
-      // Step 1 — fetch owned collections
+      // ── Step 1: owned collections ──
+      const { data: listData, error: listError } =
+        await supabase.functions.invoke("list-collections", {
+          body: { userId: currentSession.user.id },
+        });
+      if (listError) throw new Error(listError.message);
+
+      const names: string[] = listData?.collections ?? [];
       let ownedCollections: Collection[] = [];
-      const names = await listCollections(currentSession.user.id);
 
       if (names.length > 0) {
+        // Fetch all owned collections in parallel — one call per collection
         const ownedData = await Promise.allSettled(
           names.map(async (name: string) => {
-            const [previewUrls, photos] = await Promise.all([
-              getCollectionPreviewUrls(currentSession.user.id, name),
-              listPhotos(currentSession.user.id, name),
-            ]);
-            const realPhotos = photos.filter(
+            const { data, error } = await supabase.functions.invoke(
+              "list-photos",
+              {
+                body: {
+                  userId: currentSession.user.id,
+                  collectionName: name,
+                  includeUrls: true,
+                },
+              },
+            );
+            if (error) throw new Error(error.message);
+
+            const allPhotos = (data?.photos || []).filter(
               (p: any) => p.Key && !p.Key.includes("/thumbs/"),
             );
+
+            const previewUrls = allPhotos
+              .slice(0, 3)
+              .map((p: any) => p.thumbUrl ?? p.url)
+              .filter(Boolean);
+
             return {
               name,
               previewUrls,
-              photoCount: realPhotos.length,
+              photoCount: allPhotos.length,
               ownerId: currentSession.user.id,
               isShared: false,
             };
           }),
         );
+
         ownedCollections = ownedData
           .filter(
             (r): r is PromiseFulfilledResult<Collection> =>
@@ -128,45 +131,73 @@ export default function CollectionsPage() {
           .map((r) => r.value);
       }
 
-      // Step 2 — fetch shared collections completely separately
+      // Show owned collections immediately — don't wait for shared
+      setCollections(ownedCollections);
+      setLoading(false);
+
+      // ── Step 2: shared collections in parallel ──
       let sharedCollections: Collection[] = [];
-      const userEmail = currentSession.user.email ?? "";
-      const shared = await getSharedCollections(userEmail);
+      try {
+        const userEmail = currentSession.user.email ?? "";
+        const shared = await getSharedCollections(userEmail);
 
-      for (const { ownerId, ownerEmail, collectionName } of shared) {
-        try {
-          const photos = await listPhotos(ownerId, collectionName);
-          const realPhotos = photos.filter(
-            (p: any) => p.Key && !p.Key.includes("/thumbs/"),
+        if (shared.length > 0) {
+          const sharedData = await Promise.allSettled(
+            shared.map(async ({ ownerId, ownerEmail, collectionName }) => {
+              const { data, error } = await supabase.functions.invoke(
+                "list-photos",
+                {
+                  body: {
+                    userId: ownerId,
+                    collectionName,
+                    includeUrls: true,
+                  },
+                },
+              );
+              if (error) throw new Error(error.message);
+
+              const allPhotos = (data?.photos || []).filter(
+                (p: any) => p.Key && !p.Key.includes("/thumbs/"),
+              );
+
+              // Auto-clean empty shared collections
+              if (allPhotos.length === 0) {
+                await supabase
+                  .from("shared_collections")
+                  .delete()
+                  .eq("owner_id", ownerId)
+                  .eq("collection_name", collectionName);
+                throw new Error("empty");
+              }
+
+              const previewUrls = allPhotos
+                .slice(0, 3)
+                .map((p: any) => p.thumbUrl ?? p.url)
+                .filter(Boolean);
+
+              return {
+                name: collectionName,
+                previewUrls,
+                photoCount: allPhotos.length,
+                ownerId,
+                ownerEmail,
+                isShared: true,
+              };
+            }),
           );
 
-          // Skip empty collections — owner likely deleted them
-          if (realPhotos.length === 0) {
-            await supabase
-              .from("shared_collections")
-              .delete()
-              .eq("owner_id", ownerId)
-              .eq("collection_name", collectionName);
-            continue;
-          }
-
-          const previewUrls = await getCollectionPreviewUrls(
-            ownerId,
-            collectionName,
-          );
-          sharedCollections.push({
-            name: collectionName,
-            previewUrls,
-            photoCount: realPhotos.length,
-            ownerId,
-            ownerEmail,
-            isShared: true,
-          });
-        } catch {
-          // Collection no longer accessible — skip it
+          sharedCollections = sharedData
+            .filter(
+              (r): r is PromiseFulfilledResult<Collection> =>
+                r.status === "fulfilled",
+            )
+            .map((r) => r.value);
         }
+      } catch {
+        // Shared collections failing never blocks owned ones
       }
 
+      // Append shared collections once loaded
       setCollections([...ownedCollections, ...sharedCollections]);
     } catch (error: any) {
       Alert.alert("Error", error.message);
@@ -192,7 +223,7 @@ export default function CollectionsPage() {
     }
 
     const maxPhotos = subscriptionStatus?.limits?.maxPhotosPerCollection ?? 10;
-    const isLimited = !subscriptionStatus?.isSubscribed;
+    const isLimited = !subscriptionStatus?.isActive;
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -203,13 +234,11 @@ export default function CollectionsPage() {
 
     if (!result.canceled) {
       setSelectedAssets(result.assets.slice(0, maxPhotos));
-
-      // Show message if they hit the limit
       if (isLimited && result.assets.length >= maxPhotos) {
         setTimeout(() => {
           if (Platform.OS === "web") {
             const upgrade = window.confirm(
-              `Free accounts can only upload ${maxPhotos} photos per collection.\n\nOnly the first ${maxPhotos} photos have been selected.\n\nWould you like to subscribe for unlimited uploads?`,
+              `Free accounts can only upload ${maxPhotos} photos per collection.\n\nWould you like to upgrade for more?`,
             );
             if (upgrade) {
               setShowNewCollection(false);
@@ -218,12 +247,12 @@ export default function CollectionsPage() {
             }
           } else {
             Alert.alert(
-              `${maxPhotos} Photo Limit Reached`,
-              `Free accounts can only upload ${maxPhotos} photos per collection. Only the first ${maxPhotos} photos have been selected.`,
+              `${maxPhotos} Photo Limit`,
+              `Free accounts can upload up to ${maxPhotos} photos per collection.`,
               [
-                { text: "Continue with selection", style: "cancel" },
+                { text: "Continue", style: "cancel" },
                 {
-                  text: "Subscribe for unlimited",
+                  text: "Upgrade",
                   onPress: () => {
                     setShowNewCollection(false);
                     setPaywallReason("photos");
@@ -249,39 +278,41 @@ export default function CollectionsPage() {
     }
     if (!session) return;
 
-    // Check collection limit for free users
     const ownedCollections = collections.filter((c) => !c.isShared);
-    if (
-      !subscriptionStatus?.isSubscribed &&
-      ownedCollections.length >=
-        (subscriptionStatus?.limits?.maxCollections ?? 3)
-    ) {
-      setShowNewCollection(false);
-      setPaywallReason(
-        subscriptionStatus?.wasSubscribed ? "renewal" : "collections",
-      );
-      setShowPaywall(true);
+    const maxCollections = subscriptionStatus?.limits?.maxCollections ?? 3;
+    const isActive = subscriptionStatus?.isActive ?? false;
+
+    if (ownedCollections.length >= maxCollections) {
+      if (isActive) {
+        // Pro user hit their tier limit — toast handled in [id].tsx
+        Alert.alert(
+          "Collection limit reached",
+          `Your ${subscriptionStatus?.limits?.label ?? "current"} plan allows up to ${maxCollections} collections. Delete one to make room or upgrade your plan.`,
+          [
+            { text: "OK", style: "cancel" },
+            { text: "View Plans", onPress: () => router.push("/subscription") },
+          ],
+        );
+      } else {
+        setShowNewCollection(false);
+        setPaywallReason("collections");
+        setShowPaywall(true);
+      }
       return;
     }
 
-    // Check photo limit for free users
     const maxPhotos = subscriptionStatus?.limits?.maxPhotosPerCollection ?? 10;
-    if (
-      !subscriptionStatus?.isSubscribed &&
-      selectedAssets.length > maxPhotos
-    ) {
+    if (!isActive && selectedAssets.length > maxPhotos) {
       Alert.alert(
         "Too many photos",
-        `Free accounts can add up to ${maxPhotos} photos per collection. Please select fewer photos or subscribe for unlimited uploads.`,
+        `Free accounts can add up to ${maxPhotos} photos per collection.`,
         [
           { text: "Reduce Photos", style: "cancel" },
           {
-            text: "Subscribe",
+            text: "Upgrade",
             onPress: () => {
               setShowNewCollection(false);
-              setPaywallReason(
-                subscriptionStatus?.wasSubscribed ? "renewal" : "photos",
-              );
+              setPaywallReason("photos");
               setShowPaywall(true);
             },
           },
@@ -362,7 +393,6 @@ export default function CollectionsPage() {
   }) => (
     <View style={StyleSheet.absoluteFill}>
       <View style={styles.collageContainer}>
-        {/* Left — one tall image */}
         <View style={styles.collageLeft}>
           {urls[0] ? (
             <View style={StyleSheet.absoluteFill}>
@@ -381,8 +411,6 @@ export default function CollectionsPage() {
             <ShimmerPlaceholder />
           )}
         </View>
-
-        {/* Right — two stacked images */}
         <View style={styles.collageRight}>
           <View style={styles.collageRightTop}>
             {urls[1] ? (
@@ -422,8 +450,6 @@ export default function CollectionsPage() {
           </View>
         </View>
       </View>
-
-      {/* Name overlay */}
       <View style={styles.collageOverlay}>
         <Text style={styles.collageName} numberOfLines={1}>
           {name}
@@ -460,14 +486,12 @@ export default function CollectionsPage() {
           name={collection.name}
         />
 
-        {/* Shared badge */}
         {collection.isShared && (
           <View style={styles.sharedBadge}>
             <Text style={styles.sharedBadgeText}>Shared with you</Text>
           </View>
         )}
 
-        {/* Delete button — only for owned collections */}
         {!collection.isShared && (
           <TouchableOpacity
             style={styles.deleteCardButton}
@@ -496,7 +520,7 @@ export default function CollectionsPage() {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        {/* Left actions */}
+        {/* Left */}
         <View style={styles.headerLeft}>
           <TouchableOpacity
             style={styles.iconButton}
@@ -505,14 +529,22 @@ export default function CollectionsPage() {
           >
             <Ionicons name="home-outline" size={22} color="#111" />
           </TouchableOpacity>
+
+          {/* Tier badge — shows immediately with "..." while loading */}
           <TouchableOpacity
-            style={styles.tierButton}
+            style={[
+              styles.tierButton,
+              subscriptionStatus?.isActive && {
+                borderColor: "#4AE8A0",
+                backgroundColor: "rgba(74,232,160,0.08)",
+              },
+            ]}
             onPress={() => router.push("/subscription")}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Ionicons
               name={subscriptionStatus?.isActive ? "star" : "star-outline"}
-              size={16}
+              size={14}
               color={subscriptionStatus?.isActive ? "#4AE8A0" : "#888"}
             />
             <Text
@@ -521,14 +553,16 @@ export default function CollectionsPage() {
                 subscriptionStatus?.isActive && { color: "#4AE8A0" },
               ]}
             >
-              {subscriptionStatus?.isActive
-                ? `${subscriptionStatus.limits?.label ?? "Pro"}`
-                : "Free"}
+              {subscriptionStatus === null
+                ? "..."
+                : subscriptionStatus.isActive
+                  ? (subscriptionStatus.limits?.label ?? "Pro")
+                  : "Free"}
             </Text>
           </TouchableOpacity>
         </View>
 
-        {/* Centered logo */}
+        {/* Center logo */}
         <TouchableOpacity
           style={styles.headerCenter}
           onPress={() => router.replace("/")}
@@ -540,7 +574,7 @@ export default function CollectionsPage() {
           />
         </TouchableOpacity>
 
-        {/* Right actions */}
+        {/* Right */}
         <View style={styles.headerRight}>
           <TouchableOpacity
             style={styles.iconButton}
@@ -564,7 +598,7 @@ export default function CollectionsPage() {
           <Text style={styles.emptyIcon}>🗂️</Text>
           <Text style={styles.emptyTitle}>No collections yet</Text>
           <Text style={styles.emptyText}>
-            Tap + New to create your first collection
+            Tap + to create your first collection
           </Text>
         </View>
       ) : (
@@ -577,14 +611,10 @@ export default function CollectionsPage() {
         >
           <View style={styles.columns}>
             <View style={styles.column}>
-              {leftCollections.map((collection, index) =>
-                renderCard(collection, index, LEFT_HEIGHTS),
-              )}
+              {leftCollections.map((c, i) => renderCard(c, i, LEFT_HEIGHTS))}
             </View>
             <View style={styles.column}>
-              {rightCollections.map((collection, index) =>
-                renderCard(collection, index, RIGHT_HEIGHTS),
-              )}
+              {rightCollections.map((c, i) => renderCard(c, i, RIGHT_HEIGHTS))}
             </View>
           </View>
         </ScrollView>
@@ -691,16 +721,8 @@ const styles = StyleSheet.create({
     borderBottomColor: "#eee",
     minHeight: Platform.OS === "web" ? 64 : 100,
   },
-  headerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    flex: 1,
-  },
-  headerCenter: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  headerLeft: { flexDirection: "row", alignItems: "center", gap: 6, flex: 1 },
+  headerCenter: { alignItems: "center", justifyContent: "center" },
   headerRight: {
     flexDirection: "row",
     alignItems: "center",
@@ -720,6 +742,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+
+  // ── Tier badge ────────────────────────────────────────────
   tierButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -737,58 +761,11 @@ const styles = StyleSheet.create({
     color: "#888",
     letterSpacing: 0.2,
   },
-  subtitle: {
-    fontSize: Math.min(12, SCREEN_WIDTH * 0.031),
-    color: "#999",
-    marginTop: 2,
-  },
-  subscriptionBadge: {
-    fontSize: 10,
-    color: "#4AE8A0",
-    fontWeight: "600",
-    marginTop: 2,
-  },
-  headerActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  newButton: {
-    backgroundColor: "#111",
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  newButtonText: {
-    color: "#fff",
-    fontWeight: "600",
-    fontSize: Math.min(13, SCREEN_WIDTH * 0.034),
-  },
-  signOutButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#ddd",
-  },
-  signOutText: {
-    fontSize: Math.min(13, SCREEN_WIDTH * 0.034),
-    color: "#666",
-  },
 
   // ── Grid ─────────────────────────────────────────────────
-  grid: {
-    padding: 16,
-    paddingBottom: 36,
-  },
-  columns: {
-    flexDirection: "row",
-    gap: 16,
-  },
-  column: {
-    flex: 1,
-    gap: 16,
-  },
+  grid: { padding: 16, paddingBottom: 36 },
+  columns: { flexDirection: "row", gap: 16 },
+  column: { flex: 1, gap: 16 },
 
   // ── Collection card ───────────────────────────────────────
   collectionCard: {
@@ -804,12 +781,7 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 5,
   },
-  collectionMeta: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-  },
+  collectionMeta: { position: "absolute", bottom: 0, left: 0, right: 0 },
   photoCount: {
     fontSize: 11,
     color: "rgba(255,255,255,0.8)",
@@ -845,26 +817,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 3,
   },
-  collageLeft: {
-    flex: 1.1,
-    position: "relative",
-  },
-  collageRight: {
-    flex: 0.9,
-    gap: 3,
-  },
-  collageRightTop: {
-    flex: 1.2,
-    position: "relative",
-  },
-  collageRightBottom: {
-    flex: 0.8,
-    position: "relative",
-  },
-  collageEmpty: {
-    flex: 1,
-    backgroundColor: "#e8e8e8",
-  },
+  collageLeft: { flex: 1.1, position: "relative" },
+  collageRight: { flex: 0.9, gap: 3 },
+  collageRightTop: { flex: 1.2, position: "relative" },
+  collageRightBottom: { flex: 0.8, position: "relative" },
   collageOverlay: {
     position: "absolute",
     bottom: 0,
@@ -892,24 +848,15 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     zIndex: 10,
   },
-  sharedBadgeText: {
-    color: "#fff",
-    fontSize: 10,
-    fontWeight: "700",
-  },
+  sharedBadgeText: { color: "#fff", fontSize: 10, fontWeight: "700" },
 
   // ── Empty / loading ───────────────────────────────────────
-  centered: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 8,
-  },
+  centered: { flex: 1, justifyContent: "center", alignItems: "center", gap: 8 },
   emptyIcon: { fontSize: 48 },
   emptyTitle: { fontSize: 18, fontWeight: "600", color: "#333" },
   emptyText: { fontSize: 14, color: "#999" },
 
-  // ── Modal ─────────────────────────────────────────────────
+  // ── New collection modal ──────────────────────────────────
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
@@ -973,4 +920,38 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   createButtonText: { fontSize: 15, color: "#fff", fontWeight: "600" },
+
+  // Legacy styles kept for safety
+  subtitle: {
+    fontSize: Math.min(12, SCREEN_WIDTH * 0.031),
+    color: "#999",
+    marginTop: 2,
+  },
+  subscriptionBadge: {
+    fontSize: 10,
+    color: "#4AE8A0",
+    fontWeight: "600",
+    marginTop: 2,
+  },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  newButton: {
+    backgroundColor: "#111",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  newButtonText: {
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: Math.min(13, SCREEN_WIDTH * 0.034),
+  },
+  signOutButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#ddd",
+  },
+  signOutText: { fontSize: Math.min(13, SCREEN_WIDTH * 0.034), color: "#666" },
+  collageEmpty: { flex: 1, backgroundColor: "#e8e8e8" },
 });

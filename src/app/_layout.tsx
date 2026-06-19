@@ -30,6 +30,13 @@ export default function RootLayout() {
     }
   }, []);
 
+  // Warm up edge functions on app start — prevents cold start delay for users
+  useEffect(() => {
+    if (session) {
+      supabase.functions.invoke("check-subscription").catch(() => {});
+    }
+  }, [session]);
+
   // Inject global CSS on web
   useEffect(() => {
     if (Platform.OS === "web") {
