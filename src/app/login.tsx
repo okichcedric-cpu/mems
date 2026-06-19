@@ -191,7 +191,7 @@ export default function LoginScreen() {
 
           {/* Tagline — shown subtly below the logo */}
           <Text style={styles.tagline}>
-            Your life's best moments,{"\n"}all in one place.
+            Your Digital Album,{"\n"}for you life's best moments.
           </Text>
 
           {/* About link — subtle, doesn't disrupt flow */}
