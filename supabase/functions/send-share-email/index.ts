@@ -2,7 +2,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
 };
 
 serve(async (req) => {
@@ -11,81 +12,150 @@ serve(async (req) => {
   }
 
   try {
-    const { recipientEmail, ownerEmail, collectionName, appUrl } = await req.json();
-    console.log('Sending email to:', recipientEmail, 'from:', ownerEmail);
-
-    if (!recipientEmail || !ownerEmail || !collectionName) {
-      return new Response(
-        JSON.stringify({ error: "Missing required fields" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const apiKey = Deno.env.get("RESEND_API_KEY");
-    if (!apiKey) {
-      console.error('RESEND_API_KEY not set');
-      return new Response(
-        JSON.stringify({ error: "Email service not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    const { recipientEmail, ownerEmail, collectionName } = await req.json();
 
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json",
+        Authorization: `Bearer ${Deno.env.get("RESEND_API_KEY")}`,
       },
       body: JSON.stringify({
-        from: "Mems <contact@mems-app.com>", // ← use Resend's test address until domain verified
-        to: recipientEmail,
-        reply_to: ownerEmail,
-        subject: `${ownerEmail} shared a collection with you on Mems`,
+        // ── Use your verified domain address ──
+        from: "Mems <contact@mems-app.com>",
+
+        // ── Reply-To gives recipients a real address to respond to ──
+        reply_to: "contact@mems-app.com",
+
+        to: [recipientEmail],
+
+        subject: `${ownerEmail} shared a photo collection with you`,
+
+        // ── Plain text version — required to avoid spam ──
+        text: `
+Hi,
+
+${ownerEmail} has shared a photo collection called "${collectionName}" with you on Mems.
+
+Open the Mems app or visit https://www.mems-app.com to view it.
+
+You received this email because someone shared a Mems collection with your email address.
+If you did not expect this, you can safely ignore it.
+
+— The Mems Team
+        `.trim(),
+
+        // ── HTML version ──
         html: `
-          <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
-            <h2 style="color: #111; margin-bottom: 8px;">You have a new shared collection 📸</h2>
-            <p style="color: #444; margin-bottom: 24px;">
-              <strong>${ownerEmail}</strong> has shared their collection 
-              <strong>${collectionName}</strong> with you on Mems.
-            </p>
-            <a href="${appUrl ?? 'https://yourapp.com'}" style="
-              display: inline-block;
-              background: #111;
-              color: #fff;
-              padding: 12px 28px;
-              border-radius: 8px;
-              text-decoration: none;
-              font-weight: 600;
-              font-size: 15px;
-            ">Open Mems</a>
-            <p style="color: #999; font-size: 13px; margin-top: 32px;">
-              Log in or sign up with this email address to see the shared collection.
-            </p>
-          </div>
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+</head>
+<body style="margin:0;padding:0;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5;padding:32px 0;">
+    <tr>
+      <td align="center">
+        <table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;max-width:560px;width:100%;">
+
+          <!-- Header -->
+          <tr>
+            <td style="background:#111111;padding:28px 32px;text-align:center;">
+              <p style="margin:0;font-size:28px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">
+                Mems
+              </p>
+              <p style="margin:6px 0 0;font-size:13px;color:rgba(255,255,255,0.6);font-style:italic;">
+                Your life's best moments, all in one place.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:32px;">
+              <p style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111111;">
+                📸 You've been invited!
+              </p>
+              <p style="margin:0 0 24px;font-size:15px;color:#555555;line-height:24px;">
+                <strong>${ownerEmail}</strong> has shared a photo collection with you.
+              </p>
+
+              <!-- Collection card -->
+              <table width="100%" cellpadding="0" cellspacing="0"
+                style="background:#f9f9f9;border:1px solid #eeeeee;border-radius:12px;margin-bottom:24px;">
+                <tr>
+                  <td style="padding:20px;">
+                    <p style="margin:0 0 4px;font-size:11px;font-weight:600;color:#999999;
+                      text-transform:uppercase;letter-spacing:0.5px;">
+                      Collection
+                    </p>
+                    <p style="margin:0;font-size:20px;font-weight:800;color:#111111;">
+                      ${collectionName}
+                    </p>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- CTA button -->
+              <table cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="background:#111111;border-radius:12px;">
+                    <a href="https://www.mems-app.com"
+                      style="display:inline-block;padding:14px 28px;font-size:15px;
+                        font-weight:600;color:#ffffff;text-decoration:none;">
+                      View Collection →
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:24px 0 0;font-size:13px;color:#999999;line-height:20px;">
+                Open the Mems app and the collection will appear in your home screen.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background:#f9f9f9;padding:20px 32px;border-top:1px solid #eeeeee;">
+              <p style="margin:0;font-size:12px;color:#bbbbbb;line-height:18px;text-align:center;">
+                You received this because ${ownerEmail} shared a Mems collection with
+                ${recipientEmail}.<br/>
+                If you did not expect this email you can safely ignore it.<br/><br/>
+                <a href="https://www.mems-app.com" style="color:#999999;">mems-app.com</a>
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
         `,
       }),
     });
 
     const data = await res.json();
-    console.log('Resend response:', res.status, JSON.stringify(data));
 
     if (!res.ok) {
-      console.error("Resend error:", data);
-      return new Response(
-        JSON.stringify({ error: data }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      console.error("Resend error:", JSON.stringify(data));
+      throw new Error(data.message ?? "Failed to send email");
     }
 
-    return new Response(
-      JSON.stringify({ success: true, id: data.id }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
-  } catch (error) {
-    console.error("Function error:", error);
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    console.log("Share email sent:", data.id);
+
+    return new Response(JSON.stringify({ success: true, id: data.id }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } catch (error: any) {
+    console.error("send-share-email error:", error.message);
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: corsHeaders,
+    });
   }
 });
