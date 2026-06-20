@@ -430,10 +430,15 @@ export default function SubscriptionPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  // Use a ref so the card content updates immediately before the fade animation
+  const selectedTierRef = useRef<AllTier>("medium");
+
   function switchTier(tier: AllTier) {
+    // Update ref instantly so card content is correct during fade
+    selectedTierRef.current = tier;
     Animated.timing(cardFade, {
       toValue: 0,
-      duration: 120,
+      duration: 100,
       useNativeDriver: true,
     }).start(() => {
       setSelectedTier(tier);
@@ -445,7 +450,7 @@ export default function SubscriptionPage() {
       }).start();
       Animated.timing(cardFade, {
         toValue: 1,
-        duration: 180,
+        duration: 160,
         useNativeDriver: true,
       }).start();
     });
@@ -591,24 +596,38 @@ export default function SubscriptionPage() {
                 const isActive = activeTier === tier;
                 const isFeatured = config.featured;
                 const isPurchasing = purchasing === tier;
-                const CardEl = isFeatured ? Animated.View : View;
+                // Always use Animated.View so scale never gets lost
+                // Featured gets pulse, active gets a fixed elevated scale
+                const scaleTransform = isFeatured
+                  ? [{ scale: pulseAnim }]
+                  : isActive
+                    ? [{ scale: 1.04 }] // ← active card stays visually elevated
+                    : [{ scale: 1 }];
                 const cardStyle = [
                   styles.webCard,
                   { width: cardWidth },
                   isFeatured && styles.webCardFeatured,
-                  isActive && { borderColor: config.accent, borderWidth: 2 },
+                  isActive && {
+                    borderColor: config.accent,
+                    borderWidth: 2,
+                    ...Platform.select({
+                      web: {
+                        boxShadow: `0 8px 32px ${config.accent}33`,
+                      } as any,
+                      ios: {
+                        shadowColor: config.accent,
+                        shadowOffset: { width: 0, height: 8 },
+                        shadowOpacity: 0.25,
+                        shadowRadius: 16,
+                      },
+                      android: { elevation: 10 },
+                    }),
+                  },
                 ];
                 return (
-                  <CardEl
+                  <Animated.View
                     key={tier}
-                    style={
-                      isFeatured
-                        ? ([
-                            cardStyle,
-                            { transform: [{ scale: pulseAnim }] },
-                          ] as any)
-                        : (cardStyle as any)
-                    }
+                    style={[cardStyle, { transform: scaleTransform }] as any}
                   >
                     {isFeatured && !isActive && (
                       <View
@@ -712,7 +731,7 @@ export default function SubscriptionPage() {
                         </Text>
                       )}
                     </TouchableOpacity>
-                  </CardEl>
+                  </Animated.View>
                 );
               })}
             </View>
@@ -769,6 +788,7 @@ export default function SubscriptionPage() {
             </View>
 
             {/* Card */}
+            {/* Card — uses ref so content is always correct even during fade */}
             <Animated.View
               style={[
                 styles.mobileCard,
@@ -779,9 +799,15 @@ export default function SubscriptionPage() {
                 <FreeCardMobile isCurrentTier={isActiveFree} />
               ) : (
                 (() => {
-                  const config = TIERS[selectedTier as PaidTier];
-                  const isActive = activeTier === selectedTier;
-                  const isPurchasing = purchasing === selectedTier;
+                  // Read from ref for instant accuracy — state may lag during animation
+                  const displayTier = (
+                    selectedTierRef.current !== "free"
+                      ? selectedTierRef.current
+                      : selectedTier
+                  ) as PaidTier;
+                  const config = TIERS[displayTier];
+                  const isActive = activeTier === displayTier;
+                  const isPurchasing = purchasing === displayTier;
                   return (
                     <>
                       <View
@@ -899,7 +925,7 @@ export default function SubscriptionPage() {
                           },
                           isPurchasing && { opacity: 0.7 },
                         ]}
-                        onPress={() => handlePurchase(selectedTier as PaidTier)}
+                        onPress={() => handlePurchase(displayTier)}
                         disabled={!!purchasing || isActive}
                         activeOpacity={0.8}
                       >
