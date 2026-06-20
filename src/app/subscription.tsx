@@ -502,19 +502,22 @@ export default function SubscriptionPage() {
         const poll = setInterval(async () => {
           if (popup?.closed) {
             clearInterval(poll);
-            const { data: sync } =
-              await supabase.functions.invoke("sync-subscription");
-            if (sync?.status === "active") {
-              const { data: updated } =
-                await supabase.functions.invoke("check-subscription");
-              setStatus({
-                tier: updated?.tier ?? tier,
-                isActive: true,
-                limits: updated?.limits ?? TIERS[tier],
-              });
-              window.alert(`🎉 ${TIERS[tier].label} Album activated!`);
+            try {
+              const { data: sync } =
+                await supabase.functions.invoke("sync-subscription");
+              if (sync?.status === "active") {
+                // Close popup if still open then reload the parent window
+                try {
+                  popup.close();
+                } catch {}
+                window.location.reload();
+              } else {
+                // Payment was not completed — just reset the button
+                setPurchasing(null);
+              }
+            } catch {
+              setPurchasing(null);
             }
-            setPurchasing(null);
           }
         }, 1000);
       }
