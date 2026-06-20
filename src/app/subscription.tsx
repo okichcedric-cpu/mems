@@ -462,57 +462,95 @@ export default function SubscriptionPage() {
       IS_WEB ? window.alert(msg) : Alert.alert("Already active", msg);
       return;
     }
+
     setPurchasing(tier);
+
     try {
       const callbackUrl = IS_WEB
         ? `${window.location.origin}/subscription-callback`
         : "mems://subscription-callback";
 
       if (IS_WEB) {
+        // Open popup immediately on user gesture — before any await
+        // Mobile browsers block popups opened after async work
         const popup = window.open(
           "",
           "pesapal",
           "width=620,height=720,left=200,top=80",
         );
+
         if (!popup) {
+          // Popup blocked — fall back to same-tab redirect
           const { data, error } = await supabase.functions.invoke(
             "create-subscription",
-            {
-              body: { tier, callbackUrl },
-            },
+            { body: { tier, callbackUrl } },
           );
           if (error) throw new Error(error.message);
           window.location.href = data.redirectUrl;
           return;
         }
-        popup.document.write(
-          `<html><body style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f9f9f9;flex-direction:column;gap:16px"><div style="font-size:48px">📸</div><div style="font-size:18px;font-weight:600">Opening secure payment...</div></body></html>`,
-        );
+
+        // Show branded loading screen while we fetch the payment URL
+        popup.document.write(`
+        <html>
+          <body style="
+            margin:0;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            height:100vh;
+            font-family:sans-serif;
+            background:#f9f9f9;
+            flex-direction:column;
+            gap:16px;
+          ">
+            <div style="font-size:48px">📸</div>
+            <div style="font-size:18px;font-weight:600;color:#111">
+              Opening secure payment...
+            </div>
+            <div style="font-size:13px;color:#999">Please wait a moment</div>
+          </body>
+        </html>
+      `);
+
+        // Fetch the Pesapal payment URL
+        // Note: no database write happens here — only on confirmed payment
         const { data, error } = await supabase.functions.invoke(
           "create-subscription",
-          {
-            body: { tier, callbackUrl },
-          },
+          { body: { tier, callbackUrl } },
         );
+
         if (error) {
           popup.close();
           throw new Error(error.message);
         }
-        popup.location.href = data.redirectUrl;
+
+        const { redirectUrl, merchantReference } = data;
+
+        // Navigate the already-open popup to Pesapal
+        popup.location.href = redirectUrl;
+
+        // Poll every second to detect when the popup closes
         const poll = setInterval(async () => {
           if (popup?.closed) {
             clearInterval(poll);
             try {
-              const { data: sync } =
-                await supabase.functions.invoke("sync-subscription");
+              // Pass merchantReference and tier so sync-subscription
+              // can poll Pesapal directly without reading from the DB
+              const { data: sync } = await supabase.functions.invoke(
+                "sync-subscription",
+                { body: { merchantReference, tier } },
+              );
+
               if (sync?.status === "active") {
-                // Close popup if still open then reload the parent window
+                // Payment confirmed — close popup and reload for fresh state
                 try {
                   popup.close();
                 } catch {}
                 window.location.reload();
               } else {
-                // Payment was not completed — just reset the button
+                // Popup closed without completing payment
+                // Previous subscription status is untouched
                 setPurchasing(null);
               }
             } catch {

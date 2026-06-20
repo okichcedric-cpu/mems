@@ -598,7 +598,15 @@ export default function CollectionPage() {
         <View style={styles.headerLeft}>
           <TouchableOpacity
             style={styles.iconButton}
-            onPress={() => router.back()}
+            onPress={() => {
+              // router.back() fails after a page reload — no history exists
+              // canGoBack() check ensures we fall back to home safely
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace("/");
+              }
+            }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Ionicons name="arrow-back" size={22} color="#111" />
@@ -854,89 +862,173 @@ export default function CollectionPage() {
         </View>
       </Modal>
 
-      {/* Share Modal */}
-      <Modal
-        visible={showShareModal}
-        transparent
-        animationType="fade"
-        statusBarTranslucent
-      >
-        <TouchableOpacity
-          style={styles.shareOverlayBackdrop}
-          activeOpacity={1}
-          onPress={() => setShowShareModal(false)}
-        >
-          <TouchableOpacity
-            activeOpacity={1}
-            style={styles.shareOverlayCard}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View style={styles.shareModalHeader}>
-              <Text style={styles.shareModalTitle}>Share Collection</Text>
+      {/* Share Modal — View overlay on web prevents body style corruption on mobile browsers */}
+      {showShareModal &&
+        (Platform.OS === "web" ? (
+          <View style={styles.shareWebOverlay}>
+            <TouchableOpacity
+              style={styles.shareOverlayBackdrop}
+              activeOpacity={1}
+              onPress={() => setShowShareModal(false)}
+            >
               <TouchableOpacity
-                onPress={() => setShowShareModal(false)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                activeOpacity={1}
+                style={styles.shareOverlayCard}
+                onPress={(e) => e.stopPropagation()}
               >
-                <Text style={styles.shareModalClose}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.shareInputRow}>
-              <TextInput
-                style={styles.shareInput}
-                placeholder="Enter email to share"
-                placeholderTextColor="#999"
-                value={shareEmail}
-                onChangeText={setShareEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              <TouchableOpacity
-                style={[styles.shareSubmitButton, sharing && { opacity: 0.6 }]}
-                onPress={handleShare}
-                disabled={sharing}
-              >
-                {sharing ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <Text style={styles.shareSubmitText}>Send</Text>
+                <View style={styles.shareModalHeader}>
+                  <Text style={styles.shareModalTitle}>Share Collection</Text>
+                  <TouchableOpacity
+                    onPress={() => setShowShareModal(false)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={styles.shareModalClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.shareInputRow}>
+                  <TextInput
+                    style={styles.shareInput}
+                    placeholder="Enter email to share"
+                    placeholderTextColor="#999"
+                    value={shareEmail}
+                    onChangeText={setShareEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                  <TouchableOpacity
+                    style={[
+                      styles.shareSubmitButton,
+                      sharing && { opacity: 0.6 },
+                    ]}
+                    onPress={handleShare}
+                    disabled={sharing}
+                  >
+                    {sharing ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.shareSubmitText}>Send</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+                {sharedWith.length > 0 && (
+                  <View style={styles.shareList}>
+                    <Text style={styles.shareListTitle}>Shared with</Text>
+                    {sharedWith.map((email) => (
+                      <View key={email} style={styles.shareListRow}>
+                        <View
+                          style={[
+                            styles.shareListAvatar,
+                            { backgroundColor: getAvatarColor(email) },
+                          ]}
+                        >
+                          <Text style={styles.shareListAvatarLetter}>
+                            {email[0].toUpperCase()}
+                          </Text>
+                        </View>
+                        <Text style={styles.shareListEmail} numberOfLines={1}>
+                          {email}
+                        </Text>
+                        <TouchableOpacity
+                          style={styles.removeButton}
+                          onPress={() => handleUnshare(email)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Text style={styles.removeButtonText}>Remove</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
                 )}
               </TouchableOpacity>
-            </View>
-
-            {sharedWith.length > 0 && (
-              <View style={styles.shareList}>
-                <Text style={styles.shareListTitle}>Shared with</Text>
-                {sharedWith.map((email) => (
-                  <View key={email} style={styles.shareListRow}>
-                    <View
-                      style={[
-                        styles.shareListAvatar,
-                        { backgroundColor: getAvatarColor(email) },
-                      ]}
-                    >
-                      <Text style={styles.shareListAvatarLetter}>
-                        {email[0].toUpperCase()}
-                      </Text>
-                    </View>
-                    <Text style={styles.shareListEmail} numberOfLines={1}>
-                      {email}
-                    </Text>
-                    <TouchableOpacity
-                      style={styles.removeButton}
-                      onPress={() => handleUnshare(email)}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Text style={styles.removeButtonText}>Remove</Text>
-                    </TouchableOpacity>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <Modal
+            visible={showShareModal}
+            transparent
+            animationType="fade"
+            statusBarTranslucent
+            onRequestClose={() => setShowShareModal(false)}
+          >
+            <TouchableOpacity
+              style={styles.shareOverlayBackdrop}
+              activeOpacity={1}
+              onPress={() => setShowShareModal(false)}
+            >
+              <TouchableOpacity
+                activeOpacity={1}
+                style={styles.shareOverlayCard}
+                onPress={(e) => e.stopPropagation()}
+              >
+                <View style={styles.shareModalHeader}>
+                  <Text style={styles.shareModalTitle}>Share Collection</Text>
+                  <TouchableOpacity
+                    onPress={() => setShowShareModal(false)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={styles.shareModalClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.shareInputRow}>
+                  <TextInput
+                    style={styles.shareInput}
+                    placeholder="Enter email to share"
+                    placeholderTextColor="#999"
+                    value={shareEmail}
+                    onChangeText={setShareEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                  <TouchableOpacity
+                    style={[
+                      styles.shareSubmitButton,
+                      sharing && { opacity: 0.6 },
+                    ]}
+                    onPress={handleShare}
+                    disabled={sharing}
+                  >
+                    {sharing ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.shareSubmitText}>Send</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+                {sharedWith.length > 0 && (
+                  <View style={styles.shareList}>
+                    <Text style={styles.shareListTitle}>Shared with</Text>
+                    {sharedWith.map((email) => (
+                      <View key={email} style={styles.shareListRow}>
+                        <View
+                          style={[
+                            styles.shareListAvatar,
+                            { backgroundColor: getAvatarColor(email) },
+                          ]}
+                        >
+                          <Text style={styles.shareListAvatarLetter}>
+                            {email[0].toUpperCase()}
+                          </Text>
+                        </View>
+                        <Text style={styles.shareListEmail} numberOfLines={1}>
+                          {email}
+                        </Text>
+                        <TouchableOpacity
+                          style={styles.removeButton}
+                          onPress={() => handleUnshare(email)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Text style={styles.removeButtonText}>Remove</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
                   </View>
-                ))}
-              </View>
-            )}
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
+                )}
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </Modal>
+        ))}
 
       {/* Toast notification */}
       {toast && (
@@ -1214,6 +1306,14 @@ const styles = StyleSheet.create({
   deleteButtonText: { color: "#fff", fontWeight: "600", fontSize: 15 },
 
   // ── Share overlay ────────────────────────────────────────
+  shareWebOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 999,
+  },
   shareOverlayBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",

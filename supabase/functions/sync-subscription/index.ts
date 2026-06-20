@@ -34,8 +34,7 @@ serve(async (req) => {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: corsHeaders,
+        status: 401, headers: corsHeaders,
       });
     }
 
@@ -44,14 +43,13 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_ANON_KEY")!,
     );
 
-    const {
-      data: { user },
-    } = await supabaseAuth.auth.getUser(authHeader.replace("Bearer ", ""));
+    const { data: { user } } = await supabaseAuth.auth.getUser(
+      authHeader.replace("Bearer ", ""),
+    );
 
     if (!user) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: corsHeaders,
+        status: 401, headers: corsHeaders,
       });
     }
 
@@ -60,33 +58,39 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    // Get the pending subscription for this user
-    const { data: subscription } = await supabase
-      .from("subscriptions")
-      .select("pesapal_merchant_reference, pesapal_tracking_id, status, tier")
-      .eq("user_id", user.id)
-      .maybeSingle();
+    // Get body — client sends merchantReference and tier
+    let merchantReference: string | null = null;
+    let tier: string | null = null;
+    try {
+      const body = await req.json();
+      merchantReference = body.merchantReference ?? null;
+      tier = body.tier ?? null;
+    } catch {}
 
-    if (!subscription || subscription.status === "active") {
+    // If not passed from client, look up from DB
+    if (!merchantReference) {
+      const { data: sub } = await supabase
+        .from("subscriptions")
+        .select("pesapal_merchant_reference, tier")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      merchantReference = sub?.pesapal_merchant_reference ?? null;
+      tier = tier ?? sub?.tier ?? null;
+    }
+
+    if (!merchantReference) {
       return new Response(
-        JSON.stringify({ status: subscription?.status ?? "none", tier: subscription?.tier ?? "free" }),
+        JSON.stringify({ status: "no_reference" }),
         { status: 200, headers: corsHeaders },
       );
     }
 
-    if (!subscription.pesapal_merchant_reference) {
-      return new Response(
-        JSON.stringify({ status: "pending", tier: "free" }),
-        { status: 200, headers: corsHeaders },
-      );
-    }
-
-    // Poll Pesapal for latest status
     const token = await getPesapalToken();
-    const trackingId = subscription.pesapal_tracking_id ?? subscription.pesapal_merchant_reference;
 
+    // Use merchant reference as the tracking ID for GetTransactionStatus
+    // Pesapal accepts both orderTrackingId and merchantReference here
     const statusRes = await fetch(
-      `${PESAPAL_BASE}/api/Transactions/GetTransactionStatus?orderTrackingId=${trackingId}`,
+      `${PESAPAL_BASE}/api/Transactions/GetTransactionStatus?orderTrackingId=${merchantReference}`,
       {
         headers: {
           Accept: "application/json",
@@ -96,40 +100,41 @@ serve(async (req) => {
     );
     const statusData = await statusRes.json();
 
-    let newStatus = subscription.status;
+    console.log("Pesapal status response:", JSON.stringify(statusData));
 
+    // status_code 1 = COMPLETED
     if (statusData.status_code === 1) {
-      newStatus = "active";
-      await supabase
-        .from("subscriptions")
-        .update({
-          status: "active",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("user_id", user.id);
-    } else if (statusData.status_code === 2) {
-      newStatus = "failed";
-      await supabase
-        .from("subscriptions")
-        .update({
-          status: "failed",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("user_id", user.id);
+      await supabase.from("subscriptions").upsert({
+        user_id: user.id,
+        status: "active",
+        tier,
+        one_off: true,
+        amount: statusData.amount,
+        currency: "KES",
+        pesapal_merchant_reference: merchantReference,
+        pesapal_tracking_id: statusData.order_tracking_id ?? merchantReference,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "user_id" });
+
+      return new Response(
+        JSON.stringify({ status: "active", tier }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
     }
 
     return new Response(
-      JSON.stringify({ status: newStatus, tier: subscription.tier }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
+      JSON.stringify({
+        status: statusData.payment_status_description ?? "pending",
+      }),
+      { status: 200, headers: corsHeaders },
     );
   } catch (error: any) {
     console.error("sync-subscription error:", error.message);
     return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: corsHeaders,
+      status: 500, headers: corsHeaders,
     });
   }
 });
