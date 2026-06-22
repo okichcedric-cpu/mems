@@ -9,6 +9,7 @@ import {
   Alert,
   Animated,
   Dimensions,
+  FlatList,
   Modal,
   PanResponder,
   Platform,
@@ -774,80 +775,109 @@ export default function CollectionPage() {
         </ScrollView>
       )}
 
-      {/* Full Screen Photo Viewer */}
+      {/* Full Screen Photo Viewer — full screen FlatList with paging */}
       <Modal
         visible={selectedPhotoIndex !== null}
-        transparent
+        transparent={false}
         animationType="fade"
         statusBarTranslucent
       >
-        <View style={styles.modalBackdrop}>
+        <View style={styles.fullScreenViewer}>
+          {/* Close button */}
           <TouchableOpacity
-            style={styles.modalClose}
+            style={styles.fullScreenClose}
             onPress={() => setSelectedPhotoIndex(null)}
             hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
           >
-            <Text style={styles.modalCloseText}>✕</Text>
+            <Ionicons name="close" size={24} color="#fff" />
           </TouchableOpacity>
 
+          {/* Counter */}
           {selectedPhotoIndex !== null && (
-            <Text style={styles.photoCounter}>
-              {selectedPhotoIndex + 1} / {photos.length}
-            </Text>
+            <View style={styles.fullScreenCounter}>
+              <Text style={styles.fullScreenCounterText}>
+                {selectedPhotoIndex + 1} / {photos.length}
+              </Text>
+            </View>
           )}
 
-          {selectedPhotoIndex !== null &&
-            (Platform.OS === "web" ? (
-              <View style={styles.webViewerWrapper}>
-                <TouchableOpacity
-                  onPress={goToPrev}
-                  disabled={selectedPhotoIndex === 0}
-                  style={[
-                    styles.webArrow,
-                    selectedPhotoIndex === 0 && styles.webArrowDisabled,
-                  ]}
-                >
-                  <Text style={styles.webArrowText}>‹</Text>
-                </TouchableOpacity>
-                <View style={styles.webPhotoCard}>
+          {/* Full screen scrollable image list */}
+          {selectedPhotoIndex !== null && Platform.OS !== "web" && (
+            <FlatList
+              data={photos}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              initialScrollIndex={selectedPhotoIndex}
+              keyExtractor={(item) => item.key}
+              getItemLayout={(_, index) => ({
+                length: SCREEN_WIDTH,
+                offset: SCREEN_WIDTH * index,
+                index,
+              })}
+              onMomentumScrollEnd={(e) => {
+                const newIndex = Math.round(
+                  e.nativeEvent.contentOffset.x / SCREEN_WIDTH,
+                );
+                setSelectedPhotoIndex(newIndex);
+              }}
+              renderItem={({ item }) => (
+                <View style={styles.fullScreenPage}>
                   <Image
-                    source={{ uri: photos[selectedPhotoIndex].url }}
-                    style={styles.modalImage}
+                    source={{ uri: item.url }}
+                    style={styles.fullScreenImage}
                     contentFit="contain"
+                    cachePolicy="memory-disk"
+                    recyclingKey={item.key}
+                    transition={{ duration: 150, effect: "cross-dissolve" }}
                   />
                 </View>
-                <TouchableOpacity
-                  onPress={goToNext}
-                  disabled={selectedPhotoIndex === photos.length - 1}
-                  style={[
-                    styles.webArrow,
-                    selectedPhotoIndex === photos.length - 1 &&
-                      styles.webArrowDisabled,
-                  ]}
-                >
-                  <Text style={styles.webArrowText}>›</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <Animated.View
-                style={[
-                  styles.mobilePhotoCard,
-                  { transform: [{ translateX: swipeX }] },
-                ]}
-                {...panResponder.panHandlers}
-              >
-                <Image
-                  source={{ uri: photos[selectedPhotoIndex].url }}
-                  style={styles.modalImage}
-                  contentFit="contain"
-                />
-              </Animated.View>
-            ))}
+              )}
+              windowSize={3}
+              maxToRenderPerBatch={3}
+              initialNumToRender={3}
+            />
+          )}
 
+          {/* Web — arrows flanking full screen image */}
+          {selectedPhotoIndex !== null && Platform.OS === "web" && (
+            <View style={styles.webViewerWrapper}>
+              <TouchableOpacity
+                onPress={goToPrev}
+                disabled={selectedPhotoIndex === 0}
+                style={[
+                  styles.webArrow,
+                  selectedPhotoIndex === 0 && styles.webArrowDisabled,
+                ]}
+              >
+                <Text style={styles.webArrowText}>‹</Text>
+              </TouchableOpacity>
+              <Image
+                source={{ uri: photos[selectedPhotoIndex].url }}
+                style={styles.fullScreenWebImage}
+                contentFit="contain"
+                cachePolicy="memory-disk"
+              />
+              <TouchableOpacity
+                onPress={goToNext}
+                disabled={selectedPhotoIndex === photos.length - 1}
+                style={[
+                  styles.webArrow,
+                  selectedPhotoIndex === photos.length - 1 &&
+                    styles.webArrowDisabled,
+                ]}
+              >
+                <Text style={styles.webArrowText}>›</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Swipe hint — mobile only, first open */}
           {Platform.OS !== "web" && photos.length > 1 && (
             <Text style={styles.swipeHint}>← swipe to navigate →</Text>
           )}
 
+          {/* Delete — owner only */}
           {isOwner && selectedPhotoIndex !== null && (
             <TouchableOpacity
               style={styles.deleteButton}
@@ -1217,7 +1247,52 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 18, fontWeight: "600", color: "#333" },
   emptyText: { fontSize: 14, color: "#999" },
 
-  // ── Photo viewer ─────────────────────────────────────────
+  // ── Full screen photo viewer ──────────────────────────────
+  fullScreenViewer: {
+    flex: 1,
+    backgroundColor: "#000",
+  },
+  fullScreenClose: {
+    position: "absolute",
+    top: Platform.OS === "web" ? 20 : 52,
+    right: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 50,
+  },
+  fullScreenCounter: {
+    position: "absolute",
+    top: Platform.OS === "web" ? 26 : 58,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    zIndex: 50,
+  },
+  fullScreenCounterText: {
+    color: "rgba(255,255,255,0.8)",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  fullScreenPage: {
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#000",
+  },
+  fullScreenImage: {
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
+  },
+  fullScreenWebImage: {
+    flex: 1,
+    height: SCREEN_HEIGHT,
+  },
+  // Legacy — kept for safety
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.92)",
@@ -1249,28 +1324,28 @@ const styles = StyleSheet.create({
     zIndex: 50,
   },
   webViewerWrapper: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     width: "100%",
-    paddingHorizontal: 16,
-    gap: 12,
+    height: SCREEN_HEIGHT,
+    gap: 0,
   },
   webArrow: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "rgba(255,255,255,0.15)",
+    width: 64,
+    height: "100%" as any,
+    backgroundColor: "rgba(255,255,255,0.05)",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
   },
-  webArrowDisabled: { opacity: 0.15 },
+  webArrowDisabled: { opacity: 0.1 },
   webArrowText: {
     color: "#fff",
-    fontSize: 40,
+    fontSize: 48,
     fontWeight: "200",
-    lineHeight: 44,
+    lineHeight: 52,
     textAlign: "center",
   },
   webPhotoCard: {
@@ -1289,19 +1364,25 @@ const styles = StyleSheet.create({
   },
   modalImage: { width: "100%", height: "100%" },
   swipeHint: {
-    marginTop: 12,
+    position: "absolute",
+    bottom: 100,
+    left: 0,
+    right: 0,
+    textAlign: "center",
     color: "rgba(255,255,255,0.35)",
     fontSize: 12,
-    textAlign: "center",
   },
   deleteButton: {
-    marginTop: 16,
+    position: "absolute",
+    bottom: 40,
+    alignSelf: "center",
     paddingHorizontal: 28,
     paddingVertical: 14,
-    backgroundColor: "rgba(255,60,60,0.9)",
+    backgroundColor: "rgba(255,60,60,0.85)",
     borderRadius: 24,
     alignItems: "center",
     minWidth: 160,
+    zIndex: 50,
   },
   deleteButtonText: { color: "#fff", fontWeight: "600", fontSize: 15 },
 

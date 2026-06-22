@@ -100,7 +100,7 @@ serve(async (req) => {
             getSignedUrl(s3, new GetObjectCommand({
               Bucket: Deno.env.get("S3_BUCKET")!,
               Key: key,
-            }), { expiresIn: 86400 }),
+            }), { expiresIn: 604800 }),
             getSignedUrl(s3, new GetObjectCommand({
               Bucket: Deno.env.get("S3_BUCKET")!,
               Key: thumbKey,
