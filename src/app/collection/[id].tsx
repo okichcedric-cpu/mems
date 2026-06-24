@@ -21,6 +21,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import PaywallModal from "../../components/PaywallModal";
 import { deleteCollection, deleteFromS3, uploadToS3 } from "../../utils/s3";
 import {
   getCollectionShares,
@@ -66,6 +67,10 @@ export default function CollectionPage() {
   const [subscriptionStatus, setSubscriptionStatus] =
     useState<SubscriptionStatus | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
+  const [paywallReason, setPaywallReason] = useState<"collections" | "photos">(
+    "photos",
+  );
+  const pendingUploadRef = useRef<(() => void) | null>(null);
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(
     null,
   );
@@ -312,41 +317,45 @@ export default function CollectionPage() {
   function checkPhotoLimit(
     subStatus: SubscriptionStatus | null,
     photoCount: number,
-  ): boolean {
-    const isSubscribed = subStatus?.isSubscribed ?? false;
+    onAllowed: () => void,
+  ): void {
+    const isActive = subStatus?.isActive ?? false;
     const maxPhotos = subStatus?.limits?.maxPhotosPerCollection ?? 10;
 
-    if (photoCount < maxPhotos) return true; // Under limit — allow
+    if (photoCount < maxPhotos) {
+      onAllowed();
+      return;
+    }
 
-    if (isSubscribed) {
-      // Pro user hit their 75 photo limit
+    if (isActive) {
+      // Subscribed user at their tier limit — toast only, no paywall
       showToast(
         `You've reached the ${maxPhotos} photo limit for this collection.`,
         "📸",
         "Delete some photos to add more.",
         false,
       );
-      return false;
+      return;
     }
 
     if (!isOwner) {
-      // Non-subscribed recipient of a shared collection
+      // Non-subscribed recipient — toast with upgrade button
       showToast(
         `This collection has reached the ${maxPhotos} photo limit.`,
         "📸",
-        "Subscribe to Mems Pro to add more photos.",
+        "Subscribe to Mems to add more photos.",
         true,
       );
-      return false;
+      return;
     }
 
-    // Non-subscribed owner — show paywall
+    // Free owner — show paywall, resume upload after subscribe
+    pendingUploadRef.current = onAllowed;
+    setPaywallReason("photos");
     setShowPaywall(true);
-    return false;
   }
 
   async function uploadPhoto() {
-    // Fetch fresh subscription status
     let subStatus = subscriptionStatus;
     if (!subStatus) {
       subStatus = await checkSubscription();
@@ -355,16 +364,15 @@ export default function CollectionPage() {
 
     const realPhotos = photos.filter((p) => !p.key.includes("/thumbs/"));
 
-    // Check limit before opening picker
-    if (!checkPhotoLimit(subStatus, realPhotos.length)) return;
-
-    // Desktop web — trigger hidden file input
+    // ── Web upload ────────────────────────────────────────────
     if (Platform.OS === "web") {
-      if (fileInputRef.current) fileInputRef.current.click();
+      checkPhotoLimit(subStatus, realPhotos.length, () => {
+        if (fileInputRef.current) fileInputRef.current.click();
+      });
       return;
     }
 
-    // Native mobile — use ImagePicker
+    // ── Native upload ─────────────────────────────────────────
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
       Alert.alert(
@@ -374,6 +382,7 @@ export default function CollectionPage() {
       return;
     }
 
+    // Pick photos first — before limit check
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsMultipleSelection: true,
@@ -381,28 +390,33 @@ export default function CollectionPage() {
     });
 
     if (result.canceled || !session) return;
-    setUploading(true);
-    try {
-      const uploadOwnerId = effectiveOwnerId ?? session.user.id;
-      await Promise.all(
-        result.assets.map(async (asset) => {
-          const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
-          await uploadToS3(
-            uploadOwnerId,
-            collectionName,
-            fileName,
-            asset.uri,
-            asset.width,
-            asset.height,
-          );
-        }),
-      );
-      await fetchPhotos(session);
-    } catch (error: any) {
-      Alert.alert("Upload failed", error.message);
-    } finally {
-      setUploading(false);
-    }
+
+    // Now check the limit — if blocked, store the already-picked assets
+    // so they upload immediately once the user subscribes
+    checkPhotoLimit(subStatus, realPhotos.length, async () => {
+      setUploading(true);
+      try {
+        const uploadOwnerId = effectiveOwnerId ?? session.user.id;
+        await Promise.all(
+          result.assets.map(async (asset) => {
+            const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
+            await uploadToS3(
+              uploadOwnerId,
+              collectionName,
+              fileName,
+              asset.uri,
+              asset.width,
+              asset.height,
+            );
+          }),
+        );
+        await fetchPhotos(session);
+      } catch (error: any) {
+        Alert.alert("Upload failed", error.message);
+      } finally {
+        setUploading(false);
+      }
+    });
   }
 
   async function deletePhoto(photo: Photo) {
@@ -1096,6 +1110,32 @@ export default function CollectionPage() {
           )}
         </Animated.View>
       )}
+
+      {/* Paywall Modal — shown when photo limit is reached for free users */}
+      <PaywallModal
+        visible={showPaywall}
+        reason={paywallReason}
+        currentLimit={subscriptionStatus?.limits?.maxPhotosPerCollection ?? 10}
+        currentTier={
+          subscriptionStatus?.isActive
+            ? (subscriptionStatus.tier as any)
+            : "free"
+        }
+        onSubscribed={async (_tier) => {
+          const status = await checkSubscription();
+          setSubscriptionStatus(status);
+          setShowPaywall(false);
+          if (pendingUploadRef.current) {
+            const action = pendingUploadRef.current;
+            pendingUploadRef.current = null;
+            action();
+          }
+        }}
+        onDismiss={() => {
+          setShowPaywall(false);
+          pendingUploadRef.current = null;
+        }}
+      />
     </View>
   );
 }

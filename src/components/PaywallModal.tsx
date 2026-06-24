@@ -1,305 +1,790 @@
-import React, { useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
+  Animated,
   Dimensions,
   Modal,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
-import { checkSubscription, startSubscription } from "../utils/subscription";
-import { supabase } from "../utils/supabase"; // ← add this
+import { supabase } from "../utils/supabase";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
+const IS_WEB = Platform.OS === "web";
+
+type Tier = "small" | "medium" | "big";
+
+type TierConfig = {
+  label: string;
+  emoji: string;
+  tagline: string;
+  maxCollections: number;
+  maxPhotosPerCollection: number;
+  price: number;
+  accent: string;
+  bg: string;
+  featured: boolean;
+};
+
+const TIERS: Record<Tier, TierConfig> = {
+  small: {
+    label: "Small",
+    emoji: "📗",
+    tagline: "For individuals & small families",
+    maxCollections: 15,
+    maxPhotosPerCollection: 35,
+    price: 320,
+    accent: "#22c55e",
+    bg: "#f0fdf4",
+    featured: false,
+  },
+  medium: {
+    label: "Medium",
+    emoji: "📘",
+    tagline: "For growing families",
+    maxCollections: 30,
+    maxPhotosPerCollection: 50,
+    price: 600,
+    accent: "#3b82f6",
+    bg: "#eff6ff",
+    featured: true,
+  },
+  big: {
+    label: "Big",
+    emoji: "📙",
+    tagline: "The complete family archive",
+    maxCollections: 50,
+    maxPhotosPerCollection: 75,
+    price: 1150,
+    accent: "#f59e0b",
+    bg: "#fffbeb",
+    featured: false,
+  },
+};
+
+type PaywallReason = "collections" | "photos";
 
 type Props = {
   visible: boolean;
-  reason: "collections" | "photos" | "renewal";
-  onClose: () => void;
-  onSubscribed: () => void;
+  reason: PaywallReason;
+  // The exact limit the user just hit — e.g. 3 collections or 10 photos
+  currentLimit?: number;
+  // The tier they are currently on — "free" or a paid tier
+  currentTier?: "free" | "small" | "medium" | "big";
+  onSubscribed: (tier: Tier) => void;
+  onDismiss: () => void;
 };
+
+// Whether a tier actually solves the user's current limit
+function doesSolve(
+  tier: Tier,
+  reason: PaywallReason,
+  currentLimit: number,
+): boolean {
+  const config = TIERS[tier];
+  return reason === "collections"
+    ? config.maxCollections > currentLimit
+    : config.maxPhotosPerCollection > currentLimit;
+}
+
+// The smallest tier that solves the limit — highlighted as recommended
+function recommendedTier(reason: PaywallReason, currentLimit: number): Tier {
+  const all: Tier[] = ["small", "medium", "big"];
+  for (const tier of all) {
+    if (doesSolve(tier, reason, currentLimit)) return tier;
+  }
+  return "big";
+}
 
 export default function PaywallModal({
   visible,
   reason,
-  onClose,
+  currentLimit,
+  currentTier = "free",
   onSubscribed,
+  onDismiss,
 }: Props) {
-  const [loading, setLoading] = useState(false);
+  const router = useRouter();
+  const [purchasing, setPurchasing] = useState<Tier | null>(null);
+  const slideAnim = useRef(new Animated.Value(300)).current;
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  // Default limits if not passed
+  const limit = currentLimit ?? (reason === "collections" ? 3 : 10);
+  const recommended = recommendedTier(reason, limit);
+  const ALL_PAID_TIERS: Tier[] = ["small", "medium", "big"];
+
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true);
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 250,
+          useNativeDriver: true,
+        }),
+        Animated.spring(slideAnim, {
+          toValue: 0,
+          tension: 65,
+          friction: 11,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      // Animate out first, THEN unmount — prevents instant disappear
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 0,
+          duration: 220,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 300,
+          duration: 220,
+          useNativeDriver: true,
+        }),
+      ]).start(() => setMounted(false));
+    }
+  }, [visible]);
+
+  if (!mounted && !visible) return null;
+
+  // Dynamic headline based on exactly what the user hit
+  const emoji = reason === "collections" ? "🗂️" : "📸";
 
   const title =
     reason === "collections"
-      ? "Collection Limit Reached"
-      : reason === "photos"
-        ? "Photo Limit Reached"
-        : "Your Subscription Has Expired";
+      ? `You've used all ${limit} collection${limit === 1 ? "" : "s"}`
+      : `You've reached the ${limit} photo limit`;
 
-  const message =
+  const sub =
     reason === "collections"
-      ? "Free accounts can create up to 3 collections. Subscribe to create unlimited collections."
-      : reason === "photos"
-        ? "Free accounts can store up to 10 photos per collection. Subscribe for unlimited photos."
-        : "Your Mems subscription has expired. Renew now to continue enjoying unlimited collections and photos.";
+      ? `Your ${currentTier === "free" ? "free" : (TIERS[currentTier as Tier]?.label ?? "")} plan allows ${limit} collection${limit === 1 ? "" : "s"}. Upgrade to store more memories.`
+      : `Your ${currentTier === "free" ? "free" : (TIERS[currentTier as Tier]?.label ?? "")} plan allows ${limit} photos per collection. Upgrade to keep adding moments.`;
 
-  async function handleSubscribe(plan: "monthly" | "yearly") {
-    setLoading(true);
+  const recommendedConfig = TIERS[recommended];
+
+  // What the recommended upgrade unlocks
+  const unlockText =
+    reason === "collections"
+      ? `${recommendedConfig.maxCollections} collections`
+      : `${recommendedConfig.maxPhotosPerCollection} photos per collection`;
+
+  async function handlePurchase(tier: Tier) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session) {
+      onDismiss();
+      router.push("/login?redirect=subscription");
+      return;
+    }
+
+    setPurchasing(tier);
     try {
-      // Opens Pesapal — on web as popup, on mobile as in-app browser
-      // Waits for popup/browser to close then syncs status
-      await startSubscription(plan);
+      const callbackUrl = IS_WEB
+        ? `${window.location.origin}/subscription-callback`
+        : "mems://subscription-callback";
 
-      // Check if payment was successful
-      const status = await checkSubscription();
+      if (IS_WEB) {
+        const popup = window.open(
+          "",
+          "pesapal",
+          "width=620,height=720,left=200,top=80",
+        );
 
-      if (status.isSubscribed) {
-        // Payment successful — close modal and notify parent
-        onClose();
-        setTimeout(() => {
-          if (Platform.OS === "web") {
-            window.alert(
-              "🎉 Subscription activated! You now have unlimited access.",
-            );
-          } else {
-            Alert.alert("Subscribed! 🎉", "You now have unlimited access.");
-          }
-          onSubscribed();
-        }, 300);
-      } else {
-        // Check sync result to see if it explicitly failed
-        const { data: syncData } =
-          await supabase.functions.invoke("sync-subscription");
-
-        if (syncData?.status === "failed") {
-          if (Platform.OS === "web") {
-            window.alert("Payment failed. Please try again.");
-          } else {
-            Alert.alert(
-              "Payment Failed",
-              "Your payment was not completed. Please try again.",
-            );
-          }
-        } else if (syncData?.activated) {
-          // Just activated by sync
-          onClose();
-          onSubscribed();
-        } else {
-          // Still processing — retry once after 3 seconds
-          setTimeout(async () => {
-            const retryStatus = await checkSubscription();
-            if (retryStatus.isSubscribed) {
-              onClose();
-              onSubscribed();
-            } else {
-              if (Platform.OS === "web") {
-                window.alert(
-                  "Payment is still processing. Please refresh the app in a moment.",
-                );
-              } else {
-                Alert.alert(
-                  "Almost there!",
-                  "Your payment is still processing. Please try again in a few seconds.",
-                  [{ text: "OK", onPress: onClose }],
-                );
-              }
-            }
-          }, 3000);
+        if (!popup) {
+          // Fallback — navigate to subscription page
+          onDismiss();
+          router.push("/subscription");
+          return;
         }
-      }
-    } catch (error: any) {
-      if (Platform.OS === "web") {
-        window.alert("Payment error: " + error.message);
+
+        popup.document.write(`
+          <html><body style="display:flex;align-items:center;justify-content:center;
+          height:100vh;font-family:sans-serif;background:#f9f9f9;flex-direction:column;gap:16px">
+          <div style="font-size:48px">📸</div>
+          <div style="font-size:18px;font-weight:600;color:#111">Opening secure payment...</div>
+          <div style="font-size:13px;color:#999">Please wait a moment</div>
+          </body></html>
+        `);
+
+        const { data, error } = await supabase.functions.invoke(
+          "create-subscription",
+          {
+            body: { tier, callbackUrl },
+          },
+        );
+
+        if (error) {
+          popup.close();
+          throw new Error(error.message);
+        }
+
+        const { redirectUrl, merchantReference } = data;
+        popup.location.href = redirectUrl;
+
+        const poll = setInterval(async () => {
+          if (popup?.closed) {
+            clearInterval(poll);
+            try {
+              const { data: sync } = await supabase.functions.invoke(
+                "sync-subscription",
+                {
+                  body: { merchantReference, tier },
+                },
+              );
+              if (sync?.status === "active") {
+                try {
+                  popup.close();
+                } catch {}
+                // Notify parent — they decide what to do (proceed with action)
+                onSubscribed(tier);
+              } else {
+                // Payment abandoned — dismiss paywall, cancel the action
+                onDismiss();
+              }
+            } catch {
+              onDismiss();
+            } finally {
+              setPurchasing(null);
+            }
+          }
+        }, 1000);
       } else {
-        Alert.alert("Error", error.message);
+        // Native — navigate to subscription page and let them come back
+        onDismiss();
+        router.push("/subscription");
+        setPurchasing(null);
       }
-    } finally {
-      setLoading(false);
+    } catch (err: any) {
+      if (IS_WEB) {
+        window.alert("Error: " + err.message);
+      }
+      setPurchasing(null);
     }
   }
 
+  if (!visible) return null;
+
   return (
     <Modal
-      visible={visible}
+      visible={mounted}
       transparent
-      animationType="fade"
+      animationType="none"
       statusBarTranslucent
+      onRequestClose={onDismiss}
     >
-      <View style={styles.backdrop}>
-        <View style={styles.card}>
-          <View style={styles.iconRow}>
-            <Text style={styles.icon}>✨</Text>
-          </View>
-          <Text style={styles.title}>{title}</Text>
-          <Text style={styles.message}>{message}</Text>
+      {/* Backdrop */}
+      <Animated.View style={[styles.backdrop, { opacity: fadeAnim }]}>
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          onPress={onDismiss}
+          activeOpacity={1}
+        />
+      </Animated.View>
 
-          <View style={styles.comparison}>
-            <View style={styles.tier}>
-              <Text style={styles.tierLabel}>Free</Text>
-              <Text style={styles.tierItem}>✓ 3 collections</Text>
-              <Text style={styles.tierItem}>✓ 10 photos each</Text>
-              <Text style={styles.tierItem}>✓ Share collections</Text>
-            </View>
-            <View style={[styles.tier, styles.tierPaid]}>
-              <Text style={[styles.tierLabel, styles.tierLabelPaid]}>Pro</Text>
-              <Text style={[styles.tierItem, styles.tierItemPaid]}>
-                ✓ 20 collections
-              </Text>
-              <Text style={[styles.tierItem, styles.tierItemPaid]}>
-                ✓ 75 photos each
-              </Text>
-              <Text style={[styles.tierItem, styles.tierItemPaid]}>
-                ✓ Share collections
-              </Text>
-            </View>
-          </View>
+      {/* Sheet */}
+      <Animated.View
+        style={[styles.sheet, { transform: [{ translateY: slideAnim }] }]}
+      >
+        {/* Handle */}
+        <View style={styles.handle} />
 
-          <TouchableOpacity
+        {/* Dismiss */}
+        <TouchableOpacity
+          style={styles.closeButton}
+          onPress={onDismiss}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="close" size={20} color="#999" />
+        </TouchableOpacity>
+
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.content}
+        >
+          {/* Header */}
+          <Text style={styles.headerEmoji}>{emoji}</Text>
+          <Text style={styles.headerTitle}>{title}</Text>
+          <Text style={styles.headerSub}>{sub}</Text>
+
+          {/* Dynamic limit reached banner */}
+          <View
             style={[
-              styles.planButton,
-              styles.planButtonFeatured,
-              loading && { opacity: 0.6 },
+              styles.limitBanner,
+              {
+                borderColor: `${recommendedConfig.accent}40`,
+                backgroundColor: `${recommendedConfig.accent}0d`,
+              },
             ]}
-            onPress={() => handleSubscribe("monthly")}
-            disabled={loading}
           >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <>
-                <Text style={styles.planButtonTitle}>Monthly</Text>
-                <Text style={styles.planButtonPrice}>KES 130 / month</Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.planButton, loading && { opacity: 0.6 }]}
-            onPress={() => handleSubscribe("yearly")}
-            disabled={loading}
-          >
-            <View style={styles.saveBadge}>
-              <Text style={styles.saveBadgeText}>Save 14%</Text>
+            <View style={styles.limitBannerLeft}>
+              <Text style={styles.limitBannerEmoji}>
+                {currentTier === "free"
+                  ? "📓"
+                  : (TIERS[currentTier as Tier]?.emoji ?? "📓")}
+              </Text>
+              <View>
+                <Text style={styles.limitBannerLabel}>
+                  {currentTier === "free"
+                    ? "Free"
+                    : (TIERS[currentTier as Tier]?.label ?? "Free")}{" "}
+                  plan limit
+                </Text>
+                <Text style={styles.limitBannerValue}>
+                  {reason === "collections"
+                    ? `${limit} collection${limit === 1 ? "" : "s"} used`
+                    : `${limit} photos per collection`}
+                </Text>
+              </View>
             </View>
-            <Text style={[styles.planButtonTitle, { color: "#111" }]}>
-              Yearly
-            </Text>
-            <Text style={[styles.planButtonPrice, { color: "#555" }]}>
-              KES 1,350 / year
-            </Text>
+            <Ionicons
+              name="arrow-forward"
+              size={16}
+              color={recommendedConfig.accent}
+            />
+            <View>
+              <Text
+                style={[
+                  styles.limitBannerUpgrade,
+                  { color: recommendedConfig.accent },
+                ]}
+              >
+                {recommendedConfig.emoji} {recommendedConfig.label}
+              </Text>
+              <Text
+                style={[
+                  styles.limitBannerUnlock,
+                  { color: recommendedConfig.accent },
+                ]}
+              >
+                {unlockText}
+              </Text>
+            </View>
+          </View>
+
+          {/* Tier cards — all three shown, insufficient ones greyed out */}
+          <Text style={styles.sectionTitle}>Choose your upgrade</Text>
+
+          {ALL_PAID_TIERS.map((tier) => {
+            const config = TIERS[tier];
+            const isPurchasing = purchasing === tier;
+            const isRecommended = tier === recommended;
+            const solves = doesSolve(tier, reason, limit);
+            const isGreyed = !solves;
+
+            return (
+              <TouchableOpacity
+                key={tier}
+                style={[
+                  styles.tierCard,
+                  isGreyed && styles.tierCardGreyed,
+                  !isGreyed && isRecommended && styles.tierCardRecommended,
+                  !isGreyed && {
+                    borderColor: isRecommended ? config.accent : "#e0e0e0",
+                  },
+                  isPurchasing && { opacity: 0.7 },
+                ]}
+                onPress={() => !isGreyed && handlePurchase(tier)}
+                disabled={!!purchasing || isGreyed}
+                activeOpacity={isGreyed ? 1 : 0.85}
+              >
+                {/* Badge row */}
+                {isGreyed ? (
+                  <View style={styles.greyedBadge}>
+                    <Text style={styles.greyedBadgeText}>
+                      Too small for your current usage
+                    </Text>
+                  </View>
+                ) : isRecommended ? (
+                  <View
+                    style={[
+                      styles.popularBadge,
+                      { backgroundColor: config.accent },
+                    ]}
+                  >
+                    <Text style={styles.popularBadgeText}>
+                      ✦ Recommended for you
+                    </Text>
+                  </View>
+                ) : null}
+
+                <View
+                  style={[styles.tierLeft, isGreyed && styles.tierLeftGreyed]}
+                >
+                  <Text
+                    style={[styles.tierEmoji, isGreyed && { opacity: 0.35 }]}
+                  >
+                    {config.emoji}
+                  </Text>
+                  <View style={styles.tierInfo}>
+                    <Text
+                      style={[styles.tierLabel, isGreyed && styles.greyedText]}
+                    >
+                      {config.label} Album
+                    </Text>
+                    <Text
+                      style={[
+                        styles.tierTagline,
+                        isGreyed && styles.greyedSubText,
+                      ]}
+                    >
+                      {config.tagline}
+                    </Text>
+                    <View style={styles.tierStats}>
+                      {/* Collections stat */}
+                      <View
+                        style={[
+                          styles.tierStat,
+                          isGreyed
+                            ? styles.tierStatGreyed
+                            : { backgroundColor: `${config.accent}18` },
+                          !isGreyed &&
+                            reason === "collections" &&
+                            isRecommended &&
+                            styles.tierStatHighlight,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.tierStatText,
+                            isGreyed
+                              ? styles.greyedStatText
+                              : { color: config.accent },
+                          ]}
+                        >
+                          {config.maxCollections} collections
+                        </Text>
+                      </View>
+                      {/* Photos stat */}
+                      <View
+                        style={[
+                          styles.tierStat,
+                          isGreyed
+                            ? styles.tierStatGreyed
+                            : { backgroundColor: `${config.accent}18` },
+                          !isGreyed &&
+                            reason === "photos" &&
+                            isRecommended &&
+                            styles.tierStatHighlight,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.tierStatText,
+                            isGreyed
+                              ? styles.greyedStatText
+                              : { color: config.accent },
+                          ]}
+                        >
+                          {config.maxPhotosPerCollection} photos each
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={styles.tierRight}>
+                  {isPurchasing ? (
+                    <ActivityIndicator color={config.accent} size="small" />
+                  ) : isGreyed ? (
+                    <View style={styles.greyedPriceBlock}>
+                      <Text style={styles.greyedPrice}>
+                        KES {config.price.toLocaleString()}
+                      </Text>
+                      <Text style={styles.greyedOnce}>once</Text>
+                    </View>
+                  ) : (
+                    <>
+                      <Text
+                        style={[styles.tierPrice, { color: config.accent }]}
+                      >
+                        KES {config.price.toLocaleString()}
+                      </Text>
+                      <Text style={styles.tierOnce}>once</Text>
+                      <View
+                        style={[
+                          styles.tierButton,
+                          {
+                            backgroundColor: isRecommended
+                              ? config.accent
+                              : "#efefef",
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.tierButtonText,
+                            !isRecommended && { color: "#666" },
+                          ]}
+                        >
+                          {isRecommended ? "Upgrade" : "Get"}
+                        </Text>
+                      </View>
+                    </>
+                  )}
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+
+          {/* Maybe Later */}
+          <TouchableOpacity style={styles.laterButton} onPress={onDismiss}>
+            <Text style={styles.laterText}>Maybe Later</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.dismissButton} onPress={onClose}>
-            <Text style={styles.dismissText}>Maybe later</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+          <Text style={styles.footer}>
+            One-time payment · No subscriptions · Secure via Pesapal
+          </Text>
+        </ScrollView>
+      </Animated.View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   backdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 24,
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.5)",
   },
-  card: {
-    width: "100%",
+  sheet: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
     backgroundColor: "#fff",
-    borderRadius: 24,
-    padding: 24,
-    alignItems: "center",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: "90%",
+    paddingBottom: Platform.OS === "ios" ? 34 : 24,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: -4 },
+        shadowOpacity: 0.12,
+        shadowRadius: 16,
+      },
+      android: { elevation: 20 },
+      web: { boxShadow: "0 -8px 32px rgba(0,0,0,0.12)" } as any,
+    }),
   },
-  iconRow: { marginBottom: 8 },
-  icon: { fontSize: 40 },
-  title: {
+  handle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#e0e0e0",
+    alignSelf: "center",
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  closeButton: {
+    position: "absolute",
+    top: 16,
+    right: 20,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#f5f5f5",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  content: {
+    padding: 24,
+    paddingTop: 12,
+    gap: 12,
+  },
+
+  // Header
+  headerEmoji: { fontSize: 48, textAlign: "center", marginTop: 8 },
+  headerTitle: {
     fontSize: 20,
-    fontWeight: "700",
+    fontWeight: "800",
     color: "#111",
     textAlign: "center",
-    marginBottom: 8,
+    lineHeight: 26,
+    marginTop: 8,
   },
-  message: {
+  headerSub: {
     fontSize: 14,
     color: "#666",
     textAlign: "center",
-    marginBottom: 20,
     lineHeight: 20,
-  },
-  comparison: {
-    flexDirection: "row",
-    gap: 12,
-    width: "100%",
-    marginBottom: 20,
-  },
-  tier: {
-    flex: 1,
-    backgroundColor: "#f5f5f5",
-    borderRadius: 12,
-    padding: 12,
-  },
-  tierPaid: { backgroundColor: "#111" },
-  tierLabel: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#111",
-    marginBottom: 8,
-  },
-  tierLabelPaid: { color: "#fff" },
-  tierItem: {
-    fontSize: 12,
-    color: "#555",
     marginBottom: 4,
   },
-  tierItemPaid: { color: "rgba(255,255,255,0.85)" },
-  planButton: {
-    width: "100%",
-    borderRadius: 14,
-    padding: 16,
+
+  // Limit reached banner
+  limitBanner: {
+    flexDirection: "row",
     alignItems: "center",
-    marginBottom: 10,
+    gap: 10,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#e0e0e0",
-    position: "relative",
+    padding: 14,
+    marginBottom: 4,
   },
-  planButtonFeatured: {
-    backgroundColor: "#111",
-    borderColor: "#111",
+  limitBannerLeft: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
-  planButtonTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#fff",
-    marginBottom: 2,
-  },
-  planButtonPrice: {
+  limitBannerEmoji: { fontSize: 24 },
+  limitBannerLabel: { fontSize: 11, color: "#999", fontWeight: "600" },
+  limitBannerValue: {
     fontSize: 13,
-    color: "rgba(255,255,255,0.8)",
+    color: "#555",
+    fontWeight: "700",
+    marginTop: 1,
   },
-  saveBadge: {
+  limitBannerUpgrade: { fontSize: 13, fontWeight: "800", textAlign: "right" },
+  limitBannerUnlock: {
+    fontSize: 11,
+    fontWeight: "500",
+    textAlign: "right",
+    marginTop: 1,
+  },
+
+  tierCardRecommended: {
+    ...Platform.select({
+      ios: {
+        shadowColor: "#3b82f6",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 12,
+      },
+      android: { elevation: 6 },
+      web: { boxShadow: "0 4px 20px rgba(59,130,246,0.15)" } as any,
+    }),
+  },
+  // Greyed out — not a valid upgrade for current usage
+  tierCardGreyed: {
+    borderColor: "#ececec",
+    backgroundColor: "#fafafa",
+    opacity: 0.6,
+  },
+  tierLeftGreyed: { opacity: 0.5 },
+  greyedText: { color: "#bbb" },
+  greyedSubText: { color: "#ccc" },
+  greyedBadge: {
+    backgroundColor: "#f0f0f0",
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    alignSelf: "flex-start",
+    borderRadius: 6,
+    marginBottom: 6,
+  },
+  greyedBadgeText: { fontSize: 10, color: "#bbb", fontWeight: "600" },
+  tierStatGreyed: { backgroundColor: "#f0f0f0" },
+  greyedStatText: { color: "#ccc" },
+  greyedPriceBlock: { alignItems: "flex-end", gap: 2 },
+  greyedPrice: { fontSize: 14, fontWeight: "700", color: "#ccc" },
+  greyedOnce: { fontSize: 10, color: "#ddd" },
+  tierStatHighlight: {
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.08)",
+  },
+
+  // Section title
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111",
+    marginTop: 4,
+    marginBottom: 4,
+  },
+
+  // Tier cards
+  tierCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    borderWidth: 1.5,
+    padding: 16,
+    position: "relative",
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 8,
+      },
+      android: { elevation: 2 },
+      web: { boxShadow: "0 2px 12px rgba(0,0,0,0.06)" } as any,
+    }),
+  },
+  tierCardFeatured: {
+    ...Platform.select({
+      ios: {
+        shadowColor: "#3b82f6",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 12,
+      },
+      android: { elevation: 6 },
+      web: { boxShadow: "0 4px 20px rgba(59,130,246,0.15)" } as any,
+    }),
+  },
+  popularBadge: {
     position: "absolute",
     top: -10,
-    right: 16,
-    backgroundColor: "#4AE8A0",
-    paddingHorizontal: 8,
+    left: 16,
+    paddingHorizontal: 10,
     paddingVertical: 3,
     borderRadius: 10,
   },
-  saveBadgeText: {
-    fontSize: 10,
-    fontWeight: "700",
+  popularBadgeText: { fontSize: 10, fontWeight: "700", color: "#fff" },
+
+  tierLeft: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  tierEmoji: { fontSize: 28, marginTop: 2 },
+  tierInfo: { flex: 1 },
+  tierLabel: {
+    fontSize: 15,
+    fontWeight: "800",
     color: "#111",
+    marginBottom: 2,
   },
-  dismissButton: {
+  tierTagline: { fontSize: 12, color: "#888", marginBottom: 8 },
+  tierStats: { flexDirection: "row", flexWrap: "wrap", gap: 4 },
+  tierStat: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  tierStatText: { fontSize: 11, fontWeight: "600" },
+
+  tierRight: { alignItems: "flex-end", gap: 4, minWidth: 72 },
+  tierPrice: { fontSize: 16, fontWeight: "900" },
+  tierOnce: { fontSize: 10, color: "#bbb", marginTop: -2 },
+  tierButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 10,
     marginTop: 4,
-    padding: 8,
   },
-  dismissText: {
-    fontSize: 13,
-    color: "#999",
+  tierButtonText: { fontSize: 13, fontWeight: "700", color: "#fff" },
+
+  // Footer
+  laterButton: { alignItems: "center", paddingVertical: 12 },
+  laterText: { fontSize: 14, color: "#bbb", fontWeight: "500" },
+  footer: {
+    fontSize: 11,
+    color: "#ccc",
+    textAlign: "center",
+    lineHeight: 16,
   },
 });

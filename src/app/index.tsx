@@ -5,7 +5,7 @@ import { Session } from "@supabase/supabase-js";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -56,9 +56,11 @@ export default function CollectionsPage() {
   const [subscriptionStatus, setSubscriptionStatus] =
     useState<SubscriptionStatus | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
-  const [paywallReason, setPaywallReason] = useState<
-    "collections" | "photos" | "renewal"
-  >("collections");
+  const [paywallReason, setPaywallReason] = useState<"collections" | "photos">(
+    "collections",
+  );
+  // Pending action to resume after subscription
+  const pendingActionRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -234,35 +236,13 @@ export default function CollectionsPage() {
 
     if (!result.canceled) {
       setSelectedAssets(result.assets.slice(0, maxPhotos));
+      // If free user hit the limit — go straight to paywall
+      // Store createCollection as the pending action so it fires immediately after subscribe
       if (isLimited && result.assets.length >= maxPhotos) {
-        setTimeout(() => {
-          if (Platform.OS === "web") {
-            const upgrade = window.confirm(
-              `Free accounts can only upload ${maxPhotos} photos per collection.\n\nWould you like to upgrade for more?`,
-            );
-            if (upgrade) {
-              setShowNewCollection(false);
-              setPaywallReason("photos");
-              setShowPaywall(true);
-            }
-          } else {
-            Alert.alert(
-              `${maxPhotos} Photo Limit`,
-              `Free accounts can upload up to ${maxPhotos} photos per collection.`,
-              [
-                { text: "Continue", style: "cancel" },
-                {
-                  text: "Upgrade",
-                  onPress: () => {
-                    setShowNewCollection(false);
-                    setPaywallReason("photos");
-                    setShowPaywall(true);
-                  },
-                },
-              ],
-            );
-          }
-        }, 500);
+        setShowNewCollection(false);
+        pendingActionRef.current = createCollection;
+        setPaywallReason("photos");
+        setShowPaywall(true);
       }
     }
   }
@@ -284,7 +264,6 @@ export default function CollectionsPage() {
 
     if (ownedCollections.length >= maxCollections) {
       if (isActive) {
-        // Pro user hit their tier limit — toast handled in [id].tsx
         Alert.alert(
           "Collection limit reached",
           `Your ${subscriptionStatus?.limits?.label ?? "current"} plan allows up to ${maxCollections} collections. Delete one to make room or upgrade your plan.`,
@@ -294,7 +273,9 @@ export default function CollectionsPage() {
           ],
         );
       } else {
+        // Free user — close modal, store createCollection as the pending action
         setShowNewCollection(false);
+        pendingActionRef.current = createCollection;
         setPaywallReason("collections");
         setShowPaywall(true);
       }
@@ -303,21 +284,10 @@ export default function CollectionsPage() {
 
     const maxPhotos = subscriptionStatus?.limits?.maxPhotosPerCollection ?? 10;
     if (!isActive && selectedAssets.length > maxPhotos) {
-      Alert.alert(
-        "Too many photos",
-        `Free accounts can add up to ${maxPhotos} photos per collection.`,
-        [
-          { text: "Reduce Photos", style: "cancel" },
-          {
-            text: "Upgrade",
-            onPress: () => {
-              setShowNewCollection(false);
-              setPaywallReason("photos");
-              setShowPaywall(true);
-            },
-          },
-        ],
-      );
+      setShowNewCollection(false);
+      pendingActionRef.current = createCollection;
+      setPaywallReason("photos");
+      setShowPaywall(true);
       return;
     }
 
@@ -695,10 +665,37 @@ export default function CollectionsPage() {
       <PaywallModal
         visible={showPaywall}
         reason={paywallReason}
-        onClose={() => setShowPaywall(false)}
-        onSubscribed={async () => {
+        currentLimit={
+          paywallReason === "collections"
+            ? (subscriptionStatus?.limits?.maxCollections ?? 3)
+            : (subscriptionStatus?.limits?.maxPhotosPerCollection ?? 10)
+        }
+        currentTier={
+          subscriptionStatus?.isActive
+            ? (subscriptionStatus.tier as any)
+            : "free"
+        }
+        onSubscribed={async (_tier) => {
+          // Refresh subscription so limits are updated
           const status = await checkSubscription();
           setSubscriptionStatus(status);
+          setShowPaywall(false);
+
+          if (pendingActionRef.current) {
+            const action = pendingActionRef.current;
+            pendingActionRef.current = null;
+            // Small delay to let the paywall finish its close animation
+            // before the next action fires
+            setTimeout(() => action(), 300);
+          }
+        }}
+        onDismiss={() => {
+          setShowPaywall(false);
+          pendingActionRef.current = null;
+          // Re-open the new collection modal so user can adjust or cancel
+          if (collectionName.trim() && selectedAssets.length > 0) {
+            setTimeout(() => setShowNewCollection(true), 300);
+          }
         }}
       />
     </View>
