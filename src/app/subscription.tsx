@@ -387,11 +387,15 @@ export default function SubscriptionPage() {
   const [status, setStatus] = useState<SubStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState<Tier | null>(null);
+  // Start at medium — corrected to active tier once subscription loads
   const [selectedTier, setSelectedTier] = useState<AllTier>("medium");
 
-  const toggleAnim = useRef(new Animated.Value(1)).current; // index in ALL_TIERS (0=free)
+  const toggleAnim = useRef(new Animated.Value(1)).current; // 1 = medium index in ALL_TIERS
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const cardFade = useRef(new Animated.Value(1)).current;
+
+  // Ref for instant card content during fade — must be declared before useEffect
+  const selectedTierRef = useRef<AllTier>("medium");
 
   const cardWidth = isDesktop
     ? Math.min(220, (Math.min(SCREEN_WIDTH, 960) - 100) / 4)
@@ -418,20 +422,35 @@ export default function SubscriptionPage() {
     supabase.functions
       .invoke("check-subscription")
       .then(({ data }) => {
+        const tier: Tier = data?.tier ?? "free";
+        const isActive: boolean = data?.isActive ?? false;
+
         setStatus({
-          tier: data?.tier ?? "free",
-          isActive: data?.isActive ?? false,
+          tier,
+          isActive,
           limits: data?.limits ?? {
             maxCollections: 3,
             maxPhotosPerCollection: 10,
           },
         });
+
+        // ── Smart initial card selection for mobile ──
+        // Free account → land on Medium (most popular) — nudges upgrade
+        // Active subscriber → land on their purchased tier — shows what they own
+        const initialTier: AllTier =
+          isActive && ["small", "medium", "big"].includes(tier)
+            ? tier
+            : "medium";
+
+        const initialIdx = ALL_TIERS.indexOf(initialTier);
+
+        setSelectedTier(initialTier);
+        selectedTierRef.current = initialTier;
+        // Animate toggle pill to correct position without a visible jump
+        toggleAnim.setValue(initialIdx);
       })
       .finally(() => setLoading(false));
   }, []);
-
-  // Use a ref so the card content updates immediately before the fade animation
-  const selectedTierRef = useRef<AllTier>("medium");
 
   function switchTier(tier: AllTier) {
     // Update ref instantly so card content is correct during fade
@@ -462,100 +481,59 @@ export default function SubscriptionPage() {
       IS_WEB ? window.alert(msg) : Alert.alert("Already active", msg);
       return;
     }
-
     setPurchasing(tier);
-
     try {
       const callbackUrl = IS_WEB
         ? `${window.location.origin}/subscription-callback`
         : "mems://subscription-callback";
 
       if (IS_WEB) {
-        // Open popup immediately on user gesture — before any await
-        // Mobile browsers block popups opened after async work
         const popup = window.open(
           "",
           "pesapal",
           "width=620,height=720,left=200,top=80",
         );
-
         if (!popup) {
-          // Popup blocked — fall back to same-tab redirect
           const { data, error } = await supabase.functions.invoke(
             "create-subscription",
-            { body: { tier, callbackUrl } },
+            {
+              body: { tier, callbackUrl },
+            },
           );
           if (error) throw new Error(error.message);
           window.location.href = data.redirectUrl;
           return;
         }
-
-        // Show branded loading screen while we fetch the payment URL
-        popup.document.write(`
-        <html>
-          <body style="
-            margin:0;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            height:100vh;
-            font-family:sans-serif;
-            background:#f9f9f9;
-            flex-direction:column;
-            gap:16px;
-          ">
-            <div style="font-size:48px">📸</div>
-            <div style="font-size:18px;font-weight:600;color:#111">
-              Opening secure payment...
-            </div>
-            <div style="font-size:13px;color:#999">Please wait a moment</div>
-          </body>
-        </html>
-      `);
-
-        // Fetch the Pesapal payment URL
-        // Note: no database write happens here — only on confirmed payment
+        popup.document.write(
+          `<html><body style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f9f9f9;flex-direction:column;gap:16px"><div style="font-size:48px">📸</div><div style="font-size:18px;font-weight:600">Opening secure payment...</div></body></html>`,
+        );
         const { data, error } = await supabase.functions.invoke(
           "create-subscription",
-          { body: { tier, callbackUrl } },
+          {
+            body: { tier, callbackUrl },
+          },
         );
-
         if (error) {
           popup.close();
           throw new Error(error.message);
         }
-
-        const { redirectUrl, merchantReference } = data;
-
-        // Navigate the already-open popup to Pesapal
-        popup.location.href = redirectUrl;
-
-        // Poll every second to detect when the popup closes
+        popup.location.href = data.redirectUrl;
         const poll = setInterval(async () => {
           if (popup?.closed) {
             clearInterval(poll);
-            try {
-              // Pass merchantReference and tier so sync-subscription
-              // can poll Pesapal directly without reading from the DB
-              const { data: sync } = await supabase.functions.invoke(
-                "sync-subscription",
-                { body: { merchantReference, tier } },
-              );
-
-              if (sync?.status === "active") {
-                // Payment confirmed — close popup and reload for fresh state
-                try {
-                  popup.close();
-                } catch {}
-                window.location.reload();
-              } else {
-                // Popup closed without completing payment
-                // Previous subscription status is untouched
-                setPurchasing(null);
-              }
-            } catch {
-              setPurchasing(null);
+            const { data: sync } =
+              await supabase.functions.invoke("sync-subscription");
+            if (sync?.status === "active") {
+              const { data: updated } =
+                await supabase.functions.invoke("check-subscription");
+              setStatus({
+                tier: updated?.tier ?? tier,
+                isActive: true,
+                limits: updated?.limits ?? TIERS[tier],
+              });
+              window.alert(`🎉 ${TIERS[tier].label} Album activated!`);
             }
+            setPurchasing(null);
           }
         }, 1000);
       }

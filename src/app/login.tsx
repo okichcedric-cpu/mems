@@ -334,14 +334,28 @@ export default function LoginScreen() {
         </View>
       )}
 
-      {/* ── About link — top, prominent ── */}
-      <TouchableOpacity
-        style={[styles.aboutLinkTop, { width: FORM_WIDTH }]}
-        onPress={() => router.push("/about")}
-      >
-        <Text style={styles.aboutLinkTopText}>✦ What is Mems?</Text>
-        <Text style={styles.aboutLinkArrow}>›</Text>
-      </TouchableOpacity>
+      {/* ── Quick links row — About + Pricing ── */}
+      <View style={[styles.quickLinksRow, { width: FORM_WIDTH }]}>
+        <TouchableOpacity
+          style={styles.quickLinkButton}
+          onPress={() => router.push("/about")}
+          activeOpacity={0.75}
+        >
+          <Text style={styles.quickLinkIcon}>✦</Text>
+          <Text style={styles.quickLinkText}>What is Mems?</Text>
+        </TouchableOpacity>
+
+        <View style={styles.quickLinkDivider} />
+
+        <TouchableOpacity
+          style={styles.quickLinkButton}
+          onPress={() => router.push("/subscription")}
+          activeOpacity={0.75}
+        >
+          <Text style={styles.quickLinkIcon}>📗</Text>
+          <Text style={styles.quickLinkText}>View Pricing</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* ── Google button — hero ── */}
       <TouchableOpacity
@@ -739,29 +753,39 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
 
-  // ── About link — top, prominent ───────────────────────────
-  aboutLinkTop: {
+  // ── Quick links row ───────────────────────────────────────
+  quickLinksRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 10,
+    borderRadius: 12,
     backgroundColor: "#f7f7f7",
     borderWidth: 1,
-    borderColor: "#eee",
+    borderColor: "#eeeeee",
     marginBottom: 24,
+    overflow: "hidden",
   },
-  aboutLinkTopText: {
-    fontSize: 15,
+  quickLinkButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+  },
+  quickLinkDivider: {
+    width: 1,
+    height: 20,
+    backgroundColor: "#e0e0e0",
+  },
+  quickLinkIcon: {
+    fontSize: 14,
+    color: "#4A90E8",
+  },
+  quickLinkText: {
+    fontSize: 14,
     color: "#4A90E8",
     fontWeight: "600",
-    letterSpacing: 0.2,
-  },
-  aboutLinkArrow: {
-    fontSize: 18,
-    color: "#4A90E8",
-    fontWeight: "700",
   },
 
   // ── Google button ─────────────────────────────────────────

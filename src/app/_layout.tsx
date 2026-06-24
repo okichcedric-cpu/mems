@@ -95,6 +95,7 @@ export default function RootLayout() {
       segments[0] === "terms" ||
       segments[0] === "privacy" ||
       segments[0] === "about" ||
+      segments[0] === "subscription" ||
       segments[0] === "subscription-callback";
 
     if (!session && !inAuthGroup && !inPublicGroup) {
