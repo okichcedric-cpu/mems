@@ -170,9 +170,19 @@ function DesktopHeroPanel() {
 }
 async function signInWithGoogle() {
   if (IS_WEB) {
+    // Preserve any redirect param through the OAuth flow
+    const params =
+      typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search)
+        : new URLSearchParams();
+    const redirect = params.get("redirect");
+    const redirectTo = redirect
+      ? `${window.location.origin}/${redirect}`
+      : window.location.origin;
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: window.location.origin },
+      options: { redirectTo },
     });
     if (error) Alert.alert("Error", error.message);
   } else {
@@ -223,6 +233,15 @@ export default function LoginScreen() {
           password,
         });
         if (error) throw error;
+        // Handle redirect param e.g. from subscription page guest purchase
+        if (IS_WEB && typeof window !== "undefined") {
+          const params = new URLSearchParams(window.location.search);
+          const redirect = params.get("redirect");
+          if (redirect) {
+            router.replace(`/${redirect}` as any);
+            return;
+          }
+        }
       } else {
         const { error } = await supabase.auth.signUp({
           email: email.trim().toLowerCase(),

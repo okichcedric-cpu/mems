@@ -207,7 +207,6 @@ function FreeCardMobile({ isCurrentTier }: { isCurrentTier: boolean }) {
         <Text style={styles.mobileCardLabel}>Free Album</Text>
         <Text style={styles.mobileCardTagline}>{config.tagline}</Text>
       </View>
-
       <View style={styles.mobileCardStats}>
         <View style={styles.mobileCardStat}>
           <Text style={[styles.mobileStatValue, { color: config.accent }]}>
@@ -230,7 +229,6 @@ function FreeCardMobile({ isCurrentTier }: { isCurrentTier: boolean }) {
           <Text style={styles.mobileStatLabel}>Always</Text>
         </View>
       </View>
-
       <View style={styles.mobileFeatures}>
         {[
           "3 collections",
@@ -249,7 +247,6 @@ function FreeCardMobile({ isCurrentTier }: { isCurrentTier: boolean }) {
           </View>
         ))}
       </View>
-
       <View
         style={[
           styles.mobileCardButton,
@@ -282,8 +279,6 @@ function ComparisonTable({
   return (
     <View style={[tableStyles.table, { width: tableWidth }]}>
       <Text style={tableStyles.title}>Compare all plans</Text>
-
-      {/* Header */}
       <View style={tableStyles.row}>
         <View style={tableStyles.featureCol} />
         {ALL_TIERS.map((tier) => {
@@ -305,9 +300,7 @@ function ComparisonTable({
           );
         })}
       </View>
-
       <View style={tableStyles.divider} />
-
       {FEATURES.map((feature, i) => (
         <View
           key={feature.key}
@@ -336,10 +329,7 @@ function ComparisonTable({
           })}
         </View>
       ))}
-
       <View style={tableStyles.divider} />
-
-      {/* Price row */}
       <View style={tableStyles.row}>
         <View style={tableStyles.featureCol}>
           <Ionicons name="pricetag-outline" size={13} color="#999" />
@@ -387,20 +377,31 @@ export default function SubscriptionPage() {
   const [status, setStatus] = useState<SubStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState<Tier | null>(null);
-  // Start at medium — corrected to active tier once subscription loads
   const [selectedTier, setSelectedTier] = useState<AllTier>("medium");
+  // Track session for guest purchase interception
+  const [session, setSession] = useState<any>(null);
 
-  const toggleAnim = useRef(new Animated.Value(1)).current; // 1 = medium index in ALL_TIERS
+  const toggleAnim = useRef(new Animated.Value(1)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const cardFade = useRef(new Animated.Value(1)).current;
-
-  // Ref for instant card content during fade — must be declared before useEffect
   const selectedTierRef = useRef<AllTier>("medium");
 
   const cardWidth = isDesktop
     ? Math.min(220, (Math.min(SCREEN_WIDTH, 960) - 100) / 4)
     : SCREEN_WIDTH - 48;
 
+  // Track auth session
+  useEffect(() => {
+    supabase.auth
+      .getSession()
+      .then(({ data: { session: s } }) => setSession(s));
+    const {
+      data: { subscription: authSub },
+    } = supabase.auth.onAuthStateChange((_, s) => setSession(s));
+    return () => authSub.unsubscribe();
+  }, []);
+
+  // Pulse animation for featured card
   useEffect(() => {
     Animated.loop(
       Animated.sequence([
@@ -418,6 +419,7 @@ export default function SubscriptionPage() {
     ).start();
   }, []);
 
+  // Load subscription status + set smart initial card
   useEffect(() => {
     supabase.functions
       .invoke("check-subscription")
@@ -434,26 +436,37 @@ export default function SubscriptionPage() {
           },
         });
 
-        // ── Smart initial card selection for mobile ──
-        // Free account → land on Medium (most popular) — nudges upgrade
-        // Active subscriber → land on their purchased tier — shows what they own
+        // Free → show Medium (most popular to nudge upgrade)
+        // Subscribed → show their active tier
         const initialTier: AllTier =
           isActive && ["small", "medium", "big"].includes(tier)
             ? tier
             : "medium";
-
         const initialIdx = ALL_TIERS.indexOf(initialTier);
 
         setSelectedTier(initialTier);
         selectedTierRef.current = initialTier;
-        // Animate toggle pill to correct position without a visible jump
         toggleAnim.setValue(initialIdx);
       })
       .finally(() => setLoading(false));
   }, []);
 
+  // Resume pending purchase after login redirect
+  useEffect(() => {
+    if (!IS_WEB || typeof window === "undefined") return;
+    const pendingTier = sessionStorage.getItem(
+      "pendingTier",
+    ) as PaidTier | null;
+    if (!pendingTier) return;
+    sessionStorage.removeItem("pendingTier");
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      if (s && pendingTier) {
+        setTimeout(() => handlePurchase(pendingTier), 900);
+      }
+    });
+  }, []);
+
   function switchTier(tier: AllTier) {
-    // Update ref instantly so card content is correct during fade
     selectedTierRef.current = tier;
     Animated.timing(cardFade, {
       toValue: 0,
@@ -476,11 +489,24 @@ export default function SubscriptionPage() {
   }
 
   async function handlePurchase(tier: PaidTier) {
+    // ── Guest intercept ──
+    const {
+      data: { session: currentSession },
+    } = await supabase.auth.getSession();
+    if (!currentSession) {
+      if (IS_WEB && typeof window !== "undefined") {
+        sessionStorage.setItem("pendingTier", tier);
+      }
+      router.push("/login?redirect=subscription");
+      return;
+    }
+
     if (status?.isActive && status.tier === tier) {
       const msg = "You already have this album.";
       IS_WEB ? window.alert(msg) : Alert.alert("Already active", msg);
       return;
     }
+
     setPurchasing(tier);
     try {
       const callbackUrl = IS_WEB
@@ -505,7 +531,7 @@ export default function SubscriptionPage() {
           return;
         }
         popup.document.write(
-          `<html><body style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f9f9f9;flex-direction:column;gap:16px"><div style="font-size:48px">📸</div><div style="font-size:18px;font-weight:600">Opening secure payment...</div></body></html>`,
+          `<html><body style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f9f9f9;flex-direction:column;gap:16px"><div style="font-size:48px">📸</div><div style="font-size:18px;font-weight:600;color:#111">Opening secure payment...</div><div style="font-size:13px;color:#999">Please wait a moment</div></body></html>`,
         );
         const { data, error } = await supabase.functions.invoke(
           "create-subscription",
@@ -517,23 +543,29 @@ export default function SubscriptionPage() {
           popup.close();
           throw new Error(error.message);
         }
-        popup.location.href = data.redirectUrl;
+        const { redirectUrl, merchantReference } = data;
+        popup.location.href = redirectUrl;
         const poll = setInterval(async () => {
           if (popup?.closed) {
             clearInterval(poll);
-            const { data: sync } =
-              await supabase.functions.invoke("sync-subscription");
-            if (sync?.status === "active") {
-              const { data: updated } =
-                await supabase.functions.invoke("check-subscription");
-              setStatus({
-                tier: updated?.tier ?? tier,
-                isActive: true,
-                limits: updated?.limits ?? TIERS[tier],
-              });
-              window.alert(`🎉 ${TIERS[tier].label} Album activated!`);
+            try {
+              const { data: sync } = await supabase.functions.invoke(
+                "sync-subscription",
+                {
+                  body: { merchantReference, tier },
+                },
+              );
+              if (sync?.status === "active") {
+                try {
+                  popup.close();
+                } catch {}
+                window.location.reload();
+              } else {
+                setPurchasing(null);
+              }
+            } catch {
+              setPurchasing(null);
             }
-            setPurchasing(null);
           }
         }, 1000);
       }
@@ -553,11 +585,33 @@ export default function SubscriptionPage() {
     outputRange: ["0%", "25%", "50%", "75%"],
   });
 
+  // Button label helper
+  function buyLabel(tier: PaidTier, isActive: boolean): string {
+    if (isActive) return "✓ Active";
+    if (!session) return `Sign up to get ${TIERS[tier].label}`;
+    return "Get this album";
+  }
+
+  function mobileBuyLabel(tier: PaidTier, isActive: boolean): string {
+    if (isActive) return "✓ Active plan";
+    if (!session) return `Sign up — KES ${TIERS[tier].price.toLocaleString()}`;
+    return `Get ${TIERS[tier].label} — KES ${TIERS[tier].price.toLocaleString()}`;
+  }
+
+  function mobileBuySub(isActive: boolean): string {
+    if (isActive) return "";
+    if (!session) return "Free to create an account";
+    return "One-time payment";
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={() => {
+            if (router.canGoBack()) router.back();
+            else router.replace("/");
+          }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons name="arrow-back" size={22} color="#111" />
@@ -577,6 +631,17 @@ export default function SubscriptionPage() {
           </Text>
         </View>
 
+        {/* Guest nudge */}
+        {!session && !loading && (
+          <View style={styles.guestBanner}>
+            <Text style={styles.guestBannerText}>
+              👋 Create a free account to get started — or buy a plan right
+              away.
+            </Text>
+          </View>
+        )}
+
+        {/* Active plan pill */}
         {status?.isActive && activeTier && (
           <View
             style={[
@@ -591,7 +656,7 @@ export default function SubscriptionPage() {
             </Text>
           </View>
         )}
-        {isActiveFree && (
+        {session && isActiveFree && (
           <View style={[styles.activePill, { backgroundColor: "#888" }]}>
             <Ionicons name="checkmark-circle" size={14} color="#fff" />
             <Text style={styles.activePillText}>📓 Free Plan is active</Text>
@@ -603,24 +668,22 @@ export default function SubscriptionPage() {
             <ActivityIndicator size="large" color="#111" />
           </View>
         ) : isDesktop ? (
-          /* ══ DESKTOP — four cards side by side ══ */
+          /* ══ DESKTOP ══ */
           <>
             <View style={styles.webCardRow}>
-              {/* Free card */}
-              <FreeCard isCurrentTier={isActiveFree} width={cardWidth} />
-
-              {/* Paid cards */}
+              <FreeCard
+                isCurrentTier={isActiveFree && !!session}
+                width={cardWidth}
+              />
               {PAID_TIERS.map((tier) => {
                 const config = TIERS[tier];
                 const isActive = activeTier === tier;
                 const isFeatured = config.featured;
                 const isPurchasing = purchasing === tier;
-                // Always use Animated.View so scale never gets lost
-                // Featured gets pulse, active gets a fixed elevated scale
                 const scaleTransform = isFeatured
                   ? [{ scale: pulseAnim }]
                   : isActive
-                    ? [{ scale: 1.04 }] // ← active card stays visually elevated
+                    ? [{ scale: 1.04 }]
                     : [{ scale: 1 }];
                 const cardStyle = [
                   styles.webCard,
@@ -746,7 +809,7 @@ export default function SubscriptionPage() {
                             isActive && { color: config.accent },
                           ]}
                         >
-                          {isActive ? "✓ Active" : "Get this album"}
+                          {buyLabel(tier, isActive)}
                         </Text>
                       )}
                     </TouchableOpacity>
@@ -754,19 +817,17 @@ export default function SubscriptionPage() {
                 );
               })}
             </View>
-
             <ComparisonTable
               activeTier={activeTier}
-              isActiveFree={isActiveFree}
+              isActiveFree={isActiveFree && !!session}
               tableWidth={Math.min(960, SCREEN_WIDTH - 48)}
             />
           </>
         ) : (
-          /* ══ MOBILE — four-way toggle + single card ══ */
+          /* ══ MOBILE ══ */
           <>
-            {/* Toggle */}
             <View style={styles.toggleWrapper}>
-              <View style={[styles.toggleTrack]}>
+              <View style={styles.toggleTrack}>
                 <Animated.View
                   style={[styles.togglePill, { left: pillLeft, width: "25%" }]}
                   pointerEvents="none"
@@ -775,7 +836,9 @@ export default function SubscriptionPage() {
                   const config = getTierConfig(tier);
                   const isSelected = selectedTier === tier;
                   const isTierActive =
-                    tier === "free" ? isActiveFree : activeTier === tier;
+                    tier === "free"
+                      ? isActiveFree && !!session
+                      : activeTier === tier;
                   return (
                     <TouchableOpacity
                       key={tier}
@@ -806,8 +869,6 @@ export default function SubscriptionPage() {
               </View>
             </View>
 
-            {/* Card */}
-            {/* Card — uses ref so content is always correct even during fade */}
             <Animated.View
               style={[
                 styles.mobileCard,
@@ -815,10 +876,9 @@ export default function SubscriptionPage() {
               ]}
             >
               {selectedTier === "free" ? (
-                <FreeCardMobile isCurrentTier={isActiveFree} />
+                <FreeCardMobile isCurrentTier={isActiveFree && !!session} />
               ) : (
                 (() => {
-                  // Read from ref for instant accuracy — state may lag during animation
                   const displayTier = (
                     selectedTierRef.current !== "free"
                       ? selectedTierRef.current
@@ -961,15 +1021,13 @@ export default function SubscriptionPage() {
                                 isActive && { color: config.accent },
                               ]}
                             >
-                              {isActive
-                                ? "✓ Active plan"
-                                : `Get ${config.label} — KES ${config.price.toLocaleString()}`}
+                              {mobileBuyLabel(displayTier, isActive)}
                             </Text>
-                            {!isActive && (
+                            {!isActive && mobileBuySub(isActive) ? (
                               <Text style={styles.mobileCardButtonSub}>
-                                One-time payment
+                                {mobileBuySub(isActive)}
                               </Text>
-                            )}
+                            ) : null}
                           </>
                         )}
                       </TouchableOpacity>
@@ -981,7 +1039,7 @@ export default function SubscriptionPage() {
 
             <ComparisonTable
               activeTier={activeTier}
-              isActiveFree={isActiveFree}
+              isActiveFree={isActiveFree && !!session}
               tableWidth={cardWidth}
             />
           </>
@@ -996,7 +1054,6 @@ export default function SubscriptionPage() {
   );
 }
 
-// ── Styles ────────────────────────────────────────────────
 const freeCardStyles = StyleSheet.create({
   card: {
     backgroundColor: "#fff",
@@ -1097,6 +1154,25 @@ const styles = StyleSheet.create({
     marginTop: 6,
     lineHeight: 20,
   },
+
+  // Guest banner
+  guestBanner: {
+    backgroundColor: "#eff6ff",
+    borderWidth: 1,
+    borderColor: "#bfdbfe",
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginHorizontal: 16,
+    marginBottom: 12,
+  },
+  guestBannerText: {
+    fontSize: 13,
+    color: "#1d4ed8",
+    lineHeight: 20,
+    textAlign: "center",
+  },
+
   activePill: {
     flexDirection: "row",
     alignItems: "center",
