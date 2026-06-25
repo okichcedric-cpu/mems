@@ -46,6 +46,24 @@ type Photo = {
   height: number;
 };
 
+// ── Preload full-res images in the background ──────────────
+// Called after photos load — by the time user taps, images are cached
+function preloadImages(photoList: Photo[]) {
+  setTimeout(() => {
+    photoList.forEach((p) => {
+      if (!p.url) return;
+      if (Platform.OS === "web" && typeof window !== "undefined") {
+        // Web — use browser Image API
+        const img = new (window as any).Image();
+        img.src = p.url;
+      } else {
+        // Native — use expo-image prefetch
+        Image.prefetch(p.url).catch(() => {});
+      }
+    });
+  }, 500); // 500ms delay — lets grid thumbnails render first
+}
+
 export default function CollectionPage() {
   const { id, ownerId: ownerIdParam } = useLocalSearchParams<{
     id: string;
@@ -90,7 +108,6 @@ export default function CollectionPage() {
     subtext?: string,
     showUpgrade: boolean = false,
   ) {
-    // Reset animation value before starting
     toastAnim.setValue(0);
     setToast({ message, emoji, subtext, showUpgrade });
     Animated.sequence([
@@ -165,7 +182,6 @@ export default function CollectionPage() {
       const allFiles = (event.target as HTMLInputElement).files;
       if (!allFiles || allFiles.length === 0) return;
 
-      // Filter images only
       const files = Array.from(allFiles).filter((f) =>
         f.type.startsWith("image/"),
       );
@@ -203,15 +219,15 @@ export default function CollectionPage() {
           const photoList = (data?.photos || []).filter(
             (p: any) => p.Key && !p.Key.includes("/thumbs/"),
           );
-          setPhotos(
-            photoList.map((p: any) => ({
-              key: p.Key,
-              url: p.url,
-              thumbUrl: p.thumbUrl ?? p.url,
-              width: p.metadata?.width ?? 1,
-              height: p.metadata?.height ?? 1,
-            })),
-          );
+          const mapped: Photo[] = photoList.map((p: any) => ({
+            key: p.Key,
+            url: p.url,
+            thumbUrl: p.thumbUrl ?? p.url,
+            width: p.metadata?.width ?? 1,
+            height: p.metadata?.height ?? 1,
+          }));
+          setPhotos(mapped);
+          preloadImages(mapped);
         }
       } catch (error: any) {
         window.alert("Upload failed: " + error.message);
@@ -255,15 +271,19 @@ export default function CollectionPage() {
         return;
       }
 
-      setPhotos(
-        photoList.map((p: any) => ({
-          key: p.Key,
-          url: p.url,
-          thumbUrl: p.thumbUrl ?? p.url,
-          width: p.metadata?.width ?? 1,
-          height: p.metadata?.height ?? 1,
-        })),
-      );
+      const mapped: Photo[] = photoList.map((p: any) => ({
+        key: p.Key,
+        url: p.url,
+        thumbUrl: p.thumbUrl ?? p.url,
+        width: p.metadata?.width ?? 1,
+        height: p.metadata?.height ?? 1,
+      }));
+
+      setPhotos(mapped);
+
+      // ── Preload full-res images after grid renders ──────────
+      // By the time the user taps a photo, it will already be cached
+      preloadImages(mapped);
     } catch (error: any) {
       Alert.alert("Error", error.message);
     } finally {
@@ -313,7 +333,6 @@ export default function CollectionPage() {
     }),
   ).current;
 
-  // Central limit check — returns true if upload can proceed, false if blocked
   function checkPhotoLimit(
     subStatus: SubscriptionStatus | null,
     photoCount: number,
@@ -328,7 +347,6 @@ export default function CollectionPage() {
     }
 
     if (isActive) {
-      // Subscribed user at their tier limit — toast only, no paywall
       showToast(
         `You've reached the ${maxPhotos} photo limit for this collection.`,
         "📸",
@@ -339,7 +357,6 @@ export default function CollectionPage() {
     }
 
     if (!isOwner) {
-      // Non-subscribed recipient — toast with upgrade button
       showToast(
         `This collection has reached the ${maxPhotos} photo limit.`,
         "📸",
@@ -382,7 +399,8 @@ export default function CollectionPage() {
       return;
     }
 
-    // Pick photos first — before limit check
+    // Pick photos first — before limit check so selected assets are
+    // captured in closure and upload immediately after subscribe
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsMultipleSelection: true,
@@ -391,8 +409,6 @@ export default function CollectionPage() {
 
     if (result.canceled || !session) return;
 
-    // Now check the limit — if blocked, store the already-picked assets
-    // so they upload immediately once the user subscribes
     checkPhotoLimit(subStatus, realPhotos.length, async () => {
       setUploading(true);
       try {
@@ -614,8 +630,6 @@ export default function CollectionPage() {
           <TouchableOpacity
             style={styles.iconButton}
             onPress={() => {
-              // router.back() fails after a page reload — no history exists
-              // canGoBack() check ensures we fall back to home safely
               if (router.canGoBack()) {
                 router.back();
               } else {
@@ -789,7 +803,7 @@ export default function CollectionPage() {
         </ScrollView>
       )}
 
-      {/* Full Screen Photo Viewer — full screen FlatList with paging */}
+      {/* Full Screen Photo Viewer */}
       <Modal
         visible={selectedPhotoIndex !== null}
         transparent={false}
@@ -797,25 +811,7 @@ export default function CollectionPage() {
         statusBarTranslucent
       >
         <View style={styles.fullScreenViewer}>
-          {/* Close button */}
-          <TouchableOpacity
-            style={styles.fullScreenClose}
-            onPress={() => setSelectedPhotoIndex(null)}
-            hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
-          >
-            <Ionicons name="close" size={24} color="#fff" />
-          </TouchableOpacity>
-
-          {/* Counter */}
-          {selectedPhotoIndex !== null && (
-            <View style={styles.fullScreenCounter}>
-              <Text style={styles.fullScreenCounterText}>
-                {selectedPhotoIndex + 1} / {photos.length}
-              </Text>
-            </View>
-          )}
-
-          {/* Full screen scrollable image list */}
+          {/* Native — FlatList with paging — renders first so controls sit on top */}
           {selectedPhotoIndex !== null && Platform.OS !== "web" && (
             <FlatList
               data={photos}
@@ -843,17 +839,17 @@ export default function CollectionPage() {
                     contentFit="contain"
                     cachePolicy="memory-disk"
                     recyclingKey={item.key}
-                    transition={{ duration: 150, effect: "cross-dissolve" }}
+                    transition={{ duration: 250, effect: "cross-dissolve" }}
                   />
                 </View>
               )}
-              windowSize={3}
+              windowSize={5}
               maxToRenderPerBatch={3}
               initialNumToRender={3}
             />
           )}
 
-          {/* Web — arrows flanking full screen image */}
+          {/* Web — arrows with full-res */}
           {selectedPhotoIndex !== null && Platform.OS === "web" && (
             <View style={styles.webViewerWrapper}>
               <TouchableOpacity
@@ -866,12 +862,18 @@ export default function CollectionPage() {
               >
                 <Text style={styles.webArrowText}>‹</Text>
               </TouchableOpacity>
-              <Image
-                source={{ uri: photos[selectedPhotoIndex].url }}
-                style={styles.fullScreenWebImage}
-                contentFit="contain"
-                cachePolicy="memory-disk"
-              />
+              <View
+                style={{ flex: 1, height: SCREEN_HEIGHT, position: "relative" }}
+              >
+                <Image
+                  source={{ uri: photos[selectedPhotoIndex].url }}
+                  style={styles.fullScreenWebImage}
+                  contentFit="contain"
+                  cachePolicy="memory-disk"
+                  recyclingKey={photos[selectedPhotoIndex].key}
+                  transition={{ duration: 250, effect: "cross-dissolve" }}
+                />
+              </View>
               <TouchableOpacity
                 onPress={goToNext}
                 disabled={selectedPhotoIndex === photos.length - 1}
@@ -886,27 +888,49 @@ export default function CollectionPage() {
             </View>
           )}
 
-          {/* Swipe hint — mobile only, first open */}
-          {Platform.OS !== "web" && photos.length > 1 && (
-            <Text style={styles.swipeHint}>← swipe to navigate →</Text>
-          )}
-
-          {/* Delete — owner only */}
-          {isOwner && selectedPhotoIndex !== null && (
+          {/* ── Controls overlay — always rendered LAST so it's always on top ── */}
+          {/* Rendered after FlatList/web viewer so it sits above in the z-stack */}
+          <View style={styles.viewerControls} pointerEvents="box-none">
+            {/* Close button */}
             <TouchableOpacity
-              style={styles.deleteButton}
-              onPress={() => {
-                const photo = photos[selectedPhotoIndex];
-                if (photo) deletePhoto(photo);
-              }}
+              style={styles.fullScreenClose}
+              onPress={() => setSelectedPhotoIndex(null)}
+              hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
             >
-              <Text style={styles.deleteButtonText}>🗑 Delete Photo</Text>
+              <Ionicons name="close" size={24} color="#fff" />
             </TouchableOpacity>
-          )}
+
+            {/* Counter */}
+            {selectedPhotoIndex !== null && (
+              <View style={styles.fullScreenCounter}>
+                <Text style={styles.fullScreenCounterText}>
+                  {selectedPhotoIndex + 1} / {photos.length}
+                </Text>
+              </View>
+            )}
+
+            {/* Swipe hint — mobile only */}
+            {Platform.OS !== "web" && photos.length > 1 && (
+              <Text style={styles.swipeHint}>← swipe to navigate →</Text>
+            )}
+
+            {/* Delete — owner only */}
+            {isOwner && selectedPhotoIndex !== null && (
+              <TouchableOpacity
+                style={styles.deleteButton}
+                onPress={() => {
+                  const photo = photos[selectedPhotoIndex];
+                  if (photo) deletePhoto(photo);
+                }}
+              >
+                <Text style={styles.deleteButtonText}>🗑 Delete Photo</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       </Modal>
 
-      {/* Share Modal — View overlay on web prevents body style corruption on mobile browsers */}
+      {/* Share Modal */}
       {showShareModal &&
         (Platform.OS === "web" ? (
           <View style={styles.shareWebOverlay}>
@@ -1074,7 +1098,7 @@ export default function CollectionPage() {
           </Modal>
         ))}
 
-      {/* Toast notification */}
+      {/* Toast */}
       {toast && (
         <Animated.View
           style={[
@@ -1096,9 +1120,9 @@ export default function CollectionPage() {
           <Text style={styles.toastEmoji}>{toast.emoji}</Text>
           <View style={styles.toastTextContainer}>
             <Text style={styles.toastMessage}>{toast.message}</Text>
-            {toast.subtext ? (
+            {toast.subtext && (
               <Text style={styles.toastSubtext}>{toast.subtext}</Text>
-            ) : null}
+            )}
           </View>
           {toast.showUpgrade && (
             <TouchableOpacity
@@ -1111,7 +1135,7 @@ export default function CollectionPage() {
         </Animated.View>
       )}
 
-      {/* Paywall Modal — shown when photo limit is reached for free users */}
+      {/* Paywall Modal */}
       <PaywallModal
         visible={showPaywall}
         reason={paywallReason}
@@ -1128,7 +1152,7 @@ export default function CollectionPage() {
           if (pendingUploadRef.current) {
             const action = pendingUploadRef.current;
             pendingUploadRef.current = null;
-            action();
+            setTimeout(() => action(), 300);
           }
         }}
         onDismiss={() => {
@@ -1175,7 +1199,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 15, fontWeight: "700", color: "#111" },
   subtitle: { fontSize: 11, color: "#999", marginTop: 2 },
 
-  // ── Collection name banner ────────────────────────────────
+  // ── Banner ────────────────────────────────────────────────
   collectionBanner: {
     paddingHorizontal: 20,
     paddingTop: 14,
@@ -1215,10 +1239,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#111",
     alignItems: "center",
     justifyContent: "center",
-    ...Platform.select({
-      web: { cursor: "pointer" } as any,
-      default: {},
-    }),
+    ...Platform.select({ web: { cursor: "pointer" } as any, default: {} }),
   },
 
   // ── Share button ─────────────────────────────────────────
@@ -1287,10 +1308,18 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 18, fontWeight: "600", color: "#333" },
   emptyText: { fontSize: 14, color: "#999" },
 
-  // ── Full screen photo viewer ──────────────────────────────
-  fullScreenViewer: {
-    flex: 1,
-    backgroundColor: "#000",
+  // ── Full screen viewer ────────────────────────────────────
+  fullScreenViewer: { flex: 1, backgroundColor: "#000" },
+  // Controls overlay — position absolute so it floats above the FlatList
+  // Rendered last in JSX so it's always the topmost layer
+  viewerControls: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 100,
+    pointerEvents: "box-none" as any,
   },
   fullScreenClose: {
     position: "absolute",
@@ -1324,15 +1353,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#000",
   },
-  fullScreenImage: {
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT,
-  },
-  fullScreenWebImage: {
-    flex: 1,
-    height: SCREEN_HEIGHT,
-  },
-  // Legacy — kept for safety
+  fullScreenImage: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT },
+  fullScreenWebImage: { flex: 1, height: SCREEN_HEIGHT },
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.92)",
@@ -1566,9 +1588,5 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     flexShrink: 0,
   },
-  toastButtonText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#111",
-  },
+  toastButtonText: { fontSize: 12, fontWeight: "700", color: "#111" },
 });
