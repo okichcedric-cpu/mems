@@ -1,5 +1,17 @@
+import {
+  S3Client
+} from "@aws-sdk/client-s3";
 import { compressImage, generateThumbnail } from "./imageProcessing";
 import { supabase } from "./supabase";
+
+// ── S3 client (only used for direct operations that haven't moved to edge functions) ──
+const s3Client = new S3Client({
+  region: process.env.EXPO_PUBLIC_AWS_REGION!,
+  credentials: {
+    accessKeyId: process.env.EXPO_PUBLIC_AWS_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.EXPO_PUBLIC_AWS_SECRET_ACCESS_KEY!,
+  },
+});
 
 const BUCKET = process.env.EXPO_PUBLIC_S3_BUCKET!;
 
@@ -26,16 +38,18 @@ export async function uploadToS3(
       body: {
         key,
         contentType: 'image/jpeg',
+        fileSize: compressed.blob.size,
         width: compressed.width,
         height: compressed.height,
       },
     }
   );
   if (uploadError) throw new Error(uploadError.message);
+  if (!uploadData?.uploadUrl) throw new Error("No upload URL returned from server");
 
   // Upload full image directly to S3 using presigned URL
   const arrayBuffer = await compressed.blob.arrayBuffer();
-  const uploadResponse = await fetch(uploadData.url, {
+  const uploadResponse = await fetch(uploadData.uploadUrl, {
     method: 'PUT',
     body: arrayBuffer,
     headers: { 'Content-Type': 'image/jpeg' },
@@ -56,13 +70,17 @@ export async function uploadToS3(
     }
   );
   if (thumbUploadError) throw new Error(thumbUploadError.message);
+  if (!thumbUploadData?.uploadUrl) throw new Error("No thumbnail upload URL returned");
 
   const thumbBuffer = await thumbBlob.arrayBuffer();
-  await fetch(thumbUploadData.url, {
+  const thumbResponse = await fetch(thumbUploadData.uploadUrl, {
     method: 'PUT',
     body: thumbBuffer,
     headers: { 'Content-Type': 'image/jpeg' },
   });
+  if (!thumbResponse.ok) {
+    console.warn(`Thumbnail upload failed: ${thumbResponse.status} — continuing`);
+  }
 
   return key;
 }
@@ -137,19 +155,19 @@ export async function getCollectionPreviewUrls(
   userId: string,
   collectionName: string,
 ): Promise<string[]> {
-  // Use includeUrls to get thumbnails in one call
-  const { data, error } = await supabase.functions.invoke('list-photos', {
-    body: { userId, collectionName, includeUrls: true },
-  });
-  if (error) return [];
+  const photos = await listPhotos(userId, collectionName);
 
-  const photos = (data?.photos || [])
-    .filter((p: any) => p.Key && !p.Key.includes('/thumbs/'))
+  const first3 = photos
+    .filter((obj: any) => obj.Key && !obj.Key.includes('/thumbs/'))
     .slice(0, 3);
 
-  return photos
-    .map((p: any) => p.thumbUrl ?? p.url)
-    .filter(Boolean);
+  const urls = await Promise.allSettled(
+    first3.map((obj: any) => getSignedThumbnailUrl(obj.Key!)),
+  );
+
+  return urls
+    .filter((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled')
+    .map((r) => r.value);
 }
 
 // ── Delete ────────────────────────────────────────────────────────────────────
@@ -165,17 +183,9 @@ export async function deleteCollection(
   userId: string,
   collectionName: string,
 ): Promise<void> {
-  // Delete all photos from S3
   const photos = await listPhotos(userId, collectionName);
   const realPhotos = photos.filter(
     (obj: any) => obj.Key && !obj.Key.includes('/thumbs/')
   );
   await Promise.all(realPhotos.map((obj: any) => deleteFromS3(obj.Key!)));
-
-  // Delete share records from Supabase
-  await supabase
-    .from('shared_collections')
-    .delete()
-    .eq('owner_id', userId)
-    .eq('collection_name', collectionName);
 }
