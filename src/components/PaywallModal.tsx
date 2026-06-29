@@ -39,7 +39,7 @@ const TIERS: Record<Tier, TierConfig> = {
     tagline: "For individuals & small families",
     maxCollections: 15,
     maxPhotosPerCollection: 35,
-    price: 320,
+    price: 99,
     accent: "#22c55e",
     bg: "#f0fdf4",
     featured: false,
@@ -50,7 +50,7 @@ const TIERS: Record<Tier, TierConfig> = {
     tagline: "For growing families",
     maxCollections: 30,
     maxPhotosPerCollection: 50,
-    price: 600,
+    price: 179,
     accent: "#3b82f6",
     bg: "#eff6ff",
     featured: true,
@@ -61,7 +61,7 @@ const TIERS: Record<Tier, TierConfig> = {
     tagline: "The complete family archive",
     maxCollections: 50,
     maxPhotosPerCollection: 75,
-    price: 1150,
+    price: 299,
     accent: "#f59e0b",
     bg: "#fffbeb",
     featured: false,
@@ -501,7 +501,7 @@ export default function PaywallModal({
                       <Text style={styles.greyedPrice}>
                         KES {config.price.toLocaleString()}
                       </Text>
-                      <Text style={styles.greyedOnce}>once</Text>
+                      <Text style={styles.greyedOnce}>/mo</Text>
                     </View>
                   ) : (
                     <>
@@ -510,7 +510,7 @@ export default function PaywallModal({
                       >
                         KES {config.price.toLocaleString()}
                       </Text>
-                      <Text style={styles.tierOnce}>once</Text>
+                      <Text style={styles.tierOnce}>/mo</Text>
                       <View
                         style={[
                           styles.tierButton,
@@ -543,7 +543,7 @@ export default function PaywallModal({
           </TouchableOpacity>
 
           <Text style={styles.footer}>
-            One-time payment · No subscriptions · Secure via Pesapal
+            Billed monthly · Cancel anytime · Secure via Pesapal
           </Text>
         </ScrollView>
       </Animated.View>

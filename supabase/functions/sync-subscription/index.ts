@@ -25,6 +25,13 @@ async function getPesapalToken(): Promise<string> {
   return data.token;
 }
 
+function nextPeriod(): { start: string; end: string } {
+  const start = new Date();
+  const end = new Date(start);
+  end.setDate(end.getDate() + 30);
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -58,7 +65,7 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    // Get body — client sends merchantReference and tier
+    // Get merchantReference and tier from client request
     let merchantReference: string | null = null;
     let tier: string | null = null;
     try {
@@ -67,15 +74,28 @@ serve(async (req) => {
       tier = body.tier ?? null;
     } catch {}
 
-    // If not passed from client, look up from DB
+    // Fall back to DB lookup if not passed
     if (!merchantReference) {
       const { data: sub } = await supabase
         .from("subscriptions")
-        .select("pesapal_merchant_reference, tier")
+        .select("pesapal_merchant_reference, tier, status, current_period_end")
         .eq("user_id", user.id)
         .maybeSingle();
+
       merchantReference = sub?.pesapal_merchant_reference ?? null;
       tier = tier ?? sub?.tier ?? null;
+
+      // If already active with valid period — no need to sync
+      if (
+        sub?.status === "active" &&
+        sub?.current_period_end &&
+        new Date(sub.current_period_end) > new Date()
+      ) {
+        return new Response(
+          JSON.stringify({ status: "active", tier: sub.tier }),
+          { status: 200, headers: corsHeaders },
+        );
+      }
     }
 
     if (!merchantReference) {
@@ -87,8 +107,7 @@ serve(async (req) => {
 
     const token = await getPesapalToken();
 
-    // Use merchant reference as the tracking ID for GetTransactionStatus
-    // Pesapal accepts both orderTrackingId and merchantReference here
+    // Poll Pesapal for this specific transaction
     const statusRes = await fetch(
       `${PESAPAL_BASE}/api/Transactions/GetTransactionStatus?orderTrackingId=${merchantReference}`,
       {
@@ -100,28 +119,34 @@ serve(async (req) => {
     );
     const statusData = await statusRes.json();
 
-    console.log("Pesapal status response:", JSON.stringify(statusData));
+    console.log("Pesapal sync status:", JSON.stringify(statusData));
 
     // status_code 1 = COMPLETED
     if (statusData.status_code === 1) {
+      const period = nextPeriod();
+
       await supabase.from("subscriptions").upsert({
         user_id: user.id,
         status: "active",
         tier,
-        one_off: true,
+        one_off: false,
         amount: statusData.amount,
         currency: "KES",
         pesapal_merchant_reference: merchantReference,
         pesapal_tracking_id: statusData.order_tracking_id ?? merchantReference,
+        current_period_start: period.start,
+        current_period_end: period.end,
+        renewal_reminder_sent: false,
         updated_at: new Date().toISOString(),
       }, { onConflict: "user_id" });
 
+      console.log(
+        `Synced subscription for user ${user.id} — period ends ${period.end}`,
+      );
+
       return new Response(
         JSON.stringify({ status: "active", tier }),
-        {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 

@@ -12,21 +12,31 @@ const PESAPAL_BASE =
     ? "https://cybqa.pesapal.com/pesapalv3"
     : "https://pay.pesapal.com/v3";
 
-// Map amount to tier
-function tierFromAmount(amount: number): string {
-  if (amount >= 1150) return "big";
-  if (amount >= 600) return "medium";
-  if (amount >= 320) return "small";
-  return "free";
-}
-
-// Extract tier from merchant reference e.g. MEMS-MEDIUM-abc123-1234567890
+// Derive tier from merchant reference e.g. MEMS-MEDIUM-abc123-timestamp
 function tierFromReference(reference: string): string | null {
   const match = reference.match(/^MEMS-([A-Z]+)-/);
   if (!match) return null;
   const name = match[1].toLowerCase();
-  if (["small", "medium", "big"].includes(name)) return name;
-  return null;
+  return ["small", "medium", "big"].includes(name) ? name : null;
+}
+
+// Derive tier from payment amount as fallback
+function tierFromAmount(amount: number): string {
+  if (amount >= 299) return "big";
+  if (amount >= 179) return "medium";
+  if (amount >= 99) return "small";
+  return "free";
+}
+
+// Calculate the next billing period — 30 days from now
+function nextPeriod(): { start: string; end: string } {
+  const start = new Date();
+  const end = new Date(start);
+  end.setDate(end.getDate() + 30);
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+  };
 }
 
 async function getPesapalToken(): Promise<string> {
@@ -53,7 +63,9 @@ serve(async (req) => {
     const orderTrackingId = url.searchParams.get("OrderTrackingId");
     const merchantReference = url.searchParams.get("OrderMerchantReference");
 
-    console.log(`Webhook received: orderTrackingId=${orderTrackingId} merchantReference=${merchantReference}`);
+    console.log(
+      `Webhook received: orderTrackingId=${orderTrackingId} merchantReference=${merchantReference}`,
+    );
 
     if (!orderTrackingId || !merchantReference) {
       console.error("Missing params in webhook");
@@ -62,7 +74,7 @@ serve(async (req) => {
 
     const token = await getPesapalToken();
 
-    // Get full transaction status from Pesapal
+    // Get transaction status from Pesapal
     const statusRes = await fetch(
       `${PESAPAL_BASE}/api/Transactions/GetTransactionStatus?orderTrackingId=${orderTrackingId}`,
       {
@@ -74,7 +86,10 @@ serve(async (req) => {
     );
     const statusData = await statusRes.json();
 
-    console.log(`Pesapal status for ${orderTrackingId}:`, JSON.stringify(statusData));
+    console.log(
+      `Pesapal status for ${orderTrackingId}:`,
+      JSON.stringify(statusData),
+    );
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -82,43 +97,44 @@ serve(async (req) => {
     );
 
     if (statusData.status_code === 1) {
-      // ── PAYMENT COMPLETED ──
+      // ── PAYMENT COMPLETED ──────────────────────────────
+      const period = nextPeriod();
 
-      // Look up existing subscription row by merchant reference
+      // Look for existing row by merchant reference
       const { data: existing } = await supabase
         .from("subscriptions")
-        .select("user_id, tier")
+        .select("user_id, tier, status, current_period_end")
         .eq("pesapal_merchant_reference", merchantReference)
         .maybeSingle();
 
       if (existing) {
-        // Row exists — just update status and tracking ID
+        // Row found — update to active with new billing period
         await supabase
           .from("subscriptions")
           .update({
             status: "active",
+            one_off: false,
             pesapal_tracking_id: orderTrackingId,
+            current_period_start: period.start,
+            current_period_end: period.end,
+            renewal_reminder_sent: false,
             updated_at: new Date().toISOString(),
           })
           .eq("pesapal_merchant_reference", merchantReference);
 
-        console.log(`Updated existing subscription to active for merchant ref ${merchantReference}`);
+        console.log(
+          `Activated subscription for user ${existing.user_id} — period ends ${period.end}`,
+        );
       } else {
-        // No row found — this can happen if create-subscription
-        // didn't write a pending row (e.g. user had active subscription).
-        // We need to find the user by looking up from Pesapal response.
-        // Derive tier from merchant reference or amount
+        // No row found — derive user from merchant reference
         const tier =
           tierFromReference(merchantReference) ||
           tierFromAmount(statusData.amount ?? 0);
 
-        // The merchant reference contains user ID: MEMS-SMALL-{userId8chars}-{timestamp}
-        // Extract partial user ID to find the user
+        // Extract partial user ID from reference: MEMS-SMALL-{userId8chars}-{timestamp}
         const refParts = merchantReference.split("-");
-        // refParts = ["MEMS", "SMALL", "userId8chars", "timestamp"]
         const userIdPrefix = refParts[2] ?? "";
 
-        // Find the user whose ID starts with this prefix
         const { data: users } = await supabase.auth.admin.listUsers();
         const matchedUser = users?.users?.find((u: any) =>
           u.id.replace(/-/g, "").startsWith(userIdPrefix)
@@ -129,22 +145,28 @@ serve(async (req) => {
             user_id: matchedUser.id,
             status: "active",
             tier,
-            one_off: true,
+            one_off: false,
             amount: statusData.amount ?? 0,
             currency: statusData.currency ?? "KES",
             pesapal_merchant_reference: merchantReference,
             pesapal_tracking_id: orderTrackingId,
+            current_period_start: period.start,
+            current_period_end: period.end,
+            renewal_reminder_sent: false,
             updated_at: new Date().toISOString(),
           }, { onConflict: "user_id" });
 
-          console.log(`Created new active subscription for user ${matchedUser.id} tier=${tier}`);
+          console.log(
+            `Created subscription for user ${matchedUser.id} tier=${tier} period ends ${period.end}`,
+          );
         } else {
-          console.error(`Could not find user for merchant reference ${merchantReference}`);
+          console.error(
+            `Could not find user for merchant reference ${merchantReference}`,
+          );
         }
       }
-
     } else if (statusData.status_code === 2) {
-      // ── PAYMENT FAILED ──
+      // ── PAYMENT FAILED ─────────────────────────────────
       // Only update if a pending row exists — never touch an active subscription
       const { data: existing } = await supabase
         .from("subscriptions")
@@ -152,7 +174,7 @@ serve(async (req) => {
         .eq("pesapal_merchant_reference", merchantReference)
         .maybeSingle();
 
-      if (existing && existing.status !== "active") {
+      if (existing && existing.status === "pending") {
         await supabase
           .from("subscriptions")
           .update({
@@ -165,13 +187,15 @@ serve(async (req) => {
         console.log(`Payment failed for ${merchantReference}`);
       }
     } else {
-      console.log(`Payment status code ${statusData.status_code} — no action taken`);
+      console.log(
+        `Payment status code ${statusData.status_code} — no action taken`,
+      );
     }
 
+    // Always return 200 to Pesapal — prevents endless retries
     return new Response("OK", { status: 200 });
   } catch (error: any) {
     console.error("pesapal-webhook error:", error.message);
-    // Always return 200 to Pesapal so they don't keep retrying
     return new Response("OK", { status: 200 });
   }
 });

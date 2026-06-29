@@ -28,19 +28,19 @@ export const TIER_LIMITS: Record<Tier, TierLimits> = {
     label: "Small Album",
     maxCollections: 15,
     maxPhotosPerCollection: 35,
-    price: 320,
+    price: 99,
   },
   medium: {
     label: "Medium Album",
     maxCollections: 30,
     maxPhotosPerCollection: 50,
-    price: 600,
+    price: 179,
   },
   big: {
     label: "Big Album",
     maxCollections: 50,
     maxPhotosPerCollection: 75,
-    price: 1150,
+    price: 299,
   },
 };
 

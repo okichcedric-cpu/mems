@@ -38,6 +38,8 @@ const FREE_RESPONSE = {
   tier: "free",
   limits: TIERS.free,
   isActive: false,
+  isLapsed: false,
+  periodEnd: null,
   amount: 0,
   currency: "KES",
 };
@@ -50,7 +52,6 @@ serve(async (req) => {
   try {
     const authHeader = req.headers.get("Authorization");
 
-    // No auth header — return free tier immediately
     if (!authHeader) {
       return new Response(
         JSON.stringify(FREE_RESPONSE),
@@ -58,7 +59,6 @@ serve(async (req) => {
       );
     }
 
-    // Verify the user JWT
     const supabaseAuth = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_ANON_KEY")!,
@@ -75,7 +75,6 @@ serve(async (req) => {
       );
     }
 
-    // Look up subscription with service role to bypass RLS
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
@@ -83,7 +82,7 @@ serve(async (req) => {
 
     const { data: subscription, error: dbError } = await supabase
       .from("subscriptions")
-      .select("status, tier, one_off, amount, currency, pesapal_merchant_reference")
+      .select("status, tier, amount, currency, current_period_start, current_period_end, renewal_reminder_sent")
       .eq("user_id", user.id)
       .maybeSingle();
 
@@ -91,12 +90,32 @@ serve(async (req) => {
       console.error("DB error in check-subscription:", dbError.message);
     }
 
-    // A subscription is active only when:
-    // 1. status is explicitly "active"
-    // 2. tier is one of the paid tiers
+    const now = new Date();
+    const periodEnd = subscription?.current_period_end
+      ? new Date(subscription.current_period_end)
+      : null;
+
+    const hasValidTier = ["small", "medium", "big"].includes(
+      subscription?.tier ?? "",
+    );
+
+    // Active = status is active or cancelled AND period has not expired
+    // (cancelled means they cancelled but still have time left)
     const isActive =
-      subscription?.status === "active" &&
-      ["small", "medium", "big"].includes(subscription?.tier ?? "");
+      (subscription?.status === "active" || subscription?.status === "cancelled") &&
+      hasValidTier &&
+      periodEnd !== null &&
+      periodEnd > now;
+
+    // Lapsed = had a paid tier but period has expired
+    // Show them a renew prompt rather than treating as a new user
+    const isLapsed =
+      hasValidTier &&
+      periodEnd !== null &&
+      periodEnd <= now &&
+      (subscription?.status === "active" ||
+        subscription?.status === "cancelled" ||
+        subscription?.status === "lapsed");
 
     const tier = isActive
       ? (subscription!.tier as keyof typeof TIERS)
@@ -105,14 +124,24 @@ serve(async (req) => {
     const limits = TIERS[tier] ?? TIERS.free;
 
     console.log(
-      `check-subscription: user=${user.id} tier=${tier} isActive=${isActive} status=${subscription?.status ?? "none"}`,
+      `check-subscription: user=${user.id} tier=${tier} isActive=${isActive} isLapsed=${isLapsed} periodEnd=${periodEnd?.toISOString() ?? "none"}`,
     );
+
+    // If subscription has lapsed, update status in DB
+    if (isLapsed && subscription?.status === "active") {
+      await supabase
+        .from("subscriptions")
+        .update({ status: "lapsed", updated_at: now.toISOString() })
+        .eq("user_id", user.id);
+    }
 
     return new Response(
       JSON.stringify({
         tier,
         limits,
         isActive,
+        isLapsed,
+        periodEnd: subscription?.current_period_end ?? null,
         amount: subscription?.amount ?? 0,
         currency: subscription?.currency ?? "KES",
       }),
@@ -123,13 +152,9 @@ serve(async (req) => {
     );
   } catch (error: any) {
     console.error("check-subscription error:", error.message);
-    // Always return a valid response — never let this crash the app
     return new Response(
       JSON.stringify(FREE_RESPONSE),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
 });

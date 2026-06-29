@@ -66,7 +66,7 @@ const TIERS: Record<PaidTier, TierConfig> = {
     tagline: "For individuals & small families",
     maxCollections: 15,
     maxPhotosPerCollection: 35,
-    price: 320,
+    price: 99,
     accent: "#22c55e",
     bg: "#f0fdf4",
     featured: false,
@@ -77,7 +77,7 @@ const TIERS: Record<PaidTier, TierConfig> = {
     tagline: "For growing families with lots of memories",
     maxCollections: 30,
     maxPhotosPerCollection: 50,
-    price: 600,
+    price: 179,
     accent: "#3b82f6",
     bg: "#eff6ff",
     featured: true,
@@ -88,7 +88,7 @@ const TIERS: Record<PaidTier, TierConfig> = {
     tagline: "The complete family archive, for generations",
     maxCollections: 50,
     maxPhotosPerCollection: 75,
-    price: 1150,
+    price: 299,
     accent: "#f59e0b",
     bg: "#fffbeb",
     featured: false,
@@ -114,6 +114,8 @@ const FEATURES: {
 type SubStatus = {
   tier: Tier;
   isActive: boolean;
+  isLapsed: boolean;
+  periodEnd: string | null;
   limits: {
     maxCollections: number;
     maxPhotosPerCollection: number;
@@ -359,7 +361,7 @@ function ComparisonTable({
                   >
                     {config.price.toLocaleString()}
                   </Text>
-                  <Text style={tableStyles.priceSub}>once</Text>
+                  <Text style={tableStyles.priceSub}>/mo</Text>
                 </>
               )}
             </View>
@@ -426,24 +428,26 @@ export default function SubscriptionPage() {
       .then(({ data }) => {
         const tier: Tier = data?.tier ?? "free";
         const isActive: boolean = data?.isActive ?? false;
+        const isLapsed: boolean = data?.isLapsed ?? false;
 
         setStatus({
           tier,
           isActive,
+          isLapsed,
+          periodEnd: data?.periodEnd ?? null,
           limits: data?.limits ?? {
             maxCollections: 3,
             maxPhotosPerCollection: 10,
           },
         });
 
-        // Free → show Medium (most popular to nudge upgrade)
-        // Subscribed → show their active tier
+        // Smart initial card: lapsed users land on their old tier to renew easily
         const initialTier: AllTier =
-          isActive && ["small", "medium", "big"].includes(tier)
+          (isActive || isLapsed) && ["small", "medium", "big"].includes(tier)
             ? tier
             : "medium";
-        const initialIdx = ALL_TIERS.indexOf(initialTier);
 
+        const initialIdx = ALL_TIERS.indexOf(initialTier);
         setSelectedTier(initialTier);
         selectedTierRef.current = initialTier;
         toggleAnim.setValue(initialIdx);
@@ -577,31 +581,93 @@ export default function SubscriptionPage() {
     }
   }
 
+  function formatDate(iso: string): string {
+    return new Date(iso).toLocaleDateString("en-KE", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+  }
+
+  async function handleCancel() {
+    const message = `Are you sure you want to cancel? You will keep access to your ${status?.tier ? TIERS[status.tier as PaidTier]?.label : ""} plan until ${status?.periodEnd ? formatDate(status.periodEnd) : "the end of your billing period"}.`;
+
+    const confirmed = IS_WEB
+      ? window.confirm(message)
+      : await new Promise<boolean>((resolve) => {
+          Alert.alert("Cancel subscription", message, [
+            {
+              text: "Keep subscription",
+              style: "cancel",
+              onPress: () => resolve(false),
+            },
+            {
+              text: "Cancel",
+              style: "destructive",
+              onPress: () => resolve(true),
+            },
+          ]);
+        });
+
+    if (!confirmed) return;
+
+    try {
+      const { data, error } = await supabase.functions.invoke(
+        "cancel-subscription",
+      );
+      if (error) throw new Error(error.message);
+
+      // Refresh status
+      const { data: updated } =
+        await supabase.functions.invoke("check-subscription");
+      setStatus({
+        tier: updated?.tier ?? "free",
+        isActive: updated?.isActive ?? false,
+        isLapsed: updated?.isLapsed ?? false,
+        periodEnd: updated?.periodEnd ?? null,
+        limits: updated?.limits ?? {
+          maxCollections: 3,
+          maxPhotosPerCollection: 10,
+        },
+      });
+
+      const until = data?.accessUntil ? formatDate(data.accessUntil) : "";
+      const msg = `Subscription cancelled. You have full access until ${until}.`;
+      IS_WEB ? window.alert(msg) : Alert.alert("Cancelled", msg);
+    } catch (err: any) {
+      IS_WEB
+        ? window.alert("Error: " + err.message)
+        : Alert.alert("Error", err.message);
+    }
+  }
   const activeTier = status?.isActive ? (status.tier as PaidTier) : null;
-  const isActiveFree = !status?.isActive;
+  const isActiveFree = !status?.isActive && !status?.isLapsed;
 
   const pillLeft = toggleAnim.interpolate({
     inputRange: [0, 1, 2, 3],
     outputRange: ["0%", "25%", "50%", "75%"],
   });
 
-  // Button label helper
   function buyLabel(tier: PaidTier, isActive: boolean): string {
     if (isActive) return "✓ Active";
+    if (status?.isLapsed && status.tier === tier) return "Renew plan";
     if (!session) return `Sign up to get ${TIERS[tier].label}`;
-    return "Get this album";
+    return `Subscribe — KES ${TIERS[tier].price.toLocaleString()}/mo`;
   }
 
   function mobileBuyLabel(tier: PaidTier, isActive: boolean): string {
     if (isActive) return "✓ Active plan";
-    if (!session) return `Sign up — KES ${TIERS[tier].price.toLocaleString()}`;
-    return `Get ${TIERS[tier].label} — KES ${TIERS[tier].price.toLocaleString()}`;
+    if (status?.isLapsed && status.tier === tier)
+      return `Renew ${TIERS[tier].label} — KES ${TIERS[tier].price.toLocaleString()}/mo`;
+    if (!session)
+      return `Sign up — KES ${TIERS[tier].price.toLocaleString()}/mo`;
+    return `Subscribe — KES ${TIERS[tier].price.toLocaleString()}/mo`;
   }
 
   function mobileBuySub(isActive: boolean): string {
     if (isActive) return "";
     if (!session) return "Free to create an account";
-    return "One-time payment";
+    return "Billed monthly · Cancel anytime";
   }
 
   return (
@@ -627,7 +693,7 @@ export default function SubscriptionPage() {
         <View style={styles.hero}>
           <Text style={styles.heroTitle}>Your life's best moments</Text>
           <Text style={styles.heroSub}>
-            One-time payment · No subscriptions · Yours forever
+            Billed monthly · Cancel anytime · Secure via Pesapal
           </Text>
         </View>
 
@@ -651,16 +717,36 @@ export default function SubscriptionPage() {
           >
             <Ionicons name="checkmark-circle" size={14} color="#fff" />
             <Text style={styles.activePillText}>
-              {TIERS[activeTier].emoji} {TIERS[activeTier].label} Album is
-              active
+              {TIERS[activeTier].emoji} {TIERS[activeTier].label} · renews{" "}
+              {status.periodEnd ? formatDate(status.periodEnd) : ""}
             </Text>
           </View>
         )}
+
+        {/* Lapsed banner — was subscribed, period expired */}
+        {status?.isLapsed && (
+          <View style={[styles.lapsedBanner]}>
+            <Ionicons name="warning-outline" size={16} color="#f59e0b" />
+            <Text style={styles.lapsedBannerText}>
+              Your {TIERS[status.tier as PaidTier]?.label ?? ""} plan expired
+              {status.periodEnd ? ` on ${formatDate(status.periodEnd)}` : ""}.
+              Renew below to restore access.
+            </Text>
+          </View>
+        )}
+
         {session && isActiveFree && (
           <View style={[styles.activePill, { backgroundColor: "#888" }]}>
             <Ionicons name="checkmark-circle" size={14} color="#fff" />
             <Text style={styles.activePillText}>📓 Free Plan is active</Text>
           </View>
+        )}
+
+        {/* Cancel button — shown for active (non-cancelled) subscribers */}
+        {status?.isActive && activeTier && (
+          <TouchableOpacity style={styles.cancelLink} onPress={handleCancel}>
+            <Text style={styles.cancelLinkText}>Cancel subscription</Text>
+          </TouchableOpacity>
         )}
 
         {loading ? (
@@ -777,7 +863,7 @@ export default function SubscriptionPage() {
                       >
                         {config.price.toLocaleString()}
                       </Text>
-                      <Text style={styles.webCardOnce}>once</Text>
+                      <Text style={styles.webCardOnce}>/mo</Text>
                     </View>
                     <TouchableOpacity
                       style={[
@@ -967,7 +1053,7 @@ export default function SubscriptionPage() {
                           >
                             KES {config.price.toLocaleString()}
                           </Text>
-                          <Text style={styles.mobileStatLabel}>One-time</Text>
+                          <Text style={styles.mobileStatLabel}>/mo</Text>
                         </View>
                       </View>
                       <View style={styles.mobileFeatures}>
@@ -1180,9 +1266,30 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 7,
     borderRadius: 20,
-    marginBottom: 12,
+    marginBottom: 8,
   },
   activePillText: { fontSize: 13, fontWeight: "600", color: "#fff" },
+
+  lapsedBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: "#fffbeb",
+    borderWidth: 1,
+    borderColor: "#fde68a",
+    borderRadius: 12,
+    padding: 14,
+    marginHorizontal: 16,
+    marginBottom: 12,
+  },
+  lapsedBannerText: { flex: 1, fontSize: 13, color: "#92400e", lineHeight: 20 },
+
+  cancelLink: { paddingVertical: 6, marginBottom: 8 },
+  cancelLinkText: {
+    fontSize: 12,
+    color: "#bbb",
+    textDecorationLine: "underline",
+  },
 
   // Web cards
   webCardRow: {

@@ -8,9 +8,9 @@ const corsHeaders = {
 };
 
 const TIERS = {
-  small: { label: "Small Album", amount: 320 },
-  medium: { label: "Medium Album", amount: 600 },
-  big: { label: "Big Album", amount: 1150 },
+  small: { label: "Small Album", amount: 99 },
+  medium: { label: "Medium Album", amount: 179 },
+  big: { label: "Big Album", amount: 299 },
 };
 
 const PESAPAL_BASE =
@@ -41,8 +41,7 @@ serve(async (req) => {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: corsHeaders,
+        status: 401, headers: corsHeaders,
       });
     }
 
@@ -56,8 +55,7 @@ serve(async (req) => {
 
     if (authError || !user) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: corsHeaders,
+        status: 401, headers: corsHeaders,
       });
     }
 
@@ -65,15 +63,13 @@ serve(async (req) => {
 
     if (!TIERS[tier as keyof typeof TIERS]) {
       return new Response(JSON.stringify({ error: "Invalid tier" }), {
-        status: 400,
-        headers: corsHeaders,
+        status: 400, headers: corsHeaders,
       });
     }
 
     const tierConfig = TIERS[tier as keyof typeof TIERS];
 
-    // Merchant reference encodes tier and partial user ID so the
-    // webhook can identify the user and tier even with no pending row
+    // Merchant reference encodes tier + partial user ID for webhook fallback
     const merchantReference =
       `MEMS-${tier.toUpperCase()}-${user.id.replace(/-/g, "").slice(0, 8)}-${Date.now()}`;
 
@@ -111,7 +107,7 @@ serve(async (req) => {
           id: merchantReference,
           currency: "KES",
           amount: tierConfig.amount,
-          description: `Mems ${tierConfig.label} — One-time payment`,
+          description: `Mems ${tierConfig.label} — Monthly subscription`,
           callback_url: callbackUrl,
           notification_id: ipnId,
           billing_address: {
@@ -124,17 +120,15 @@ serve(async (req) => {
     );
 
     const orderData = await orderRes.json();
-
-    console.log(`Pesapal order response:`, JSON.stringify(orderData));
+    console.log("Pesapal order response:", JSON.stringify(orderData));
 
     if (!orderData.redirect_url) {
       throw new Error(orderData.message || "Failed to create Pesapal order");
     }
 
-    // ── Conditional DB write ──
-    // Only store a pending record if the user has NO active subscription.
-    // This protects existing subscribers from having their active status
-    // overwritten if they try to buy another tier.
+    // ── Conditional DB write ──────────────────────────────
+    // Only write a pending record if user has NO active subscription.
+    // Never overwrite an active subscription — protects existing subscribers.
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
@@ -142,47 +136,53 @@ serve(async (req) => {
 
     const { data: existing } = await supabase
       .from("subscriptions")
-      .select("status")
+      .select("status, current_period_end")
       .eq("user_id", user.id)
       .maybeSingle();
 
+    const isCurrentlyActive =
+      existing?.status === "active" &&
+      existing?.current_period_end &&
+      new Date(existing.current_period_end) > new Date();
+
     if (!existing) {
-      // No record at all — safe to create a pending row
-      // This helps sync-subscription find the merchant reference
+      // New user — create pending record
       await supabase.from("subscriptions").insert({
         user_id: user.id,
         status: "pending",
         tier,
-        one_off: true,
+        one_off: false,
         amount: tierConfig.amount,
         currency: "KES",
         pesapal_merchant_reference: merchantReference,
         pesapal_tracking_id: null,
+        current_period_start: null,
+        current_period_end: null,
+        renewal_reminder_sent: false,
         updated_at: new Date().toISOString(),
       });
       console.log(`Created pending subscription for new user ${user.id}`);
-    } else if (existing.status === "active") {
-      // User already has an active subscription — do NOT touch it
-      // The webhook will upsert on payment completion using the merchant reference
+    } else if (isCurrentlyActive) {
+      // Active subscriber renewing or upgrading — do NOT touch their status
+      // The webhook will upsert on payment completion
       console.log(
-        `User ${user.id} has active subscription — skipping pending write to protect it`,
+        `User ${user.id} has active subscription — skipping pending write`,
       );
     } else {
-      // Has a non-active record (pending/failed) — update the reference
-      // so sync-subscription can track this new payment attempt
+      // Lapsed, cancelled or failed — update reference for this new attempt
       await supabase
         .from("subscriptions")
         .update({
           tier,
           amount: tierConfig.amount,
+          status: "pending",
           pesapal_merchant_reference: merchantReference,
           pesapal_tracking_id: null,
+          renewal_reminder_sent: false,
           updated_at: new Date().toISOString(),
         })
         .eq("user_id", user.id);
-      console.log(
-        `Updated pending/failed subscription reference for user ${user.id}`,
-      );
+      console.log(`Updated subscription reference for user ${user.id}`);
     }
 
     return new Response(
@@ -198,8 +198,7 @@ serve(async (req) => {
   } catch (error: any) {
     console.error("create-subscription error:", error.message);
     return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: corsHeaders,
+      status: 500, headers: corsHeaders,
     });
   }
 });
