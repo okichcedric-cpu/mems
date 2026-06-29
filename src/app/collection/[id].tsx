@@ -53,15 +53,72 @@ function preloadImages(photoList: Photo[]) {
     photoList.forEach((p) => {
       if (!p.url) return;
       if (Platform.OS === "web" && typeof window !== "undefined") {
-        // Web — use browser Image API
         const img = new (window as any).Image();
         img.src = p.url;
       } else {
-        // Native — use expo-image prefetch
         Image.prefetch(p.url).catch(() => {});
       }
     });
   }, 500); // 500ms delay — lets grid thumbnails render first
+}
+
+// ── Magic byte verification ────────────────────────────────
+// Reads the first 12 bytes of the file and checks them against
+// known image file signatures. Cannot be spoofed by renaming.
+async function verifyImageMagicBytes(file: File): Promise<boolean> {
+  try {
+    const buffer = await file.slice(0, 12).arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+
+    // JPEG — FF D8 FF
+    if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)
+      return true;
+
+    // PNG — 89 50 4E 47
+    if (
+      bytes[0] === 0x89 &&
+      bytes[1] === 0x50 &&
+      bytes[2] === 0x4e &&
+      bytes[3] === 0x47
+    )
+      return true;
+
+    // GIF — 47 49 46 38
+    if (
+      bytes[0] === 0x47 &&
+      bytes[1] === 0x49 &&
+      bytes[2] === 0x46 &&
+      bytes[3] === 0x38
+    )
+      return true;
+
+    // WebP — 52 49 46 46 ... 57 45 42 50
+    if (
+      bytes[0] === 0x52 &&
+      bytes[1] === 0x49 &&
+      bytes[2] === 0x46 &&
+      bytes[3] === 0x46 &&
+      bytes[8] === 0x57 &&
+      bytes[9] === 0x45 &&
+      bytes[10] === 0x42 &&
+      bytes[11] === 0x50
+    )
+      return true;
+
+    // HEIC/HEIF — ftyp marker at offset 4
+    if (
+      bytes[4] === 0x66 &&
+      bytes[5] === 0x74 &&
+      bytes[6] === 0x79 &&
+      bytes[7] === 0x70
+    )
+      return true;
+
+    return false;
+  } catch {
+    // If we can't read the bytes, reject the file
+    return false;
+  }
 }
 
 export default function CollectionPage() {
@@ -182,15 +239,64 @@ export default function CollectionPage() {
       const allFiles = (event.target as HTMLInputElement).files;
       if (!allFiles || allFiles.length === 0) return;
 
-      const files = Array.from(allFiles).filter((f) =>
-        f.type.startsWith("image/"),
+      // ── Step 1: filter to image MIME types ──────────────
+      const mimeFiltered = Array.from(allFiles).filter(
+        (f) => f.type.startsWith("image/") && !f.type.includes("svg"),
       );
-      if (files.length === 0) {
-        window.alert("Please select image files only (JPG, PNG, HEIC, etc.)");
+
+      if (mimeFiltered.length === 0) {
+        window.alert(
+          "Please select image files only (JPG, PNG, WebP, HEIC, GIF).",
+        );
         input.value = "";
         return;
       }
 
+      // ── Step 2: magic byte verification ─────────────────
+      // Checks actual file contents — cannot be bypassed by renaming
+      const verifiedFiles: File[] = [];
+      const rejectedNames: string[] = [];
+
+      for (const file of mimeFiltered) {
+        const isRealImage = await verifyImageMagicBytes(file);
+        if (isRealImage) {
+          verifiedFiles.push(file);
+        } else {
+          rejectedNames.push(file.name);
+        }
+      }
+
+      if (rejectedNames.length > 0) {
+        window.alert(
+          `The following file${rejectedNames.length > 1 ? "s" : ""} could not be verified as valid images and were skipped:\n\n${rejectedNames.join("\n")}`,
+        );
+      }
+
+      if (verifiedFiles.length === 0) {
+        input.value = "";
+        return;
+      }
+
+      // ── Step 3: size check ───────────────────────────────
+      const MAX_MB = 15;
+      const oversized = verifiedFiles.filter(
+        (f) => f.size > MAX_MB * 1024 * 1024,
+      );
+      if (oversized.length > 0) {
+        window.alert(
+          `${oversized.length} file${oversized.length > 1 ? "s" : ""} exceed the ${MAX_MB}MB limit and were skipped: ${oversized.map((f) => f.name).join(", ")}`,
+        );
+      }
+      const safeFiles = verifiedFiles.filter(
+        (f) => f.size <= MAX_MB * 1024 * 1024,
+      );
+
+      if (safeFiles.length === 0) {
+        input.value = "";
+        return;
+      }
+
+      // ── Step 4: upload ───────────────────────────────────
       setUploading(true);
       try {
         const currentSession = await supabase.auth.getSession();
@@ -200,7 +306,7 @@ export default function CollectionPage() {
         const currentOwner = fileInputRef.current?._ownerId ?? sess.user.id;
 
         await Promise.all(
-          files.map(async (file: File) => {
+          safeFiles.map(async (file: File) => {
             const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
             const uri = await new Promise<string>((resolve, reject) => {
               const reader = new FileReader();
@@ -281,8 +387,7 @@ export default function CollectionPage() {
 
       setPhotos(mapped);
 
-      // ── Preload full-res images after grid renders ──────────
-      // By the time the user taps a photo, it will already be cached
+      // ── Preload full-res images after grid renders ──────
       preloadImages(mapped);
     } catch (error: any) {
       Alert.alert("Error", error.message);
@@ -366,7 +471,6 @@ export default function CollectionPage() {
       return;
     }
 
-    // Free owner — show paywall, resume upload after subscribe
     pendingUploadRef.current = onAllowed;
     setPaywallReason("photos");
     setShowPaywall(true);
@@ -381,7 +485,7 @@ export default function CollectionPage() {
 
     const realPhotos = photos.filter((p) => !p.key.includes("/thumbs/"));
 
-    // ── Web upload ────────────────────────────────────────────
+    // ── Web upload ────────────────────────────────────────
     if (Platform.OS === "web") {
       checkPhotoLimit(subStatus, realPhotos.length, () => {
         if (fileInputRef.current) fileInputRef.current.click();
@@ -389,7 +493,7 @@ export default function CollectionPage() {
       return;
     }
 
-    // ── Native upload ─────────────────────────────────────────
+    // ── Native upload ─────────────────────────────────────
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
       Alert.alert(
@@ -399,8 +503,6 @@ export default function CollectionPage() {
       return;
     }
 
-    // Pick photos first — before limit check so selected assets are
-    // captured in closure and upload immediately after subscribe
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsMultipleSelection: true,
@@ -811,7 +913,7 @@ export default function CollectionPage() {
         statusBarTranslucent
       >
         <View style={styles.fullScreenViewer}>
-          {/* Native — FlatList with paging — renders first so controls sit on top */}
+          {/* Native — FlatList with paging — rendered first */}
           {selectedPhotoIndex !== null && Platform.OS !== "web" && (
             <FlatList
               data={photos}
@@ -888,10 +990,8 @@ export default function CollectionPage() {
             </View>
           )}
 
-          {/* ── Controls overlay — always rendered LAST so it's always on top ── */}
-          {/* Rendered after FlatList/web viewer so it sits above in the z-stack */}
+          {/* Controls overlay — rendered LAST so always on top of FlatList */}
           <View style={styles.viewerControls} pointerEvents="box-none">
-            {/* Close button */}
             <TouchableOpacity
               style={styles.fullScreenClose}
               onPress={() => setSelectedPhotoIndex(null)}
@@ -900,7 +1000,6 @@ export default function CollectionPage() {
               <Ionicons name="close" size={24} color="#fff" />
             </TouchableOpacity>
 
-            {/* Counter */}
             {selectedPhotoIndex !== null && (
               <View style={styles.fullScreenCounter}>
                 <Text style={styles.fullScreenCounterText}>
@@ -909,12 +1008,10 @@ export default function CollectionPage() {
               </View>
             )}
 
-            {/* Swipe hint — mobile only */}
             {Platform.OS !== "web" && photos.length > 1 && (
               <Text style={styles.swipeHint}>← swipe to navigate →</Text>
             )}
 
-            {/* Delete — owner only */}
             {isOwner && selectedPhotoIndex !== null && (
               <TouchableOpacity
                 style={styles.deleteButton}
@@ -1310,8 +1407,7 @@ const styles = StyleSheet.create({
 
   // ── Full screen viewer ────────────────────────────────────
   fullScreenViewer: { flex: 1, backgroundColor: "#000" },
-  // Controls overlay — position absolute so it floats above the FlatList
-  // Rendered last in JSX so it's always the topmost layer
+  // Overlay rendered after FlatList — always sits on top
   viewerControls: {
     position: "absolute",
     top: 0,
@@ -1331,7 +1427,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 50,
   },
   fullScreenCounter: {
     position: "absolute",
@@ -1339,7 +1434,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     alignItems: "center",
-    zIndex: 50,
   },
   fullScreenCounterText: {
     color: "rgba(255,255,255,0.8)",
@@ -1355,6 +1449,54 @@ const styles = StyleSheet.create({
   },
   fullScreenImage: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT },
   fullScreenWebImage: { flex: 1, height: SCREEN_HEIGHT },
+  webViewerWrapper: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    height: SCREEN_HEIGHT,
+  },
+  webArrow: {
+    width: 64,
+    height: "100%" as any,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  webArrowDisabled: { opacity: 0.1 },
+  webArrowText: {
+    color: "#fff",
+    fontSize: 48,
+    fontWeight: "200",
+    lineHeight: 52,
+    textAlign: "center",
+  },
+  swipeHint: {
+    position: "absolute",
+    bottom: 100,
+    left: 0,
+    right: 0,
+    textAlign: "center",
+    color: "rgba(255,255,255,0.35)",
+    fontSize: 12,
+  },
+  deleteButton: {
+    position: "absolute",
+    bottom: 40,
+    alignSelf: "center",
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    backgroundColor: "rgba(255,60,60,0.85)",
+    borderRadius: 24,
+    alignItems: "center",
+    minWidth: 160,
+    zIndex: 50,
+  },
+  deleteButtonText: { color: "#fff", fontWeight: "600", fontSize: 15 },
+
+  // Legacy viewer styles — kept for safety
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.92)",
@@ -1385,31 +1527,6 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     zIndex: 50,
   },
-  webViewerWrapper: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    width: "100%",
-    height: SCREEN_HEIGHT,
-    gap: 0,
-  },
-  webArrow: {
-    width: 64,
-    height: "100%" as any,
-    backgroundColor: "rgba(255,255,255,0.05)",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  webArrowDisabled: { opacity: 0.1 },
-  webArrowText: {
-    color: "#fff",
-    fontSize: 48,
-    fontWeight: "200",
-    lineHeight: 52,
-    textAlign: "center",
-  },
   webPhotoCard: {
     flex: 1,
     height: SCREEN_HEIGHT * 0.75,
@@ -1425,28 +1542,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#000",
   },
   modalImage: { width: "100%", height: "100%" },
-  swipeHint: {
-    position: "absolute",
-    bottom: 100,
-    left: 0,
-    right: 0,
-    textAlign: "center",
-    color: "rgba(255,255,255,0.35)",
-    fontSize: 12,
-  },
-  deleteButton: {
-    position: "absolute",
-    bottom: 40,
-    alignSelf: "center",
-    paddingHorizontal: 28,
-    paddingVertical: 14,
-    backgroundColor: "rgba(255,60,60,0.85)",
-    borderRadius: 24,
-    alignItems: "center",
-    minWidth: 160,
-    zIndex: 50,
-  },
-  deleteButtonText: { color: "#fff", fontWeight: "600", fontSize: 15 },
 
   // ── Share overlay ────────────────────────────────────────
   shareWebOverlay: {

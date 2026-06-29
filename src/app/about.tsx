@@ -53,12 +53,12 @@ export default function AboutPage() {
             <Text style={styles.sectionEmoji}>📖</Text>
             <Text style={styles.sectionTitle}>Remember the Album?</Text>
             <Text style={styles.sectionBody}>
-              There was a time when every family had one — a thick, heavy album
+              There was a time when every family had one, a thick, heavy album
               tucked away on a shelf or under the coffee table. You'd flip
               through it slowly, each plastic sleeve holding a photo that told a
-              story. A birthday cake with too many candles. A road trip that
-              ended in the middle of nowhere. A Sunday afternoon that felt
-              ordinary then but golden now.
+              story. A birthday cake, that road trip that ended in the middle of
+              nowhere, a Sunday afternoon that felt ordinary then but golden
+              now.
             </Text>
             <Text style={styles.sectionBody}>
               Those albums were sacred. They were how families remembered. How
@@ -74,14 +74,15 @@ export default function AboutPage() {
               What Happened to Our Photos?
             </Text>
             <Text style={styles.sectionBody}>
-              Today we take more photos than ever before — thousands of them —
-              but somehow they feel less permanent. They're buried in a camera
-              roll no one scrolls through. Lost in a group chat that was muted
-              months ago. Scattered across three different cloud services and
-              two old phones that no longer turn on.
+              Today we take more photos than ever before, thousands of them, but
+              somehow they feel less permanent. They're buried in a camera roll
+              no one scrolls through. Lost in a group chat that was muted months
+              ago. Scattered across three different cloud services and two old
+              phones that no longer turn on, or disappeared with that lost
+              phone.
             </Text>
             <Text style={styles.sectionBody}>
-              The memories are still there. We just can't find them anymore.
+              The memories are there. We just can't find them anymore.
             </Text>
           </View>
 
@@ -90,10 +91,10 @@ export default function AboutPage() {
             <Text style={styles.sectionEmoji}>✨</Text>
             <Text style={styles.sectionTitle}>Mems Brings the Album Back</Text>
             <Text style={styles.sectionBody}>
-              Mems is a modern take on the photo album you grew up with —
-              simple, beautiful, and built to last. Create a collection for any
-              chapter of your life. A holiday. A wedding. The first year of a
-              child's life. Your grandmother's 80th birthday.
+              Mems is a modern take on the photo album you grew up with; Simple,
+              beautiful, and built to last. Create a collection for any chapter
+              of your life. A holiday. A wedding. The first year of a child's
+              life. Your grandmother's 80th birthday.
             </Text>
             <Text style={styles.sectionBody}>
               Then share it with the people who were there. Not a link that
