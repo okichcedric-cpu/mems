@@ -93,6 +93,11 @@ serve(async (req) => {
 
     console.log(`IPN registered: ${ipnId} for user ${user.id} tier ${tier}`);
 
+    // Use the full email as the name on the Pesapal payment screen
+    // last_name accepts empty string — not required by Pesapal API
+    const firstName = user.email ?? "Mems User";
+    const lastName = "";
+
     // Submit order to Pesapal
     const orderRes = await fetch(
       `${PESAPAL_BASE}/api/Transactions/SubmitOrderRequest`,
@@ -112,8 +117,8 @@ serve(async (req) => {
           notification_id: ipnId,
           billing_address: {
             email_address: user.email,
-            first_name: "Mems",
-            last_name: "User",
+            first_name: firstName,
+            last_name: lastName,
           },
         }),
       },
