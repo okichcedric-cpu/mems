@@ -696,30 +696,58 @@ export default function CollectionPage() {
     }
   }
 
+  // Deterministic tilt per photo — same every render, no jitter
+  // Alternates between slight left and right tilts for a scattered feel
+  const TILTS = [-2.5, 1.8, -1.2, 2.8, -2.0, 1.5, -3.0, 2.2];
+
   const renderPhoto = (item: Photo, index: number) => {
     const hasDimensions = item.width !== 1 || item.height !== 1;
-    const fallbackHeights = [160, 220, 180, 260, 140, 200, 240, 170];
-    const aspectRatio = hasDimensions ? item.height / item.width : null;
-    const height = aspectRatio
-      ? COLUMN_WIDTH * aspectRatio
-      : fallbackHeights[index % fallbackHeights.length];
+    const aspectRatio = hasDimensions ? item.height / item.width : 1;
+
+    // Polaroid photo area — square-ish, slightly portrait
+    const photoWidth = COLUMN_WIDTH - 16; // inner image width inside the polaroid
+    const photoHeight = hasDimensions
+      ? Math.min(photoWidth * aspectRatio, photoWidth * 1.3) // cap tall images
+      : photoWidth;
+
+    const POLAROID_PADDING = 8; // white border on sides and top
+    const POLAROID_BOTTOM = 32; // larger white space at bottom for the caption area
+    const tilt = TILTS[index % TILTS.length];
 
     return (
       <TouchableOpacity
         key={item.key}
-        style={[styles.photoContainer, { height }]}
+        style={[
+          styles.polaroidWrapper,
+          { transform: [{ rotate: `${tilt}deg` }] },
+        ]}
         onPress={() => openPhoto(photos.indexOf(item))}
-        activeOpacity={0.85}
+        activeOpacity={0.88}
       >
-        <View style={styles.photoPlaceholder} />
-        <Image
-          source={{ uri: item.thumbUrl ?? item.url }}
-          style={[styles.photo, StyleSheet.absoluteFill]}
-          contentFit="cover"
-          cachePolicy="memory-disk"
-          recyclingKey={item.key}
-          transition={{ duration: 200, effect: "cross-dissolve" }}
-        />
+        {/* Polaroid card */}
+        <View style={styles.polaroidCard}>
+          {/* Photo area */}
+          <View
+            style={[
+              styles.polaroidPhotoArea,
+              { width: photoWidth, height: photoHeight },
+            ]}
+          >
+            <View style={styles.photoPlaceholder} />
+            <Image
+              source={{ uri: item.thumbUrl ?? item.url }}
+              style={StyleSheet.absoluteFill}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              recyclingKey={item.key}
+              transition={{ duration: 200, effect: "cross-dissolve" }}
+            />
+          </View>
+          {/* Polaroid caption strip — the white space below the photo */}
+          <View style={styles.polaroidCaption}>
+            <View style={styles.polaroidCaptionLine} />
+          </View>
+        </View>
       </TouchableOpacity>
     );
   };
@@ -1262,7 +1290,7 @@ export default function CollectionPage() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f9f9f9" },
+  container: { flex: 1, backgroundColor: "#f0ece4" },
 
   // ── Header ────────────────────────────────────────────────
   header: {
@@ -1391,9 +1419,63 @@ const styles = StyleSheet.create({
   avatarStripLabel: { fontSize: 13, color: "#666", fontWeight: "500" },
 
   // ── Grid ─────────────────────────────────────────────────
-  grid: { padding: 12 },
-  columns: { flexDirection: "row", gap: 8 },
-  column: { flex: 1, gap: 8 },
+  // Warm off-white background makes polaroids feel like they're
+  // scattered on a table or pinned to a corkboard
+  grid: {
+    padding: 16,
+    paddingTop: 24,
+    backgroundColor: "#f0ece4",
+  },
+  columns: { flexDirection: "row", gap: 0 },
+  column: { flex: 1, alignItems: "center", gap: 20, paddingTop: 8 },
+
+  // ── Polaroid wrapper — handles tilt transform ─────────────
+  polaroidWrapper: {
+    marginBottom: 4,
+    // Extra margin to account for tilt overflow
+    marginHorizontal: 4,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 2, height: 4 },
+        shadowOpacity: 0.22,
+        shadowRadius: 6,
+      },
+      android: { elevation: 6 },
+      web: { filter: "drop-shadow(2px 4px 6px rgba(0,0,0,0.22))" } as any,
+    }),
+  },
+
+  // ── Polaroid card — the white bordered photo card ─────────
+  polaroidCard: {
+    backgroundColor: "#fff",
+    padding: 8,
+    paddingBottom: 0,
+    borderRadius: 2,
+  },
+
+  // ── Photo area inside the polaroid ────────────────────────
+  polaroidPhotoArea: {
+    overflow: "hidden",
+    backgroundColor: "#e8e8e8",
+  },
+
+  // ── Caption strip — white space below photo ───────────────
+  polaroidCaption: {
+    height: 32,
+    backgroundColor: "#fff",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  // Subtle pencil-line effect in the caption area
+  polaroidCaptionLine: {
+    width: "60%",
+    height: 1,
+    backgroundColor: "#e8e8e8",
+    borderRadius: 1,
+  },
+
+  // Legacy — kept for safety
   photoContainer: { width: "100%", borderRadius: 12, overflow: "hidden" },
   photo: { width: "100%", height: "100%" },
   photoPlaceholder: {
