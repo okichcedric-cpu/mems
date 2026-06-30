@@ -1,8 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Dimensions,
   Modal,
@@ -179,6 +181,7 @@ export default function PaywallModal({
       : `${recommendedConfig.maxPhotosPerCollection} photos per collection`;
 
   async function handlePurchase(tier: Tier) {
+    // ── Guest check ───────────────────────────────────────
     const {
       data: { session },
     } = await supabase.auth.getSession();
@@ -189,12 +192,16 @@ export default function PaywallModal({
     }
 
     setPurchasing(tier);
+
     try {
       const callbackUrl = IS_WEB
         ? `${window.location.origin}/subscription-callback`
         : "mems://subscription-callback";
 
       if (IS_WEB) {
+        // ── Web — open Pesapal popup immediately on tap ───
+        // Must be opened synchronously before any await or mobile
+        // browsers will block it as an untrusted popup
         const popup = window.open(
           "",
           "pesapal",
@@ -202,12 +209,17 @@ export default function PaywallModal({
         );
 
         if (!popup) {
-          // Fallback — navigate to subscription page
-          onDismiss();
-          router.push("/subscription");
+          // Popup blocked — fall back to same-tab redirect
+          const { data, error } = await supabase.functions.invoke(
+            "create-subscription",
+            { body: { tier, callbackUrl } },
+          );
+          if (error) throw new Error(error.message);
+          window.location.href = data.redirectUrl;
           return;
         }
 
+        // Show branded loading screen while we fetch the URL
         popup.document.write(`
           <html><body style="display:flex;align-items:center;justify-content:center;
           height:100vh;font-family:sans-serif;background:#f9f9f9;flex-direction:column;gap:16px">
@@ -219,9 +231,7 @@ export default function PaywallModal({
 
         const { data, error } = await supabase.functions.invoke(
           "create-subscription",
-          {
-            body: { tier, callbackUrl },
-          },
+          { body: { tier, callbackUrl } },
         );
 
         if (error) {
@@ -232,24 +242,21 @@ export default function PaywallModal({
         const { redirectUrl, merchantReference } = data;
         popup.location.href = redirectUrl;
 
+        // Poll for popup close then sync payment status
         const poll = setInterval(async () => {
           if (popup?.closed) {
             clearInterval(poll);
             try {
               const { data: sync } = await supabase.functions.invoke(
                 "sync-subscription",
-                {
-                  body: { merchantReference, tier },
-                },
+                { body: { merchantReference, tier } },
               );
               if (sync?.status === "active") {
                 try {
                   popup.close();
                 } catch {}
-                // Notify parent — they decide what to do (proceed with action)
                 onSubscribed(tier);
               } else {
-                // Payment abandoned — dismiss paywall, cancel the action
                 onDismiss();
               }
             } catch {
@@ -260,14 +267,50 @@ export default function PaywallModal({
           }
         }, 1000);
       } else {
-        // Native — navigate to subscription page and let them come back
-        onDismiss();
-        router.push("/subscription");
-        setPurchasing(null);
+        // ── Native — open Pesapal in in-app browser directly ──
+        // No navigation away from the current screen
+        const { data, error } = await supabase.functions.invoke(
+          "create-subscription",
+          { body: { tier, callbackUrl } },
+        );
+
+        if (error) throw new Error(error.message);
+
+        const { redirectUrl, merchantReference } = data;
+
+        // Open Pesapal in the in-app browser — user stays in context
+        const result = await WebBrowser.openBrowserAsync(redirectUrl, {
+          presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
+          toolbarColor: "#111",
+          controlsColor: "#fff",
+        });
+
+        // Browser closed — check payment status regardless of result type
+        // (user may have completed or abandoned payment)
+        try {
+          const { data: sync } = await supabase.functions.invoke(
+            "sync-subscription",
+            { body: { merchantReference, tier } },
+          );
+
+          if (sync?.status === "active") {
+            // Payment confirmed — resume blocked action
+            onSubscribed(tier);
+          } else {
+            // Payment not completed — cancel and let user try again
+            onDismiss();
+          }
+        } catch {
+          onDismiss();
+        } finally {
+          setPurchasing(null);
+        }
       }
     } catch (err: any) {
       if (IS_WEB) {
-        window.alert("Error: " + err.message);
+        window.alert("Payment error: " + err.message);
+      } else {
+        Alert.alert("Payment error", err.message);
       }
       setPurchasing(null);
     }
@@ -501,7 +544,7 @@ export default function PaywallModal({
                       <Text style={styles.greyedPrice}>
                         KES {config.price.toLocaleString()}
                       </Text>
-                      <Text style={styles.greyedOnce}>/mo</Text>
+                      <Text style={styles.greyedOnce}>once</Text>
                     </View>
                   ) : (
                     <>

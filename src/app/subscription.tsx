@@ -223,13 +223,12 @@ function FreeCardMobile({ isCurrentTier }: { isCurrentTier: boolean }) {
           </Text>
           <Text style={styles.mobileStatLabel}>Photos each</Text>
         </View>
-        <View style={styles.mobileCardStatDivider} />
-        <View style={styles.mobileCardStat}>
-          <Text style={[styles.mobileStatValue, { color: config.accent }]}>
-            Free
-          </Text>
-          <Text style={styles.mobileStatLabel}>Always</Text>
-        </View>
+      </View>
+      <View style={styles.mobilePriceRow}>
+        <Text style={[styles.mobilePriceAmount, { color: config.accent }]}>
+          Free
+        </Text>
+        <Text style={styles.mobilePriceLabel}>always</Text>
       </View>
       <View style={styles.mobileFeatures}>
         {[
@@ -361,7 +360,7 @@ function ComparisonTable({
                   >
                     {config.price.toLocaleString()}
                   </Text>
-                  <Text style={tableStyles.priceSub}>/mo</Text>
+                  <Text style={tableStyles.priceSub}>once</Text>
                 </>
               )}
             </View>
@@ -1043,18 +1042,18 @@ export default function SubscriptionPage() {
                             Photos each
                           </Text>
                         </View>
-                        <View style={styles.mobileCardStatDivider} />
-                        <View style={styles.mobileCardStat}>
-                          <Text
-                            style={[
-                              styles.mobileStatValue,
-                              { color: config.accent },
-                            ]}
-                          >
-                            KES {config.price.toLocaleString()}
-                          </Text>
-                          <Text style={styles.mobileStatLabel}>/mo</Text>
-                        </View>
+                      </View>
+                      {/* Price row — separate from stats to prevent cramping */}
+                      <View style={styles.mobilePriceRow}>
+                        <Text
+                          style={[
+                            styles.mobilePriceAmount,
+                            { color: config.accent },
+                          ]}
+                        >
+                          KES {config.price.toLocaleString()}
+                        </Text>
+                        <Text style={styles.mobilePriceLabel}>/month</Text>
                       </View>
                       <View style={styles.mobileFeatures}>
                         {[
@@ -1457,9 +1456,28 @@ const styles = StyleSheet.create({
     borderColor: "#f0f0f0",
   },
   mobileCardStat: { flex: 1, alignItems: "center", paddingVertical: 16 },
-  mobileStatValue: { fontSize: 18, fontWeight: "900" },
+  mobileStatValue: { fontSize: 22, fontWeight: "900" },
   mobileStatLabel: { fontSize: 11, color: "#888", marginTop: 3 },
   mobileCardStatDivider: { width: 1, backgroundColor: "#f0f0f0" },
+  // Price displayed separately below stats — prevents cramping on small screens
+  mobilePriceRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
+  },
+  mobilePriceAmount: {
+    fontSize: 26,
+    fontWeight: "900",
+  },
+  mobilePriceLabel: {
+    fontSize: 14,
+    color: "#888",
+    fontWeight: "500",
+  },
   mobileFeatures: {
     paddingHorizontal: 24,
     paddingTop: 20,
