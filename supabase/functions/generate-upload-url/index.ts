@@ -143,9 +143,7 @@ serve(async (req) => {
 
     // ── Validation 6 — Authorised path check ──────────────
     // Expected key format: {ownerId}/{collectionName}/{filename}
-    // The requesting user must either:
-    //   a) Own the path (their ID is the first segment), OR
-    //   b) Have been granted share access to that collection
+    // Thumb format:        {ownerId}/{collectionName}/thumbs/{filename}
     const keyParts = safeKey.split("/");
     if (keyParts.length < 3) {
       return new Response(
@@ -155,37 +153,45 @@ serve(async (req) => {
     }
 
     const keyOwnerId = keyParts[0];
-    // Strip thumbs prefix so thumbs/photo.jpg resolves to the same collection
-    const collectionName = keyParts[1] === "thumbs" ? keyParts[2] : keyParts[1];
+    // keyParts[1] is always the collection name in both formats:
+    // {ownerId}/{collectionName}/{filename}
+    // {ownerId}/{collectionName}/thumbs/{filename}
+    const collectionName = keyParts[1];
 
     const isOwner = keyOwnerId === user.id;
 
     if (!isOwner) {
-      // ── Check shared_collections for recipient access ──
-      // User is not the owner — verify they have been explicitly shared
-      // this collection by the owner
+      // Not the owner — check if they have been granted share access
       const supabase = createClient(
         Deno.env.get("SUPABASE_URL")!,
         Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       );
 
-      const { data: shareRecord, error: shareError } = await supabase
+      // Check by recipient_id first (faster), then fall back to email match
+      const { data: shareByUserId } = await supabase
         .from("shared_collections")
         .select("id")
         .eq("owner_id", keyOwnerId)
         .eq("collection_name", collectionName)
-        .or(
-          `recipient_email.eq.${user.email},recipient_id.eq.${user.id}`,
-        )
+        .eq("recipient_id", user.id)
         .maybeSingle();
 
-      if (shareError) {
-        console.error("Share lookup error:", shareError.message);
+      // If not found by user ID, try by email
+      let shareRecord = shareByUserId;
+      if (!shareRecord && user.email) {
+        const { data: shareByEmail } = await supabase
+          .from("shared_collections")
+          .select("id")
+          .eq("owner_id", keyOwnerId)
+          .eq("collection_name", collectionName)
+          .eq("recipient_email", user.email)
+          .maybeSingle();
+        shareRecord = shareByEmail;
       }
 
       if (!shareRecord) {
         console.warn(
-          `Rejected upload — user ${user.id} (${user.email}) not authorised to write to ${keyOwnerId}/${collectionName}`,
+          `Rejected — user ${user.id} (${user.email}) not authorised for ${keyOwnerId}/${collectionName}`,
         );
         return new Response(
           JSON.stringify({
@@ -196,7 +202,7 @@ serve(async (req) => {
       }
 
       console.log(
-        `Shared upload authorised — user ${user.id} uploading to ${keyOwnerId}/${collectionName}`,
+        `Shared upload authorised — user ${user.id} → ${keyOwnerId}/${collectionName}`,
       );
     }
 
