@@ -34,136 +34,168 @@ const FORM_WIDTH = IS_DESKTOP
 
 type Mode = "login" | "signup";
 
-// Diverse family images — dark natural lighting, family moments, all races
-const FAMILY_IMAGES = [
-  // Black family laughing around dinner table — warm dark dining room
-  "https://images.unsplash.com/photo-1606041008023-472dfb5e530f?w=900&q=80&fit=crop&crop=center",
-  // South Asian family diwali celebration — dark background with warm lamp glow
-  "https://images.unsplash.com/photo-1604881988758-f76ad2f7aac1?w=900&q=80&fit=crop&crop=center",
-  // White grandparents with grandchildren — cosy dark living room by firelight
-  "https://images.unsplash.com/photo-1609220136736-443140cffec6?w=900&q=80&fit=crop&crop=center",
-  // Hispanic family outdoor evening — dark dusk sky, warm faces
-  "https://images.unsplash.com/photo-1476703993599-0035a21b17a9?w=900&q=80&fit=crop&crop=center",
-  // African family portrait — deep studio dark background, joyful
-  "https://images.unsplash.com/photo-1511895426328-dc8714191011?w=900&q=80&fit=crop&crop=center",
-  // Multiracial family movie night — dark room, soft warm glow on faces
-  "https://images.unsplash.com/photo-1585637071663-799845ad5212?w=900&q=80&fit=crop&crop=center",
+// ── Uploaded family photos as polaroid thumbnails ─────────
+// Positioned in the middle zone — below the logo banner, above the text
+// so they never obscure either. Each has a fixed position + tilt.
+const POLAROID_PHOTOS = [
+  {
+    // Top-left — family outdoor dinner
+    source: require("@/assets/images/hero/family-dinner.jpg"),
+    style: { top: "12%", left: "6%", rotate: "-5deg", width: 136, height: 118 },
+  },
+  {
+    // Top-right — mother and daughter
+    source: require("@/assets/images/hero/mother-daughter.jpg"),
+    style: { top: "10%", right: "5%", rotate: "6deg", width: 124, height: 134 },
+  },
+  {
+    // Mid-left — Asian mum with kids — raised so clear of text
+    source: require("@/assets/images/hero/mum-kids.jpg"),
+    style: { top: "44%", left: "8%", rotate: "4deg", width: 140, height: 118 },
+  },
+  {
+    // Mid-right — family in bed
+    source: require("@/assets/images/hero/family-bed.jpg"),
+    style: {
+      top: "40%",
+      right: "4%",
+      rotate: "-4deg",
+      width: 126,
+      height: 138,
+    },
+  },
 ];
 
 // ── Desktop left hero panel ──────────────────────────────────
 function DesktopHeroPanel() {
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [nextIndex, setNextIndex] = useState(1);
-  const fadeAnim = useRef(new Animated.Value(1)).current;
-  // Use ref instead of state so interval never resets on load
-  const nextLoadedRef = useRef(false);
+  const polaroidAnims = useRef(
+    POLAROID_PHOTOS.map(() => new Animated.Value(0)),
+  ).current;
 
-  // Preload all images on mount so transitions are instant
   useEffect(() => {
-    FAMILY_IMAGES.forEach((uri) => {
-      if (IS_WEB && typeof window !== "undefined") {
-        const img = new (window as any).Image();
-        img.src = uri;
-      }
+    POLAROID_PHOTOS.forEach((_, i) => {
+      setTimeout(
+        () => {
+          Animated.spring(polaroidAnims[i], {
+            toValue: 1,
+            tension: 60,
+            friction: 10,
+            useNativeDriver: true,
+          }).start();
+        },
+        200 + i * 160,
+      );
     });
   }, []);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (!nextLoadedRef.current) {
-        // Mark as loaded anyway after timeout to avoid getting stuck
-        nextLoadedRef.current = true;
-      }
-
-      Animated.sequence([
-        Animated.timing(fadeAnim, {
-          toValue: 0,
-          duration: 700,
-          useNativeDriver: true,
-        }),
-        Animated.delay(80),
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 700,
-          useNativeDriver: true,
-        }),
-      ]).start();
-
-      // Swap at the midpoint when opacity is 0
-      setTimeout(() => {
-        setCurrentIndex((prev) => (prev + 1) % FAMILY_IMAGES.length);
-        setNextIndex((prev) => (prev + 1) % FAMILY_IMAGES.length);
-        nextLoadedRef.current = false;
-      }, 800);
-    }, 5000); // rotate every 5 seconds
-
-    return () => clearInterval(interval);
-  }, []); // ← empty deps — interval never resets
+  function PolaroidThumb({
+    photo,
+    anim,
+    size = 130,
+    height = 110,
+  }: {
+    photo: (typeof POLAROID_PHOTOS)[0];
+    anim: Animated.Value;
+    size?: number;
+    height?: number;
+  }) {
+    return (
+      <Animated.View
+        style={[
+          {
+            transform: [
+              { rotate: photo.style.rotate },
+              {
+                scale: anim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.7, 1],
+                }),
+              },
+            ],
+            opacity: anim,
+          },
+        ]}
+      >
+        <View style={[heroStyles.polaroidCard, { width: size }]}>
+          <Image
+            source={photo.source}
+            style={[heroStyles.polaroidPhoto, { height }]}
+            resizeMode="cover"
+          />
+          <View style={heroStyles.polaroidCaption} />
+        </View>
+      </Animated.View>
+    );
+  }
 
   return (
     <View style={heroStyles.panel}>
-      {/* Logo banner */}
-      <View style={heroStyles.logoBanner}>
+      {/* ── Logo row — no banner, just clean on white ── */}
+      <View style={heroStyles.logoRow}>
         <Image
           source={require("@/assets/images/icon.png")}
-          style={heroStyles.bannerLogo}
+          style={heroStyles.logoIcon}
           resizeMode="contain"
         />
-        <Text style={heroStyles.bannerName}>Mems</Text>
+        <Text style={heroStyles.logoName}>Mems</Text>
       </View>
 
-      {/* Current image — animates with fade */}
-      <Animated.Image
-        source={{ uri: FAMILY_IMAGES[currentIndex] }}
-        style={[heroStyles.bgImage, { opacity: fadeAnim }]}
-        resizeMode="cover"
-      />
+      {/* ── Top row — two photos side by side ── */}
+      <View style={heroStyles.topRow}>
+        <PolaroidThumb
+          photo={POLAROID_PHOTOS[0]}
+          anim={polaroidAnims[0]}
+          size={148}
+          height={126}
+        />
+        <PolaroidThumb
+          photo={POLAROID_PHOTOS[1]}
+          anim={polaroidAnims[1]}
+          size={140}
+          height={132}
+        />
+      </View>
 
-      {/* Next image — always rendered behind, invisible until swap */}
-      <Image
-        source={{ uri: FAMILY_IMAGES[nextIndex] }}
-        style={[heroStyles.bgImage, { opacity: 0 }]}
-        resizeMode="cover"
-        onLoad={() => {
-          nextLoadedRef.current = true;
-        }}
-      />
+      {/* ── Middle row — small flanking photos beside text ── */}
+      <View style={heroStyles.middleRow}>
+        {/* Left small photo */}
+        <PolaroidThumb
+          photo={POLAROID_PHOTOS[2]}
+          anim={polaroidAnims[2]}
+          size={108}
+          height={90}
+        />
 
-      {/* Dark overlay — bottom gradient using supported properties */}
-      <View style={heroStyles.gradientTop} />
-      <View style={heroStyles.gradientBottom} />
-
-      {/* Text content */}
-      <View style={heroStyles.content}>
-        <Text style={heroStyles.headline}>
-          Your Digital Album{"\n"}for Life's Most{"\n"}Precious Moments
-        </Text>
-        <View style={heroStyles.accentLine} />
-        <Text style={heroStyles.sub}>
-          Keep your memories safe, beautifully{"\n"}
-          organised and shared with the people{"\n"}
-          who matter most.
-        </Text>
-        <View style={heroStyles.pills}>
-          {["📸 Create albums", "🤝 Share moments", "☁️ Safe forever"].map(
-            (pill) => (
-              <View key={pill} style={heroStyles.pill}>
-                <Text style={heroStyles.pillText}>{pill}</Text>
-              </View>
-            ),
-          )}
+        {/* Text block — centred between the two flanking photos */}
+        <View style={heroStyles.textBlock}>
+          <Text style={heroStyles.headline}>
+            Your Digital Album{"\n"}for Life's Most{"\n"}Precious Moments
+          </Text>
+          <View style={heroStyles.accentLine} />
+          <Text style={heroStyles.sub}>
+            Keep your memories safe, beautifully organised and shared with the
+            people who matter most.
+          </Text>
         </View>
-        <View style={heroStyles.dots}>
-          {FAMILY_IMAGES.map((_, i) => (
-            <View
-              key={i}
-              style={[
-                heroStyles.dot,
-                i === currentIndex && heroStyles.dotActive,
-              ]}
-            />
-          ))}
-        </View>
+
+        {/* Right small photo */}
+        <PolaroidThumb
+          photo={POLAROID_PHOTOS[3]}
+          anim={polaroidAnims[3]}
+          size={108}
+          height={94}
+        />
+      </View>
+
+      {/* ── Pills row ── */}
+      <View style={heroStyles.pillsRow}>
+        {["📸 Create albums", "🤝 Share moments", "☁️ Safe forever"].map(
+          (pill) => (
+            <View key={pill} style={heroStyles.pill}>
+              <Text style={heroStyles.pillText}>{pill}</Text>
+            </View>
+          ),
+        )}
       </View>
     </View>
   );
@@ -588,141 +620,125 @@ export default function LoginScreen() {
 const heroStyles = StyleSheet.create({
   panel: {
     flex: 1,
-    position: "relative",
+    backgroundColor: "#f8f6f2",
+    paddingHorizontal: 20,
+    paddingTop: 28,
+    paddingBottom: 28,
+    justifyContent: "flex-start", // logo pins to top, content flows down
+    gap: 24,
     overflow: "hidden",
-    backgroundColor: "#111",
   },
 
-  // Logo banner — top strip over the image
-  logoBanner: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 20,
+  // Logo — pinned to top, no banner background
+  logoRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 28,
-    paddingTop: 24,
-    paddingBottom: 16,
-    backgroundColor: "rgba(0,0,0,0.62)",
+    gap: 12,
+    paddingHorizontal: 4,
+    marginBottom: 8,
   },
-  bannerLogo: {
-    width: 36,
-    height: 36,
+  logoIcon: {
+    width: 42,
+    height: 42,
     borderRadius: 0,
   },
-  bannerName: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: "#fff",
-    letterSpacing: 1,
+  logoName: {
+    fontSize: 28, // matches headline weight and size feel
+    fontWeight: "800", // same as headline
+    color: "#111",
+    letterSpacing: -0.3, // same as headline
   },
 
-  // Background cycling images
-  bgImage: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    width: "100%" as any,
-    height: "100%" as any,
+  // Top row — two large photos side by side with space between
+  topRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+    paddingHorizontal: 8,
   },
 
-  // Very light top vignette — just enough to make logo banner readable
-  gradientTop: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: "20%" as any,
-    backgroundColor: "rgba(0,0,0,0.15)",
-    zIndex: 5,
-  },
-  // No bottom gradient — images are dark enough on their own
-  gradientBottom: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 0,
-    backgroundColor: "transparent",
-    zIndex: 5,
+  // Middle row — small photo | text | small photo
+  middleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
 
-  // Text content — pinned to bottom, sits above both gradient views
-  content: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    zIndex: 10,
-    paddingHorizontal: 36,
-    paddingBottom: 40,
-    paddingTop: 80,
+  // Text lives between the two flanking photos
+  textBlock: {
+    flex: 1,
   },
+
   headline: {
-    fontSize: 32,
+    fontSize: 22,
     fontWeight: "800",
-    color: "#fff",
-    lineHeight: 42,
-    letterSpacing: -0.5,
-    marginBottom: 16,
-    textShadowColor: "rgba(0,0,0,0.9)",
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 12,
+    color: "#111",
+    lineHeight: 30,
+    letterSpacing: -0.3,
+    marginBottom: 10,
   },
   accentLine: {
-    width: 44,
+    width: 36,
     height: 3,
     backgroundColor: "#4AE8A0",
     borderRadius: 2,
-    marginBottom: 16,
+    marginBottom: 10,
   },
   sub: {
-    fontSize: 14,
-    color: "rgba(255,255,255,0.9)",
-    lineHeight: 22,
-    marginBottom: 24,
-    textShadowColor: "rgba(0,0,0,0.8)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 8,
+    fontSize: 12,
+    color: "#666",
+    lineHeight: 18,
   },
-  pills: {
+
+  // Pills row at the bottom
+  pillsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
-    marginBottom: 20,
+    paddingHorizontal: 4,
   },
   pill: {
-    backgroundColor: "rgba(255,255,255,0.15)",
+    backgroundColor: "#fff",
     borderRadius: 20,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.2)",
+    borderColor: "#e0e0e0",
   },
   pillText: {
-    fontSize: 12,
-    color: "rgba(255,255,255,0.85)",
+    fontSize: 11,
+    color: "#444",
     fontWeight: "500",
   },
-  // Image progress dots
-  dots: {
-    flexDirection: "row",
-    gap: 6,
+
+  // ── Polaroid card ─────────────────────────────────────────
+  polaroidWrapper: {},
+  polaroidCard: {
+    backgroundColor: "#fff",
+    padding: 7,
+    paddingBottom: 0,
+    borderRadius: 2,
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+    ...Platform.select({
+      web: { boxShadow: "4px 6px 20px rgba(0,0,0,0.14)" } as any,
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 3, height: 5 },
+        shadowOpacity: 0.15,
+        shadowRadius: 10,
+      },
+      android: { elevation: 7 },
+    }),
   },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "rgba(255,255,255,0.3)",
-  },
-  dotActive: {
-    backgroundColor: "#4AE8A0",
-    width: 20,
+  polaroidPhoto: {
+    width: "100%",
+    borderRadius: 1,
+    overflow: "hidden",
+  } as any,
+  polaroidCaption: {
+    height: 24,
+    backgroundColor: "#fff",
   },
 });
 
