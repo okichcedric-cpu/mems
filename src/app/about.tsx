@@ -53,17 +53,16 @@ export default function AboutPage() {
             <Text style={styles.sectionEmoji}>📖</Text>
             <Text style={styles.sectionTitle}>Remember the Album?</Text>
             <Text style={styles.sectionBody}>
-              There was a time when every family had one, a thick, heavy album
-              tucked away on a shelf or under the coffee table. You'd flip
-              through it slowly, each plastic sleeve holding a photo that told a
-              story. A birthday cake, that road trip that ended in the middle of
-              nowhere, a Sunday afternoon that felt ordinary then but golden
-              now.
+              There was a time when every family had one, an album tucked away
+              on a shelf, next to some old hard cover books or under the coffee
+              table. You'd flip through it slowly, each plastic sleeve holding
+              photos that told a story. A birthday party, that out of town road
+              trip, that lazy Sunday afternoon that felt ordinary then but
+              golden now.
             </Text>
             <Text style={styles.sectionBody}>
-              Those albums were sacred. They were how families remembered. How
-              grandparents showed grandchildren where they came from. How we
-              proved to ourselves that we had, in fact, lived.
+              They were sacred and how families held on to memories. How
+              grandparents showed grandchildren where they came from.
             </Text>
           </View>
 
@@ -75,11 +74,10 @@ export default function AboutPage() {
             </Text>
             <Text style={styles.sectionBody}>
               Today we take more photos than ever before, thousands of them, but
-              somehow they feel less permanent. They're buried in a camera roll
-              no one scrolls through. Lost in a group chat that was muted months
-              ago. Scattered across three different cloud services and two old
-              phones that no longer turn on, or disappeared with that lost
-              phone.
+              somehow they feel less permanent. They're buried in a phone camera
+              roll or lost in a group chat. We don't even remember what photos
+              we have! Scattered across three different cloud services and old
+              phones or lost phones.
             </Text>
             <Text style={styles.sectionBody}>
               The memories are there. We just can't find them anymore.
@@ -92,15 +90,14 @@ export default function AboutPage() {
             <Text style={styles.sectionTitle}>Mems Brings the Album Back</Text>
             <Text style={styles.sectionBody}>
               Mems is a modern take on the photo album you grew up with; Simple,
-              beautiful, and built to last. Create a collection for any chapter
+              Beautiful, and built to last. Create a collection for any chapter
               of your life. A holiday. A wedding. The first year of a child's
               life. Your grandmother's 80th birthday.
             </Text>
             <Text style={styles.sectionBody}>
-              Then share it with the people who were there. Not a link that
-              expires. Not a download they'll forget to open. A shared album
-              that lives on their Mems too, always there when they want to
-              remember.
+              Then share it with the people who were there. Not a link that will
+              expire. Not a download they'll forget to open. A shared album that
+              lives on their Mems too, always there when they want to remember.
             </Text>
           </View>
 
@@ -112,10 +109,10 @@ export default function AboutPage() {
             </Text>
             <Text style={styles.sectionBody}>
               The photos you take today are the history your children and
-              grandchildren will look back on. Mems is built with that in mind.
-              Your collections are stored securely in the cloud — not tied to a
-              device that can break, a phone that can be stolen, or a hard drive
-              that can fail.
+              grandchildren will look back to. Mems is built with that in mind.
+              Your collections are stored securely in the cloud, accessible
+              across devices — not tied to a device that can break, a phone that
+              can be stolen, or a hard drive that can fail or disappear.
             </Text>
             <Text style={styles.sectionBody}>
               The album your grandmother kept for fifty years deserved to last
