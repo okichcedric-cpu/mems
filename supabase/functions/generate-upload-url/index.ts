@@ -33,12 +33,21 @@ const ALLOWED_MIME_TYPES = new Set([
 const MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024;
 
 // ── Path traversal sanitiser ──────────────────────────────
+// Allows alphanumeric, spaces, dots, dashes, underscores,
+// parentheses and forward slashes — covers most collection names
+// Blocks path traversal sequences only
 function sanitisePath(key: string): string {
   return key
-    .replace(/[^a-zA-Z0-9.\-_/]/g, "")
-    .replace(/\.{2,}/g, ".")
-    .replace(/^\/+/, "")
-    .replace(/\/+/g, "/");
+    .replace(/\.{2,}/g, ".")     // collapse .. to prevent traversal
+    .replace(/^\/+/, "")          // strip leading slashes
+    .replace(/\/+/g, "/")         // collapse double slashes
+    .replace(/[<>:"\\|?*\x00-\x1f]/g, ""); // strip truly dangerous chars only
+}
+
+// Validate the sanitised path is safe — separate from sanitising
+function isPathSafe(original: string, sanitised: string): boolean {
+  // Reject if sanitising changed the path — means it had dangerous chars
+  return original === sanitised;
 }
 
 serve(async (req) => {
@@ -131,15 +140,20 @@ serve(async (req) => {
 
     // ── Validation 5 — Path traversal prevention ──────────
     const safeKey = sanitisePath(key);
-    if (!safeKey || safeKey !== key) {
+    if (!safeKey || !isPathSafe(key, safeKey)) {
       console.warn(
-        `Rejected upload — unsafe path: "${key}" sanitised to "${safeKey}" from user ${user.id}`,
+        `Rejected — unsafe path: original="${key}" sanitised="${safeKey}" user=${user.id}`,
       );
       return new Response(
         JSON.stringify({ error: "Invalid file path" }),
         { status: 400, headers: corsHeaders },
       );
     }
+
+    // Log the incoming request for debugging
+    console.log(
+      `Upload request — user=${user.id} key="${key}" type=${normalisedType} size=${fileSize ?? "unknown"}`,
+    );
 
     // ── Validation 6 — Authorised path check ──────────────
     // Expected key format: {ownerId}/{collectionName}/{filename}

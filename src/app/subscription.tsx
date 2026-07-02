@@ -529,7 +529,10 @@ export default function SubscriptionPage() {
               body: { tier, callbackUrl },
             },
           );
-          if (error) throw new Error(error.message);
+          if (error) {
+            console.error("create-subscription error:", error.message);
+            throw new Error("Payment could not be started. Please try again.");
+          }
           window.location.href = data.redirectUrl;
           return;
         }
@@ -543,8 +546,9 @@ export default function SubscriptionPage() {
           },
         );
         if (error) {
+          console.error("create-subscription error:", error.message);
           popup.close();
-          throw new Error(error.message);
+          throw new Error("Payment could not be started. Please try again.");
         }
         const { redirectUrl, merchantReference } = data;
         popup.location.href = redirectUrl;
@@ -566,16 +570,17 @@ export default function SubscriptionPage() {
               } else {
                 setPurchasing(null);
               }
-            } catch {
+            } catch (syncErr: any) {
+              console.error("sync-subscription error:", syncErr.message);
               setPurchasing(null);
             }
           }
         }, 1000);
       }
     } catch (err: any) {
-      IS_WEB
-        ? window.alert("Error: " + err.message)
-        : Alert.alert("Error", err.message);
+      console.error("handlePurchase error:", err.message);
+      const userMessage = "Something went wrong. Please try again.";
+      IS_WEB ? window.alert(userMessage) : Alert.alert("Error", userMessage);
       setPurchasing(null);
     }
   }
@@ -634,9 +639,9 @@ export default function SubscriptionPage() {
       const msg = `Subscription cancelled. You have full access until ${until}.`;
       IS_WEB ? window.alert(msg) : Alert.alert("Cancelled", msg);
     } catch (err: any) {
-      IS_WEB
-        ? window.alert("Error: " + err.message)
-        : Alert.alert("Error", err.message);
+      console.error("handleCancel error:", err.message);
+      const userMessage = "Something went wrong. Please try again.";
+      IS_WEB ? window.alert(userMessage) : Alert.alert("Error", userMessage);
     }
   }
   const activeTier = status?.isActive ? (status.tier as PaidTier) : null;

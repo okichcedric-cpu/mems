@@ -121,7 +121,7 @@ serve(async (req) => {
               currency: "KES",
               amount: tierConfig.amount,
               description: `Mems ${tierConfig.label} — Monthly renewal`,
-              callback_url: "https://www.mems-app.com/subscription-callback",
+              callback_url: "https://mems-app.com/subscription-callback",
               notification_id: ipnData.ipn_id,
               billing_address: {
                 email_address: user.email,
@@ -157,7 +157,7 @@ serve(async (req) => {
           },
           body: JSON.stringify({
             from: "Mems <noreply@mems-app.com>",
-            reply_to: "contact@mems-app.com",
+            reply_to: "support@mems-app.com",
             to: [user.email],
             subject: `Your Mems ${tierConfig.label} plan renews on ${formatDate(sub.current_period_end)}`,
             text: `
@@ -221,7 +221,7 @@ If you choose not to renew, your account will move to the free plan (3 collectio
           <td style="background:#f9f9f9;padding:20px 32px;border-top:1px solid #eee;">
             <p style="margin:0;font-size:12px;color:#bbb;line-height:18px;text-align:center;">
               You're receiving this because you have a Mems subscription.<br/>
-              <a href="https://www.mems-app.com" style="color:#999;">mems-app.com</a>
+              <a href="https://mems-app.com" style="color:#999;">mems-app.com</a>
             </p>
           </td>
         </tr>
@@ -252,7 +252,7 @@ If you choose not to renew, your account will move to the free plan (3 collectio
     );
   } catch (error: any) {
     console.error("send-renewal-reminders error:", error.message);
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ error: "Something went wrong. Please try again." }), {
       status: 500, headers: corsHeaders,
     });
   }

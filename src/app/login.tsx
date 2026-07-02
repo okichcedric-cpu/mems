@@ -170,7 +170,6 @@ function DesktopHeroPanel() {
 }
 async function signInWithGoogle() {
   if (IS_WEB) {
-    // Preserve any redirect param through the OAuth flow
     const params =
       typeof window !== "undefined"
         ? new URLSearchParams(window.location.search)
@@ -184,13 +183,19 @@ async function signInWithGoogle() {
       provider: "google",
       options: { redirectTo },
     });
-    if (error) Alert.alert("Error", error.message);
+    if (error) {
+      console.error("Google sign in error:", error.message);
+      window.alert("Sign in with Google failed. Please try again.");
+    }
   } else {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo },
     });
-    if (error) Alert.alert("Error", error.message);
+    if (error) {
+      console.error("Google sign in error:", error.message);
+      Alert.alert("Error", "Sign in with Google failed. Please try again.");
+    }
     if (data?.url) await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
   }
 }
@@ -251,10 +256,16 @@ export default function LoginScreen() {
         setShowConfirmation(true);
       }
     } catch (error: any) {
+      // Log internally, show generic message — never expose Supabase errors
+      console.error("Auth error:", error.message);
+      const userMessage =
+        mode === "login"
+          ? "Sign in failed. Please check your email and password."
+          : "Sign up failed. Please try again.";
       if (IS_WEB) {
-        window.alert(error.message);
+        window.alert(userMessage);
       } else {
-        Alert.alert("Error", error.message);
+        Alert.alert("Error", userMessage);
       }
     } finally {
       setLoading(false);
@@ -286,7 +297,12 @@ export default function LoginScreen() {
         );
       }
     } catch (error: any) {
-      Alert.alert("Error", error.message);
+      console.error("Forgot password error:", error.message);
+      if (IS_WEB) {
+        window.alert("Could not send reset email. Please try again.");
+      } else {
+        Alert.alert("Error", "Could not send reset email. Please try again.");
+      }
     } finally {
       setLoading(false);
     }

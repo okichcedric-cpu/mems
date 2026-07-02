@@ -81,7 +81,7 @@ serve(async (req) => {
     );
   } catch (error: any) {
     console.error("cancel-subscription error:", error.message);
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ error: "Something went wrong. Please try again." }), {
       status: 500, headers: corsHeaders,
     });
   }

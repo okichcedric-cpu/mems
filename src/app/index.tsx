@@ -202,7 +202,11 @@ export default function CollectionsPage() {
       // Append shared collections once loaded
       setCollections([...ownedCollections, ...sharedCollections]);
     } catch (error: any) {
-      Alert.alert("Error", error.message);
+      console.error("fetchCollections error:", error.message);
+      Alert.alert(
+        "Error",
+        "Could not load your collections. Please try again.",
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -320,7 +324,8 @@ export default function CollectionsPage() {
       setSelectedAssets([]);
       await fetchCollections(session);
     } catch (error: any) {
-      Alert.alert("Error", error.message);
+      console.error("Create collection error:", error.message);
+      Alert.alert("Error", "Something went wrong. Please try again.");
     } finally {
       setCreating(false);
     }
@@ -341,7 +346,8 @@ export default function CollectionsPage() {
               await deleteCollection(session.user.id, collection.name);
               await fetchCollections(session);
             } catch (error: any) {
-              Alert.alert("Error", error.message);
+              console.error("Delete collection error:", error.message);
+              Alert.alert("Error", "Something went wrong. Please try again.");
             }
           },
         },

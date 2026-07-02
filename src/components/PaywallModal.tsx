@@ -75,15 +75,12 @@ type PaywallReason = "collections" | "photos";
 type Props = {
   visible: boolean;
   reason: PaywallReason;
-  // The exact limit the user just hit — e.g. 3 collections or 10 photos
   currentLimit?: number;
-  // The tier they are currently on — "free" or a paid tier
   currentTier?: "free" | "small" | "medium" | "big";
   onSubscribed: (tier: Tier) => void;
   onDismiss: () => void;
 };
 
-// Whether a tier actually solves the user's current limit
 function doesSolve(
   tier: Tier,
   reason: PaywallReason,
@@ -95,7 +92,6 @@ function doesSolve(
     : config.maxPhotosPerCollection > currentLimit;
 }
 
-// The smallest tier that solves the limit — highlighted as recommended
 function recommendedTier(reason: PaywallReason, currentLimit: number): Tier {
   const all: Tier[] = ["small", "medium", "big"];
   for (const tier of all) {
@@ -116,13 +112,11 @@ export default function PaywallModal({
   const [purchasing, setPurchasing] = useState<Tier | null>(null);
   const slideAnim = useRef(new Animated.Value(300)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [mounted, setMounted] = useState(false);
 
-  // Default limits if not passed
   const limit = currentLimit ?? (reason === "collections" ? 3 : 10);
   const recommended = recommendedTier(reason, limit);
   const ALL_PAID_TIERS: Tier[] = ["small", "medium", "big"];
-
-  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     if (visible) {
@@ -141,7 +135,6 @@ export default function PaywallModal({
         }),
       ]).start();
     } else {
-      // Animate out first, THEN unmount — prevents instant disappear
       Animated.parallel([
         Animated.timing(fadeAnim, {
           toValue: 0,
@@ -157,9 +150,9 @@ export default function PaywallModal({
     }
   }, [visible]);
 
+  // Single guard — mounted handles the unmount lifecycle
   if (!mounted && !visible) return null;
 
-  // Dynamic headline based on exactly what the user hit
   const emoji = reason === "collections" ? "🗂️" : "📸";
 
   const title =
@@ -174,14 +167,12 @@ export default function PaywallModal({
 
   const recommendedConfig = TIERS[recommended];
 
-  // What the recommended upgrade unlocks
   const unlockText =
     reason === "collections"
       ? `${recommendedConfig.maxCollections} collections`
       : `${recommendedConfig.maxPhotosPerCollection} photos per collection`;
 
   async function handlePurchase(tier: Tier) {
-    // ── Guest check ───────────────────────────────────────
     const {
       data: { session },
     } = await supabase.auth.getSession();
@@ -199,9 +190,7 @@ export default function PaywallModal({
         : "mems://subscription-callback";
 
       if (IS_WEB) {
-        // ── Web — open Pesapal popup immediately on tap ───
-        // Must be opened synchronously before any await or mobile
-        // browsers will block it as an untrusted popup
+        // Open popup immediately on user gesture before any await
         const popup = window.open(
           "",
           "pesapal",
@@ -214,12 +203,14 @@ export default function PaywallModal({
             "create-subscription",
             { body: { tier, callbackUrl } },
           );
-          if (error) throw new Error(error.message);
+          if (error) {
+            console.error("create-subscription error:", error.message);
+            throw new Error("Payment could not be started. Please try again.");
+          }
           window.location.href = data.redirectUrl;
           return;
         }
 
-        // Show branded loading screen while we fetch the URL
         popup.document.write(`
           <html><body style="display:flex;align-items:center;justify-content:center;
           height:100vh;font-family:sans-serif;background:#f9f9f9;flex-direction:column;gap:16px">
@@ -235,14 +226,14 @@ export default function PaywallModal({
         );
 
         if (error) {
+          console.error("create-subscription error:", error.message);
           popup.close();
-          throw new Error(error.message);
+          throw new Error("Payment could not be started. Please try again.");
         }
 
         const { redirectUrl, merchantReference } = data;
         popup.location.href = redirectUrl;
 
-        // Poll for popup close then sync payment status
         const poll = setInterval(async () => {
           if (popup?.closed) {
             clearInterval(poll);
@@ -259,7 +250,8 @@ export default function PaywallModal({
               } else {
                 onDismiss();
               }
-            } catch {
+            } catch (syncErr: any) {
+              console.error("sync-subscription error:", syncErr.message);
               onDismiss();
             } finally {
               setPurchasing(null);
@@ -267,56 +259,57 @@ export default function PaywallModal({
           }
         }, 1000);
       } else {
-        // ── Native — open Pesapal in in-app browser directly ──
-        // No navigation away from the current screen
+        // Native — open Pesapal in in-app browser
         const { data, error } = await supabase.functions.invoke(
           "create-subscription",
           { body: { tier, callbackUrl } },
         );
 
-        if (error) throw new Error(error.message);
+        if (error) {
+          console.error("create-subscription error:", error.message);
+          throw new Error("Payment could not be started. Please try again.");
+        }
 
         const { redirectUrl, merchantReference } = data;
 
-        // Open Pesapal in the in-app browser — user stays in context
-        const result = await WebBrowser.openBrowserAsync(redirectUrl, {
+        await WebBrowser.openBrowserAsync(redirectUrl, {
           presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
           toolbarColor: "#111",
           controlsColor: "#fff",
         });
 
-        // Browser closed — check payment status regardless of result type
-        // (user may have completed or abandoned payment)
         try {
           const { data: sync } = await supabase.functions.invoke(
             "sync-subscription",
             { body: { merchantReference, tier } },
           );
-
           if (sync?.status === "active") {
-            // Payment confirmed — resume blocked action
             onSubscribed(tier);
           } else {
-            // Payment not completed — cancel and let user try again
             onDismiss();
           }
-        } catch {
+        } catch (syncErr: any) {
+          console.error("sync-subscription error:", syncErr.message);
           onDismiss();
         } finally {
           setPurchasing(null);
         }
       }
     } catch (err: any) {
+      // Log internal error, show generic message to user
+      console.error("PaywallModal handlePurchase error:", err.message);
+      const userMessage =
+        err.message === "Payment could not be started. Please try again."
+          ? err.message
+          : "Something went wrong. Please try again.";
       if (IS_WEB) {
-        window.alert("Payment error: " + err.message);
+        window.alert(userMessage);
       } else {
-        Alert.alert("Payment error", err.message);
+        Alert.alert("Payment error", userMessage);
       }
       setPurchasing(null);
     }
   }
-
-  if (!visible) return null;
 
   return (
     <Modal
@@ -339,10 +332,8 @@ export default function PaywallModal({
       <Animated.View
         style={[styles.sheet, { transform: [{ translateY: slideAnim }] }]}
       >
-        {/* Handle */}
         <View style={styles.handle} />
 
-        {/* Dismiss */}
         <TouchableOpacity
           style={styles.closeButton}
           onPress={onDismiss}
@@ -360,7 +351,7 @@ export default function PaywallModal({
           <Text style={styles.headerTitle}>{title}</Text>
           <Text style={styles.headerSub}>{sub}</Text>
 
-          {/* Dynamic limit reached banner */}
+          {/* Limit banner */}
           <View
             style={[
               styles.limitBanner,
@@ -415,7 +406,7 @@ export default function PaywallModal({
             </View>
           </View>
 
-          {/* Tier cards — all three shown, insufficient ones greyed out */}
+          {/* Tier cards */}
           <Text style={styles.sectionTitle}>Choose your upgrade</Text>
 
           {ALL_PAID_TIERS.map((tier) => {
@@ -441,7 +432,6 @@ export default function PaywallModal({
                 disabled={!!purchasing || isGreyed}
                 activeOpacity={isGreyed ? 1 : 0.85}
               >
-                {/* Badge row */}
                 {isGreyed ? (
                   <View style={styles.greyedBadge}>
                     <Text style={styles.greyedBadgeText}>
@@ -484,7 +474,6 @@ export default function PaywallModal({
                       {config.tagline}
                     </Text>
                     <View style={styles.tierStats}>
-                      {/* Collections stat */}
                       <View
                         style={[
                           styles.tierStat,
@@ -508,7 +497,6 @@ export default function PaywallModal({
                           {config.maxCollections} collections
                         </Text>
                       </View>
-                      {/* Photos stat */}
                       <View
                         style={[
                           styles.tierStat,
@@ -544,7 +532,7 @@ export default function PaywallModal({
                       <Text style={styles.greyedPrice}>
                         KES {config.price.toLocaleString()}
                       </Text>
-                      <Text style={styles.greyedOnce}>once</Text>
+                      <Text style={styles.greyedOnce}>/mo</Text>
                     </View>
                   ) : (
                     <>
@@ -580,7 +568,6 @@ export default function PaywallModal({
             );
           })}
 
-          {/* Maybe Later */}
           <TouchableOpacity style={styles.laterButton} onPress={onDismiss}>
             <Text style={styles.laterText}>Maybe Later</Text>
           </TouchableOpacity>
@@ -644,13 +631,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  content: {
-    padding: 24,
-    paddingTop: 12,
-    gap: 12,
-  },
+  content: { padding: 24, paddingTop: 12, gap: 12 },
 
-  // Header
   headerEmoji: { fontSize: 48, textAlign: "center", marginTop: 8 },
   headerTitle: {
     fontSize: 20,
@@ -668,7 +650,6 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
 
-  // Limit reached banner
   limitBanner: {
     flexDirection: "row",
     alignItems: "center",
@@ -700,6 +681,33 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
 
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111",
+    marginTop: 4,
+    marginBottom: 4,
+  },
+
+  tierCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    borderWidth: 1.5,
+    padding: 16,
+    position: "relative",
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 8,
+      },
+      android: { elevation: 2 },
+      web: { boxShadow: "0 2px 12px rgba(0,0,0,0.06)" } as any,
+    }),
+  },
   tierCardRecommended: {
     ...Platform.select({
       ios: {
@@ -712,7 +720,6 @@ const styles = StyleSheet.create({
       web: { boxShadow: "0 4px 20px rgba(59,130,246,0.15)" } as any,
     }),
   },
-  // Greyed out — not a valid upgrade for current usage
   tierCardGreyed: {
     borderColor: "#ececec",
     backgroundColor: "#fafafa",
@@ -735,52 +742,8 @@ const styles = StyleSheet.create({
   greyedPriceBlock: { alignItems: "flex-end", gap: 2 },
   greyedPrice: { fontSize: 14, fontWeight: "700", color: "#ccc" },
   greyedOnce: { fontSize: 10, color: "#ddd" },
-  tierStatHighlight: {
-    borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.08)",
-  },
+  tierStatHighlight: { borderWidth: 1, borderColor: "rgba(0,0,0,0.08)" },
 
-  // Section title
-  sectionTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#111",
-    marginTop: 4,
-    marginBottom: 4,
-  },
-
-  // Tier cards
-  tierCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    borderWidth: 1.5,
-    padding: 16,
-    position: "relative",
-    ...Platform.select({
-      ios: {
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.06,
-        shadowRadius: 8,
-      },
-      android: { elevation: 2 },
-      web: { boxShadow: "0 2px 12px rgba(0,0,0,0.06)" } as any,
-    }),
-  },
-  tierCardFeatured: {
-    ...Platform.select({
-      ios: {
-        shadowColor: "#3b82f6",
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.15,
-        shadowRadius: 12,
-      },
-      android: { elevation: 6 },
-      web: { boxShadow: "0 4px 20px rgba(59,130,246,0.15)" } as any,
-    }),
-  },
   popularBadge: {
     position: "absolute",
     top: -10,
@@ -821,13 +784,7 @@ const styles = StyleSheet.create({
   },
   tierButtonText: { fontSize: 13, fontWeight: "700", color: "#fff" },
 
-  // Footer
   laterButton: { alignItems: "center", paddingVertical: 12 },
   laterText: { fontSize: 14, color: "#bbb", fontWeight: "500" },
-  footer: {
-    fontSize: 11,
-    color: "#ccc",
-    textAlign: "center",
-    lineHeight: 16,
-  },
+  footer: { fontSize: 11, color: "#ccc", textAlign: "center", lineHeight: 16 },
 });

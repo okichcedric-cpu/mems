@@ -18,19 +18,19 @@ const TIERS = {
     label: "Small",
     maxCollections: 15,
     maxPhotosPerCollection: 35,
-    price: 320,
+    price: 99,
   },
   medium: {
     label: "Medium",
     maxCollections: 30,
     maxPhotosPerCollection: 50,
-    price: 600,
+    price: 179,
   },
   big: {
     label: "Big",
     maxCollections: 50,
     maxPhotosPerCollection: 75,
-    price: 1150,
+    price: 299,
   },
 };
 

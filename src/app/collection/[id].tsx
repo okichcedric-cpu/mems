@@ -336,7 +336,10 @@ export default function CollectionPage() {
           preloadImages(mapped);
         }
       } catch (error: any) {
-        window.alert("Upload failed: " + error.message);
+        console.error("Web upload error:", error.message);
+        window.alert(
+          "Upload failed. Please check your connection and try again.",
+        );
       } finally {
         setUploading(false);
         input.value = "";
@@ -386,11 +389,10 @@ export default function CollectionPage() {
       }));
 
       setPhotos(mapped);
-
-      // ── Preload full-res images after grid renders ──────
       preloadImages(mapped);
     } catch (error: any) {
-      Alert.alert("Error", error.message);
+      console.error("fetchPhotos error:", error.message);
+      Alert.alert("Error", "Could not load photos. Please try again.");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -530,7 +532,9 @@ export default function CollectionPage() {
         );
         await fetchPhotos(session);
       } catch (error: any) {
-        Alert.alert("Upload failed", error.message);
+        // Log full error internally, show generic message to user
+        console.error("Upload error:", error.message);
+        Alert.alert("Upload failed", "Something went wrong. Please try again.");
       } finally {
         setUploading(false);
       }
@@ -568,11 +572,11 @@ export default function CollectionPage() {
       await deleteFromS3(photo.key);
       if (session) await fetchPhotos(session);
     } catch (error: any) {
-      const msg = `${error.name}: ${error.message}`;
+      console.error("Delete error:", error.message);
       if (Platform.OS === "web") {
-        window.alert("Delete failed: " + msg);
+        window.alert("Could not delete photo. Please try again.");
       } else {
-        Alert.alert("Delete Failed", msg);
+        Alert.alert("Delete failed", "Something went wrong. Please try again.");
       }
       if (session) await fetchPhotos(session);
     }
@@ -610,10 +614,11 @@ export default function CollectionPage() {
       if (session) await deleteCollection(session.user.id, collectionName);
       router.replace("/");
     } catch (error: any) {
+      console.error("Delete collection error:", error.message);
       if (Platform.OS === "web") {
-        window.alert("Failed to delete collection: " + error.message);
+        window.alert("Could not delete collection. Please try again.");
       } else {
-        Alert.alert("Error", error.message);
+        Alert.alert("Error", "Something went wrong. Please try again.");
       }
       setLoading(false);
     }
@@ -659,10 +664,11 @@ export default function CollectionPage() {
         }
       }, 300);
     } catch (error: any) {
+      console.error("Share error:", error.message);
       if (Platform.OS === "web") {
-        window.alert("Error: " + error.message);
+        window.alert("Could not share collection. Please try again.");
       } else {
-        Alert.alert("Error", error.message);
+        Alert.alert("Error", "Could not share collection. Please try again.");
       }
     } finally {
       setSharing(false);
@@ -692,7 +698,8 @@ export default function CollectionPage() {
       await unshareCollection(session!.user.id, collectionName, email);
       await loadShares();
     } catch (error: any) {
-      Alert.alert("Error", error.message);
+      console.error("Unshare error:", error.message);
+      Alert.alert("Error", "Could not remove access. Please try again.");
     }
   }
 
