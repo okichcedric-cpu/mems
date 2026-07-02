@@ -360,6 +360,8 @@ export default function CollectionsPage() {
     router.replace("/login");
   }
 
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+
   const CollectionCollage = ({
     urls,
     name,
@@ -558,11 +560,79 @@ export default function CollectionsPage() {
           >
             <Ionicons name="add-circle-outline" size={24} color="#111" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.iconButton} onPress={signOut}>
-            <Ionicons name="log-out-outline" size={22} color="#111" />
+          <TouchableOpacity
+            style={styles.iconButton}
+            onPress={() => setShowProfileMenu(true)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="person-circle-outline" size={24} color="#111" />
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* ── Profile dropdown menu ── */}
+      {showProfileMenu && (
+        <>
+          <TouchableOpacity
+            style={styles.profileMenuBackdrop}
+            activeOpacity={1}
+            onPress={() => setShowProfileMenu(false)}
+          />
+          <View style={styles.profileMenu}>
+            <TouchableOpacity
+              style={styles.profileMenuItem}
+              onPress={() => {
+                setShowProfileMenu(false);
+                router.push("/about");
+              }}
+            >
+              <Ionicons
+                name="information-circle-outline"
+                size={18}
+                color="#333"
+              />
+              <Text style={styles.profileMenuItemText}>About Mems</Text>
+            </TouchableOpacity>
+
+            <View style={styles.profileMenuDivider} />
+
+            <TouchableOpacity
+              style={styles.profileMenuItem}
+              onPress={() => {
+                setShowProfileMenu(false);
+                router.push("/delete-account");
+              }}
+            >
+              <Ionicons
+                name="trash-outline"
+                size={18}
+                color="rgba(220,40,40,0.9)"
+              />
+              <Text
+                style={[
+                  styles.profileMenuItemText,
+                  styles.profileMenuItemDanger,
+                ]}
+              >
+                Deactivate account
+              </Text>
+            </TouchableOpacity>
+
+            <View style={styles.profileMenuDivider} />
+
+            <TouchableOpacity
+              style={styles.profileMenuItem}
+              onPress={() => {
+                setShowProfileMenu(false);
+                signOut();
+              }}
+            >
+              <Ionicons name="log-out-outline" size={18} color="#333" />
+              <Text style={styles.profileMenuItemText}>Sign out</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
 
       {/* Collections Grid */}
       {loading ? (
@@ -732,6 +802,58 @@ const styles = StyleSheet.create({
     gap: 4,
     flex: 1,
     justifyContent: "flex-end",
+  },
+
+  // ── Profile dropdown menu ─────────────────────────────────
+  profileMenuBackdrop: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 998,
+  },
+  profileMenu: {
+    position: "absolute",
+    top: Platform.OS === "web" ? 64 : 100,
+    right: 16,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    paddingVertical: 6,
+    minWidth: 200,
+    zIndex: 999,
+    borderWidth: 1,
+    borderColor: "#eee",
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.15,
+        shadowRadius: 16,
+      },
+      android: { elevation: 12 },
+      web: { boxShadow: "0 8px 28px rgba(0,0,0,0.15)" } as any,
+    }),
+  },
+  profileMenuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  profileMenuItemText: {
+    fontSize: 14,
+    color: "#333",
+    fontWeight: "500",
+  },
+  profileMenuItemDanger: {
+    color: "rgba(220,40,40,0.9)",
+  },
+  profileMenuDivider: {
+    height: 1,
+    backgroundColor: "#f0f0f0",
+    marginVertical: 2,
   },
   headerLogo: {
     height: Platform.OS === "web" ? 40 : SCREEN_WIDTH * 0.12,

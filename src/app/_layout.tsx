@@ -96,7 +96,8 @@ export default function RootLayout() {
       segments[0] === "privacy" ||
       segments[0] === "about" ||
       segments[0] === "subscription" ||
-      segments[0] === "subscription-callback";
+      segments[0] === "subscription-callback" ||
+      segments[0] === "delete-account";
 
     if (!session && !inAuthGroup && !inPublicGroup) {
       // Not logged in and not on a public page — go to login
