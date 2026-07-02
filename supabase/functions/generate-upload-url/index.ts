@@ -13,40 +13,55 @@ const corsHeaders = {
 };
 
 // ── Allowed image MIME types ──────────────────────────────
-// Note: iPhone shoots HEIC but s3.ts compresses everything to JPEG
-// before upload — so in practice only image/jpeg arrives here.
-// The full set is kept for completeness and future native paths.
+// Covers standard types plus all known iOS HEIC variants:
+// - Older iPhones (6S/7 era, iOS 13 and below) may report x-image/heic
+// - Burst/Live photos use heic-sequence / heif-sequence
+// - All HEIC variants are normalised to image/jpeg at the S3 layer
+//   since s3.ts compresses everything to JPEG before upload
 const ALLOWED_MIME_TYPES = new Set([
   "image/jpeg",
   "image/jpg",
   "image/png",
   "image/webp",
   "image/gif",
+  // Standard HEIC — iOS 14+
   "image/heic",
   "image/heif",
-  // Some iOS versions report these variants
+  // Burst/Live Photos
   "image/heic-sequence",
   "image/heif-sequence",
+  // Older iOS Safari variants (iOS 13 and below)
+  "x-image/heic",
+  "x-image/heif",
 ]);
 
 // Max 15MB per image
 const MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024;
 
-// ── Path traversal sanitiser ──────────────────────────────
-// Allows alphanumeric, spaces, dots, dashes, underscores,
-// parentheses and forward slashes — covers most collection names
-// Blocks path traversal sequences only
-function sanitisePath(key: string): string {
-  return key
-    .replace(/\.{2,}/g, ".")     // collapse .. to prevent traversal
-    .replace(/^\/+/, "")          // strip leading slashes
-    .replace(/\/+/g, "/")         // collapse double slashes
-    .replace(/[<>:"\\|?*\x00-\x1f]/g, ""); // strip truly dangerous chars only
+// ── Returns true if the MIME type is any known HEIC/HEIF variant ─
+// Handles all older iOS reporting quirks including x-image/* prefix
+function isHeicVariant(mimeType: string): boolean {
+  return (
+    mimeType.includes("heic") ||
+    mimeType.includes("heif") ||
+    mimeType.startsWith("x-image/")
+  );
 }
 
-// Validate the sanitised path is safe — separate from sanitising
+// ── Path traversal sanitiser ──────────────────────────────
+// Allows alphanumeric, spaces, dots, dashes, underscores,
+// parentheses and forward slashes — covers most collection names.
+// Only strips genuinely dangerous characters.
+function sanitisePath(key: string): string {
+  return key
+    .replace(/\.{2,}/g, ".")                   // collapse .. to prevent traversal
+    .replace(/^\/+/, "")                        // strip leading slashes
+    .replace(/\/+/g, "/")                       // collapse double slashes
+    .replace(/[<>:"\\|?*\x00-\x1f]/g, "");     // strip dangerous chars only
+}
+
+// Validate path was not changed by sanitiser — if it was, it had bad chars
 function isPathSafe(original: string, sanitised: string): boolean {
-  // Reject if sanitising changed the path — means it had dangerous chars
   return original === sanitised;
 }
 
@@ -96,25 +111,26 @@ serve(async (req) => {
     }
 
     // ── Validation 2 — MIME type whitelist ───────────────
-    // Normalise content type — strip parameters e.g. "image/jpeg; charset=utf-8"
+    // Normalise: lowercase + strip parameters e.g. "image/heic; charset=utf-8"
     const normalisedType = (contentType ?? "").toLowerCase().split(";")[0].trim();
 
     if (!normalisedType || !ALLOWED_MIME_TYPES.has(normalisedType)) {
       console.warn(
-        `Rejected upload — disallowed content type: "${contentType}" normalised to "${normalisedType}" from user ${user.id}`,
+        `Rejected — disallowed type: "${contentType}" → "${normalisedType}" user=${user.id}`,
       );
       return new Response(
         JSON.stringify({
-          error: `File type not allowed: ${contentType ?? "unknown"}. Only JPEG, PNG, WebP, GIF and HEIC images are accepted.`,
+          error: "Something went wrong. Please try again.",
         }),
         { status: 400, headers: corsHeaders },
       );
     }
 
     // ── Validation 3 — SVG explicit block ────────────────
+    // SVG can contain embedded JavaScript — never allow regardless of MIME
     if (normalisedType.includes("svg")) {
       return new Response(
-        JSON.stringify({ error: "SVG files are not allowed for security reasons." }),
+        JSON.stringify({ error: "Something went wrong. Please try again." }),
         { status: 400, headers: corsHeaders },
       );
     }
@@ -145,43 +161,44 @@ serve(async (req) => {
         `Rejected — unsafe path: original="${key}" sanitised="${safeKey}" user=${user.id}`,
       );
       return new Response(
-        JSON.stringify({ error: "Invalid file path" }),
+        JSON.stringify({ error: "Something went wrong. Please try again." }),
         { status: 400, headers: corsHeaders },
       );
     }
 
-    // Log the incoming request for debugging
+    // Log incoming request for debugging
     console.log(
       `Upload request — user=${user.id} key="${key}" type=${normalisedType} size=${fileSize ?? "unknown"}`,
     );
 
     // ── Validation 6 — Authorised path check ──────────────
-    // Expected key format: {ownerId}/{collectionName}/{filename}
-    // Thumb format:        {ownerId}/{collectionName}/thumbs/{filename}
+    // Expected format: {ownerId}/{collectionName}/{filename}
+    // Thumb format:    {ownerId}/{collectionName}/thumbs/{filename}
     const keyParts = safeKey.split("/");
     if (keyParts.length < 3) {
       return new Response(
-        JSON.stringify({ error: "Invalid file path structure" }),
+        JSON.stringify({ error: "Something went wrong. Please try again." }),
         { status: 400, headers: corsHeaders },
       );
     }
 
     const keyOwnerId = keyParts[0];
-    // keyParts[1] is always the collection name in both formats:
-    // {ownerId}/{collectionName}/{filename}
-    // {ownerId}/{collectionName}/thumbs/{filename}
+    // keyParts[1] is always the collection name regardless of format:
+    // {ownerId}/{collectionName}/{filename}        → keyParts[1] = collectionName
+    // {ownerId}/{collectionName}/thumbs/{filename} → keyParts[1] = collectionName
     const collectionName = keyParts[1];
 
     const isOwner = keyOwnerId === user.id;
 
     if (!isOwner) {
-      // Not the owner — check if they have been granted share access
+      // Not the owner — verify they have explicit share access
       const supabase = createClient(
         Deno.env.get("SUPABASE_URL")!,
         Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       );
 
-      // Check by recipient_id first (faster), then fall back to email match
+      // Two separate queries — avoids PostgREST .or() fragility
+      // Check by recipient_id first (UUID match — exact and fast)
       const { data: shareByUserId } = await supabase
         .from("shared_collections")
         .select("id")
@@ -190,7 +207,7 @@ serve(async (req) => {
         .eq("recipient_id", user.id)
         .maybeSingle();
 
-      // If not found by user ID, try by email
+      // Fall back to email match if no user ID match
       let shareRecord = shareByUserId;
       if (!shareRecord && user.email) {
         const { data: shareByEmail } = await supabase
@@ -208,9 +225,7 @@ serve(async (req) => {
           `Rejected — user ${user.id} (${user.email}) not authorised for ${keyOwnerId}/${collectionName}`,
         );
         return new Response(
-          JSON.stringify({
-            error: "You do not have permission to upload to this collection.",
-          }),
+          JSON.stringify({ error: "Something went wrong. Please try again." }),
           { status: 403, headers: corsHeaders },
         );
       }
@@ -229,32 +244,40 @@ serve(async (req) => {
       },
     });
 
-    // Always use image/jpeg for the S3 content type —
-    // s3.ts compresses everything to JPEG before upload
-    // so the stored file is always JPEG regardless of source format
-    const s3ContentType = normalisedType.includes("jpeg") ||
+    // ── S3 content type normalisation ─────────────────────
+    // s3.ts always compresses to JPEG before uploading so the stored
+    // file is always JPEG regardless of the original source format.
+    // This mapping ensures the presigned URL is signed with the same
+    // Content-Type that the PUT request will actually send.
+    //
+    // HEIC variants from all iOS versions (including older x-image/* types)
+    // are mapped to image/jpeg — if we signed with x-image/heic but the
+    // PUT sends image/jpeg, S3 returns 403 SignatureDoesNotMatch.
+    const s3ContentType =
+      normalisedType.includes("jpeg") ||
       normalisedType.includes("jpg") ||
-      normalisedType.includes("heic") ||
-      normalisedType.includes("heif")
-      ? "image/jpeg"
-      : normalisedType;
+      isHeicVariant(normalisedType)
+        ? "image/jpeg"
+        : normalisedType;
 
     const command = new PutObjectCommand({
       Bucket: Deno.env.get("S3_BUCKET")!,
       Key: safeKey,
       ContentType: s3ContentType,
+      // Store original dimensions in S3 metadata if provided
       ...(width && height
         ? { Metadata: { width: String(width), height: String(height) } }
         : {}),
     });
 
-    // 5 minute expiry — short window reduces risk of leaked URLs
+    // Short expiry — 5 minutes is enough for any upload
+    // Long-lived presigned URLs are a security risk if leaked
     const uploadUrl = await getSignedUrl(s3Client, command, {
       expiresIn: 300,
     });
 
     console.log(
-      `Upload URL generated — user: ${user.id} owner: ${keyOwnerId} key: ${safeKey} type: ${s3ContentType} size: ${fileSize ?? "unknown"}`,
+      `Upload URL generated — user=${user.id} owner=${keyOwnerId} key=${safeKey} s3Type=${s3ContentType} size=${fileSize ?? "unknown"}`,
     );
 
     return new Response(
@@ -265,9 +288,9 @@ serve(async (req) => {
       },
     );
   } catch (error: any) {
-    console.error("generate-upload-url error:", error.message);
+    console.error("generate-upload-url error:", error.message, error.stack);
     return new Response(
-      JSON.stringify({ error: "Internal server error" }),
+      JSON.stringify({ error: "Something went wrong. Please try again." }),
       { status: 500, headers: corsHeaders },
     );
   }
