@@ -1,36 +1,46 @@
-import { AntDesign } from "@expo/vector-icons";
-import { makeRedirectUri } from "expo-auth-session";
-import { useRouter } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
+import { makeRedirectUri } from "expo-auth-session";
 import { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  Dimensions,
-  Image,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
+  View,
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  StyleSheet,
+  Alert,
+  Platform,
+  ActivityIndicator,
+  ScrollView,
+  KeyboardAvoidingView,
+  Dimensions,
+  Image,
+  Animated,
 } from "react-native";
+import { AntDesign } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { supabase } from "../utils/supabase";
 
 WebBrowser.maybeCompleteAuthSession();
 
-const redirectTo = makeRedirectUri();
+// ── Native redirect URI ──────────────────────────────────────
+// Hardcoded to the exact custom scheme rather than relying on
+// makeRedirectUri()'s auto-detection. In some standalone/production
+// builds, makeRedirectUri() can resolve to Expo's auth proxy
+// (auth.expo.io) instead of the app's own scheme — that proxy only
+// works inside Expo Go, never in a Play Store build. When that happens
+// Supabase finishes login and redirects to a plain https page with no
+// way to reopen the native app, which is exactly "stuck on browser".
+// A literal "mems://" leaves zero ambiguity.
+const NATIVE_REDIRECT = "mems://login";
+const redirectTo = Platform.OS === "web"
+  ? makeRedirectUri()
+  : NATIVE_REDIRECT;
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const IS_WEB = Platform.OS === "web";
 const IS_DESKTOP = IS_WEB && SCREEN_WIDTH >= 768;
-const FORM_WIDTH = IS_DESKTOP
-  ? 360
-  : IS_WEB
-    ? Math.min(420, SCREEN_WIDTH * 0.9)
-    : SCREEN_WIDTH - 48;
+const FORM_WIDTH = IS_DESKTOP ? 360 : IS_WEB
+  ? Math.min(420, SCREEN_WIDTH * 0.9)
+  : SCREEN_WIDTH - 48;
 
 type Mode = "login" | "signup";
 
@@ -56,35 +66,26 @@ const POLAROID_PHOTOS = [
   {
     // Mid-right — family in bed
     source: require("@/assets/images/hero/family-bed.jpg"),
-    style: {
-      top: "40%",
-      right: "4%",
-      rotate: "-4deg",
-      width: 126,
-      height: 138,
-    },
+    style: { top: "40%", right: "4%", rotate: "-4deg", width: 126, height: 138 },
   },
 ];
 
 // ── Desktop left hero panel ──────────────────────────────────
 function DesktopHeroPanel() {
   const polaroidAnims = useRef(
-    POLAROID_PHOTOS.map(() => new Animated.Value(0)),
+    POLAROID_PHOTOS.map(() => new Animated.Value(0))
   ).current;
 
   useEffect(() => {
     POLAROID_PHOTOS.forEach((_, i) => {
-      setTimeout(
-        () => {
-          Animated.spring(polaroidAnims[i], {
-            toValue: 1,
-            tension: 60,
-            friction: 10,
-            useNativeDriver: true,
-          }).start();
-        },
-        200 + i * 160,
-      );
+      setTimeout(() => {
+        Animated.spring(polaroidAnims[i], {
+          toValue: 1,
+          tension: 60,
+          friction: 10,
+          useNativeDriver: true,
+        }).start();
+      }, 200 + i * 160);
     });
   }, []);
 
@@ -94,7 +95,7 @@ function DesktopHeroPanel() {
     size = 130,
     height = 110,
   }: {
-    photo: (typeof POLAROID_PHOTOS)[0];
+    photo: typeof POLAROID_PHOTOS[0];
     anim: Animated.Value;
     size?: number;
     height?: number;
@@ -105,12 +106,7 @@ function DesktopHeroPanel() {
           {
             transform: [
               { rotate: photo.style.rotate },
-              {
-                scale: anim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0.7, 1],
-                }),
-              },
+              { scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) },
             ],
             opacity: anim,
           },
@@ -130,6 +126,7 @@ function DesktopHeroPanel() {
 
   return (
     <View style={heroStyles.panel}>
+
       {/* ── Logo row — no banner, just clean on white ── */}
       <View style={heroStyles.logoRow}>
         <Image
@@ -173,8 +170,8 @@ function DesktopHeroPanel() {
           </Text>
           <View style={heroStyles.accentLine} />
           <Text style={heroStyles.sub}>
-            Keep your memories safe, beautifully organised and shared with the
-            people who matter most.
+            Keep your memories safe, beautifully organised and shared
+            with the people who matter most.
           </Text>
         </View>
 
@@ -189,23 +186,21 @@ function DesktopHeroPanel() {
 
       {/* ── Pills row ── */}
       <View style={heroStyles.pillsRow}>
-        {["📸 Create albums", "🤝 Share moments", "☁️ Safe forever"].map(
-          (pill) => (
-            <View key={pill} style={heroStyles.pill}>
-              <Text style={heroStyles.pillText}>{pill}</Text>
-            </View>
-          ),
-        )}
+        {["📸 Create albums", "🤝 Share moments", "☁️ Safe forever"].map((pill) => (
+          <View key={pill} style={heroStyles.pill}>
+            <Text style={heroStyles.pillText}>{pill}</Text>
+          </View>
+        ))}
       </View>
+
     </View>
   );
 }
 async function signInWithGoogle() {
   if (IS_WEB) {
-    const params =
-      typeof window !== "undefined"
-        ? new URLSearchParams(window.location.search)
-        : new URLSearchParams();
+    const params = typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search)
+      : new URLSearchParams();
     const redirect = params.get("redirect");
     const redirectTo = redirect
       ? `${window.location.origin}/${redirect}`
@@ -222,13 +217,53 @@ async function signInWithGoogle() {
   } else {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo },
+      options: {
+        redirectTo: NATIVE_REDIRECT,
+        skipBrowserRedirect: true, // we handle opening the browser ourselves below
+      },
     });
     if (error) {
       console.error("Google sign in error:", error.message);
       Alert.alert("Error", "Sign in with Google failed. Please try again.");
+      return;
     }
-    if (data?.url) await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+    if (data?.url) {
+      // openAuthSessionAsync listens for a redirect matching NATIVE_REDIRECT
+      // exactly — this must be the SAME string that was passed as redirectTo
+      // above, and must be registered in Supabase's Redirect URLs allow-list
+      const result = await WebBrowser.openAuthSessionAsync(data.url, NATIVE_REDIRECT, {
+        showInRecents: false,
+        toolbarColor: "#111111",
+        controlsColor: "#ffffff",
+        enableDefaultShareMenuItem: false,
+        enableBarCollapsing: true,
+      });
+
+      if (result.type === "success" && result.url) {
+        // Parse the returned URL for the session tokens and set the
+        // session explicitly — belt-and-braces in case onAuthStateChange
+        // doesn't fire immediately from the deep link alone
+        const url = new URL(result.url);
+        const hashParams = new URLSearchParams(url.hash.replace("#", ""));
+        const access_token = hashParams.get("access_token");
+        const refresh_token = hashParams.get("refresh_token");
+
+        if (access_token && refresh_token) {
+          const { error: sessionError } = await supabase.auth.setSession({
+            access_token,
+            refresh_token,
+          });
+          if (sessionError) {
+            console.error("setSession error:", sessionError.message);
+          }
+        }
+      } else if (result.type === "cancel" || result.type === "dismiss") {
+        // User closed the browser manually — not an error, just no-op
+        console.log("Google sign in cancelled by user");
+      }
+
+      try { WebBrowser.dismissBrowser(); } catch {}
+    }
   }
 }
 
@@ -290,10 +325,9 @@ export default function LoginScreen() {
     } catch (error: any) {
       // Log internally, show generic message — never expose Supabase errors
       console.error("Auth error:", error.message);
-      const userMessage =
-        mode === "login"
-          ? "Sign in failed. Please check your email and password."
-          : "Sign up failed. Please try again.";
+      const userMessage = mode === "login"
+        ? "Sign in failed. Please check your email and password."
+        : "Sign up failed. Please try again.";
       if (IS_WEB) {
         window.alert(userMessage);
       } else {
@@ -317,16 +351,13 @@ export default function LoginScreen() {
           redirectTo: IS_WEB
             ? `${window.location.origin}/reset-password`
             : redirectTo,
-        },
+        }
       );
       if (error) throw error;
       if (IS_WEB) {
         window.alert("Password reset email sent. Check your inbox.");
       } else {
-        Alert.alert(
-          "Email sent",
-          "Check your inbox for a password reset link.",
-        );
+        Alert.alert("Email sent", "Check your inbox for a password reset link.");
       }
     } catch (error: any) {
       console.error("Forgot password error:", error.message);
@@ -346,12 +377,10 @@ export default function LoginScreen() {
       <View style={styles.container}>
         {IS_DESKTOP && <DesktopHeroPanel />}
         {IS_DESKTOP && <View style={styles.separator} />}
-        <View
-          style={[
-            styles.confirmationCard,
-            IS_DESKTOP && styles.confirmationCardDesktop,
-          ]}
-        >
+        <View style={[
+          styles.confirmationCard,
+          IS_DESKTOP && styles.confirmationCardDesktop,
+        ]}>
           <Text style={styles.confirmationIcon}>📧</Text>
           <Text style={styles.confirmationTitle}>Check your email</Text>
           <Text style={styles.confirmationText}>
@@ -451,20 +480,14 @@ export default function LoginScreen() {
         <View style={[styles.emailToggleRow, { width: FORM_WIDTH }]}>
           <TouchableOpacity
             style={styles.emailToggleButton}
-            onPress={() => {
-              setMode("login");
-              setShowEmailForm(true);
-            }}
+            onPress={() => { setMode("login"); setShowEmailForm(true); }}
           >
             <Text style={styles.emailToggleText}>Sign in with email</Text>
           </TouchableOpacity>
           <View style={styles.emailToggleDot} />
           <TouchableOpacity
             style={styles.emailToggleButton}
-            onPress={() => {
-              setMode("signup");
-              setShowEmailForm(true);
-            }}
+            onPress={() => { setMode("signup"); setShowEmailForm(true); }}
           >
             <Text style={styles.emailToggleText}>Create account</Text>
           </TouchableOpacity>
@@ -474,37 +497,24 @@ export default function LoginScreen() {
           {/* Mode toggle */}
           <View style={[styles.modeToggle, { width: FORM_WIDTH }]}>
             <TouchableOpacity
-              style={[
-                styles.modeButton,
-                mode === "login" && styles.modeButtonActive,
-              ]}
-              onPress={() => {
-                setMode("login");
-                setConfirmPassword("");
-              }}
+              style={[styles.modeButton, mode === "login" && styles.modeButtonActive]}
+              onPress={() => { setMode("login"); setConfirmPassword(""); }}
             >
-              <Text
-                style={[
-                  styles.modeButtonText,
-                  mode === "login" && styles.modeButtonTextActive,
-                ]}
-              >
+              <Text style={[
+                styles.modeButtonText,
+                mode === "login" && styles.modeButtonTextActive,
+              ]}>
                 Sign In
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[
-                styles.modeButton,
-                mode === "signup" && styles.modeButtonActive,
-              ]}
+              style={[styles.modeButton, mode === "signup" && styles.modeButtonActive]}
               onPress={() => setMode("signup")}
             >
-              <Text
-                style={[
-                  styles.modeButtonText,
-                  mode === "signup" && styles.modeButtonTextActive,
-                ]}
-              >
+              <Text style={[
+                styles.modeButtonText,
+                mode === "signup" && styles.modeButtonTextActive,
+              ]}>
                 Sign Up
               </Text>
             </TouchableOpacity>
@@ -556,13 +566,12 @@ export default function LoginScreen() {
               onPress={handleEmailAuth}
               disabled={loading}
             >
-              {loading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.submitButtonText}>
-                  {mode === "login" ? "Sign In" : "Create Account"}
-                </Text>
-              )}
+              {loading
+                ? <ActivityIndicator color="#fff" />
+                : <Text style={styles.submitButtonText}>
+                    {mode === "login" ? "Sign In" : "Create Account"}
+                  </Text>
+              }
             </TouchableOpacity>
 
             {/* Mobile collapse */}
@@ -571,9 +580,7 @@ export default function LoginScreen() {
                 style={styles.collapseButton}
                 onPress={() => setShowEmailForm(false)}
               >
-                <Text style={styles.collapseText}>
-                  ← Back to sign in options
-                </Text>
+                <Text style={styles.collapseText}>← Back to sign in options</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -600,7 +607,9 @@ export default function LoginScreen() {
       <View style={styles.desktopContainer}>
         <DesktopHeroPanel />
         <View style={styles.separator} />
-        <View style={styles.desktopRight}>{authForm}</View>
+        <View style={styles.desktopRight}>
+          {authForm}
+        </View>
       </View>
     );
   }
@@ -643,8 +652,8 @@ const heroStyles = StyleSheet.create({
     borderRadius: 0,
   },
   logoName: {
-    fontSize: 28, // matches headline weight and size feel
-    fontWeight: "800", // same as headline
+    fontSize: 28,       // matches headline weight and size feel
+    fontWeight: "800",  // same as headline
     color: "#111",
     letterSpacing: -0.3, // same as headline
   },
@@ -1004,12 +1013,7 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   footer: { fontSize: 12, color: "#999", lineHeight: 18 },
-  footerLink: {
-    fontSize: 12,
-    color: "#111",
-    fontWeight: "500",
-    lineHeight: 18,
-  },
+  footerLink: { fontSize: 12, color: "#111", fontWeight: "500", lineHeight: 18 },
 
   // ── Confirmation ──────────────────────────────────────────
   confirmationCard: {
