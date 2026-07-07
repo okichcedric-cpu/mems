@@ -1,5 +1,61 @@
+import { Platform } from "react-native";
+import * as FileSystem from "expo-file-system";
+import * as ImageManipulator from "expo-image-manipulator";
 import { compressImage, generateThumbnail } from "./imageProcessing";
 import { supabase } from "./supabase";
+
+// ── Native upload helper ───────────────────────────────────────────────────
+// CRITICAL: Do NOT use fetch(localUri).blob() on native. React Native's
+// fetch implementation cannot reliably read file:// URIs in production/
+// standalone builds on Android — it works in Expo Go / dev builds because
+// of extra polyfills there, but fails silently or with "Network request
+// failed" in a real compiled APK. FileSystem.uploadAsync bypasses fetch
+// entirely and streams the local file directly via native code.
+async function uploadLocalFileNative(
+  presignedUrl: string,
+  localUri: string,
+): Promise<void> {
+  const result = await FileSystem.uploadAsync(presignedUrl, localUri, {
+    httpMethod: "PUT",
+    uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+    headers: { "Content-Type": "image/jpeg" },
+  });
+
+  if (result.status < 200 || result.status >= 300) {
+    console.error("Native upload failed with status:", result.status, result.body);
+    throw new Error(`Upload failed: ${result.status}`);
+  }
+}
+
+// ── Native compression helper ───────────────────────────────────────────────
+// Uses expo-image-manipulator directly — this is a native module operation
+// (no fetch/network involved) so it's safe and reliable on both platforms.
+async function compressImageNative(
+  uri: string,
+  maxDimension: number = 2000,
+): Promise<{ uri: string; width: number; height: number }> {
+  const actions = maxDimension
+    ? [{ resize: { width: maxDimension } }]
+    : [];
+
+  const result = await ImageManipulator.manipulateAsync(uri, actions, {
+    compress: 0.82,
+    format: ImageManipulator.SaveFormat.JPEG,
+  });
+
+  return { uri: result.uri, width: result.width, height: result.height };
+}
+
+async function generateThumbnailNative(
+  uri: string,
+): Promise<{ uri: string; width: number; height: number }> {
+  const result = await ImageManipulator.manipulateAsync(
+    uri,
+    [{ resize: { width: 400 } }],
+    { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG },
+  );
+  return { uri: result.uri, width: result.width, height: result.height };
+}
 
 // ── Upload ────────────────────────────────────────────────────────────────────
 
@@ -15,75 +71,123 @@ export async function uploadToS3(
   const thumbKey = `${userId}/${collectionName}/thumbs/${fileName}`;
 
   try {
-    // Compress image
-    const compressed = await compressImage(uri, originalWidth, originalHeight);
+    if (Platform.OS === "web") {
+      // ── WEB — unchanged, already working ────────────────────────
+      // Browsers handle Blob/fetch on local files (data URIs, blob URLs)
+      // natively, so this path is not affected by the native bug at all.
+      const compressed = await compressImage(uri, originalWidth, originalHeight);
 
-    // Get presigned upload URL from edge function
-    const { data: uploadData, error: uploadError } = await supabase.functions.invoke(
-      "generate-upload-url",
-      {
-        body: {
-          key,
-          contentType: "image/jpeg",
-          fileSize: compressed.blob.size,
-          width: compressed.width,
-          height: compressed.height,
-        },
-      }
-    );
-
-    if (uploadError || !uploadData?.uploadUrl) {
-      console.error("generate-upload-url error:", uploadError?.message);
-      throw new Error("Upload failed. Please try again.");
-    }
-
-    // Upload full image directly to S3 using presigned URL
-    const arrayBuffer = await compressed.blob.arrayBuffer();
-    const uploadResponse = await fetch(uploadData.uploadUrl, {
-      method: "PUT",
-      body: arrayBuffer,
-      headers: { "Content-Type": "image/jpeg" },
-    });
-
-    if (!uploadResponse.ok) {
-      console.error("S3 PUT failed:", uploadResponse.status, uploadResponse.statusText);
-      throw new Error("Upload failed. Please check your connection and try again.");
-    }
-
-    // Generate and upload thumbnail — failure here is non-critical
-    try {
-      const thumbBlob = await generateThumbnail(compressed.uri);
-      const { data: thumbUploadData, error: thumbUploadError } =
-        await supabase.functions.invoke("generate-upload-url", {
+      const { data: uploadData, error: uploadError } = await supabase.functions.invoke(
+        "generate-upload-url",
+        {
           body: {
-            key: thumbKey,
+            key,
             contentType: "image/jpeg",
-            width: 400,
-            height: 400,
+            fileSize: compressed.blob.size,
+            width: compressed.width,
+            height: compressed.height,
           },
-        });
-
-      if (thumbUploadError || !thumbUploadData?.uploadUrl) {
-        console.warn("Thumbnail URL generation failed:", thumbUploadError?.message);
-      } else {
-        const thumbBuffer = await thumbBlob.arrayBuffer();
-        const thumbResponse = await fetch(thumbUploadData.uploadUrl, {
-          method: "PUT",
-          body: thumbBuffer,
-          headers: { "Content-Type": "image/jpeg" },
-        });
-        if (!thumbResponse.ok) {
-          console.warn("Thumbnail upload failed:", thumbResponse.status);
         }
+      );
+
+      if (uploadError || !uploadData?.uploadUrl) {
+        console.error("generate-upload-url error:", uploadError?.message);
+        throw new Error("Upload failed. Please try again.");
       }
-    } catch (thumbErr: any) {
-      // Thumbnail failure never blocks the main upload
-      console.warn("Thumbnail error:", thumbErr.message);
+
+      const arrayBuffer = await compressed.blob.arrayBuffer();
+      const uploadResponse = await fetch(uploadData.uploadUrl, {
+        method: "PUT",
+        body: arrayBuffer,
+        headers: { "Content-Type": "image/jpeg" },
+      });
+
+      if (!uploadResponse.ok) {
+        console.error("S3 PUT failed:", uploadResponse.status, uploadResponse.statusText);
+        throw new Error("Upload failed. Please check your connection and try again.");
+      }
+
+      // Thumbnail — failure here is non-critical
+      try {
+        const thumbBlob = await generateThumbnail(compressed.uri);
+        const { data: thumbUploadData, error: thumbUploadError } =
+          await supabase.functions.invoke("generate-upload-url", {
+            body: { key: thumbKey, contentType: "image/jpeg", width: 400, height: 400 },
+          });
+
+        if (thumbUploadError || !thumbUploadData?.uploadUrl) {
+          console.warn("Thumbnail URL generation failed:", thumbUploadError?.message);
+        } else {
+          const thumbBuffer = await thumbBlob.arrayBuffer();
+          const thumbResponse = await fetch(thumbUploadData.uploadUrl, {
+            method: "PUT",
+            body: thumbBuffer,
+            headers: { "Content-Type": "image/jpeg" },
+          });
+          if (!thumbResponse.ok) {
+            console.warn("Thumbnail upload failed:", thumbResponse.status);
+          }
+        }
+      } catch (thumbErr: any) {
+        console.warn("Thumbnail error:", thumbErr.message);
+      }
+
+    } else {
+      // ── NATIVE (iOS / Android) ──────────────────────────────────
+      // Compress via expo-image-manipulator (native module, no fetch),
+      // then upload the resulting local file directly via
+      // FileSystem.uploadAsync — never touches fetch/Blob for the
+      // actual file data, sidestepping the file:// fetch bug entirely.
+      const compressed = await compressImageNative(uri);
+
+      const info = await FileSystem.getInfoAsync(compressed.uri);
+      const fileSize = info.exists ? (info as any).size : undefined;
+
+      const { data: uploadData, error: uploadError } = await supabase.functions.invoke(
+        "generate-upload-url",
+        {
+          body: {
+            key,
+            contentType: "image/jpeg",
+            fileSize,
+            width: compressed.width,
+            height: compressed.height,
+          },
+        }
+      );
+
+      if (uploadError || !uploadData?.uploadUrl) {
+        console.error("generate-upload-url error:", uploadError?.message);
+        throw new Error("Upload failed. Please try again.");
+      }
+
+      await uploadLocalFileNative(uploadData.uploadUrl, compressed.uri);
+
+      // Thumbnail — failure here is non-critical, never blocks main upload
+      try {
+        const thumb = await generateThumbnailNative(compressed.uri);
+        const { data: thumbUploadData, error: thumbUploadError } =
+          await supabase.functions.invoke("generate-upload-url", {
+            body: {
+              key: thumbKey,
+              contentType: "image/jpeg",
+              width: thumb.width,
+              height: thumb.height,
+            },
+          });
+
+        if (thumbUploadError || !thumbUploadData?.uploadUrl) {
+          console.warn("Thumbnail URL generation failed:", thumbUploadError?.message);
+        } else {
+          await uploadLocalFileNative(thumbUploadData.uploadUrl, thumb.uri);
+        }
+      } catch (thumbErr: any) {
+        console.warn("Thumbnail error:", thumbErr.message);
+      }
     }
 
     return key;
   } catch (error: any) {
-    // Pass through known sanitised messages — swallow everything else
     const knownMessages = [
       "Upload failed. Please try again.",
       "Upload failed. Please check your connection and try again.",
@@ -110,8 +214,6 @@ export async function getSignedPhotoUrl(key: string): Promise<string> {
 }
 
 export async function getSignedThumbnailUrl(key: string): Promise<string> {
-  const { Platform } = require("react-native");
-
   if (Platform.OS === "web") {
     return getSignedPhotoUrl(key);
   }
@@ -127,7 +229,6 @@ export async function getSignedThumbnailUrl(key: string): Promise<string> {
     if (error) throw new Error(error.message);
     return data.url;
   } catch {
-    // Fall back to full image silently
     return getSignedPhotoUrl(key);
   }
 }

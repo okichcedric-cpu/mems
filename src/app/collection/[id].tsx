@@ -23,6 +23,7 @@ import {
 } from "react-native";
 import PaywallModal from "../../components/PaywallModal";
 import { deleteCollection, deleteFromS3, uploadToS3 } from "../../utils/s3";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   getCollectionShares,
   shareCollection,
@@ -71,48 +72,25 @@ async function verifyImageMagicBytes(file: File): Promise<boolean> {
     const bytes = new Uint8Array(buffer);
 
     // JPEG — FF D8 FF
-    if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)
-      return true;
+    if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) return true;
 
     // PNG — 89 50 4E 47
-    if (
-      bytes[0] === 0x89 &&
-      bytes[1] === 0x50 &&
-      bytes[2] === 0x4e &&
-      bytes[3] === 0x47
-    )
-      return true;
+    if (bytes[0] === 0x89 && bytes[1] === 0x50 &&
+        bytes[2] === 0x4E && bytes[3] === 0x47) return true;
 
     // GIF — 47 49 46 38
-    if (
-      bytes[0] === 0x47 &&
-      bytes[1] === 0x49 &&
-      bytes[2] === 0x46 &&
-      bytes[3] === 0x38
-    )
-      return true;
+    if (bytes[0] === 0x47 && bytes[1] === 0x49 &&
+        bytes[2] === 0x46 && bytes[3] === 0x38) return true;
 
     // WebP — 52 49 46 46 ... 57 45 42 50
-    if (
-      bytes[0] === 0x52 &&
-      bytes[1] === 0x49 &&
-      bytes[2] === 0x46 &&
-      bytes[3] === 0x46 &&
-      bytes[8] === 0x57 &&
-      bytes[9] === 0x45 &&
-      bytes[10] === 0x42 &&
-      bytes[11] === 0x50
-    )
-      return true;
+    if (bytes[0] === 0x52 && bytes[1] === 0x49 &&
+        bytes[2] === 0x46 && bytes[3] === 0x46 &&
+        bytes[8] === 0x57 && bytes[9] === 0x45 &&
+        bytes[10] === 0x42 && bytes[11] === 0x50) return true;
 
     // HEIC/HEIF — ftyp marker at offset 4
-    if (
-      bytes[4] === 0x66 &&
-      bytes[5] === 0x74 &&
-      bytes[6] === 0x79 &&
-      bytes[7] === 0x70
-    )
-      return true;
+    if (bytes[4] === 0x66 && bytes[5] === 0x74 &&
+        bytes[6] === 0x79 && bytes[7] === 0x70) return true;
 
     return false;
   } catch {
@@ -128,6 +106,7 @@ export default function CollectionPage() {
   }>();
   const collectionName = decodeURIComponent(id);
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const [session, setSession] = useState<Session | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
@@ -142,13 +121,9 @@ export default function CollectionPage() {
   const [subscriptionStatus, setSubscriptionStatus] =
     useState<SubscriptionStatus | null>(null);
   const [showPaywall, setShowPaywall] = useState(false);
-  const [paywallReason, setPaywallReason] = useState<"collections" | "photos">(
-    "photos",
-  );
+  const [paywallReason, setPaywallReason] = useState<"collections" | "photos">("photos");
   const pendingUploadRef = useRef<(() => void) | null>(null);
-  const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(
-    null,
-  );
+  const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(null);
 
   // Toast system
   const [toast, setToast] = useState<{
@@ -192,14 +167,8 @@ export default function CollectionPage() {
 
   function getAvatarColor(email: string): string {
     const colors = [
-      "#E8704A",
-      "#4A90E8",
-      "#7B4AE8",
-      "#4AE8A0",
-      "#E84A7B",
-      "#E8C84A",
-      "#4AE8D8",
-      "#A04AE8",
+      "#E8704A", "#4A90E8", "#7B4AE8", "#4AE8A0",
+      "#E84A7B", "#E8C84A", "#4AE8D8", "#A04AE8",
     ];
     let hash = 0;
     for (let i = 0; i < email.length; i++) {
@@ -240,14 +209,12 @@ export default function CollectionPage() {
       if (!allFiles || allFiles.length === 0) return;
 
       // ── Step 1: filter to image MIME types ──────────────
-      const mimeFiltered = Array.from(allFiles).filter(
-        (f) => f.type.startsWith("image/") && !f.type.includes("svg"),
+      const mimeFiltered = Array.from(allFiles).filter((f) =>
+        f.type.startsWith("image/") && !f.type.includes("svg")
       );
 
       if (mimeFiltered.length === 0) {
-        window.alert(
-          "Please select image files only (JPG, PNG, WebP, HEIC, GIF).",
-        );
+        window.alert("Please select image files only (JPG, PNG, WebP, HEIC, GIF).");
         input.value = "";
         return;
       }
@@ -268,7 +235,7 @@ export default function CollectionPage() {
 
       if (rejectedNames.length > 0) {
         window.alert(
-          `The following file${rejectedNames.length > 1 ? "s" : ""} could not be verified as valid images and were skipped:\n\n${rejectedNames.join("\n")}`,
+          `The following file${rejectedNames.length > 1 ? "s" : ""} could not be verified as valid images and were skipped:\n\n${rejectedNames.join("\n")}`
         );
       }
 
@@ -280,15 +247,15 @@ export default function CollectionPage() {
       // ── Step 3: size check ───────────────────────────────
       const MAX_MB = 15;
       const oversized = verifiedFiles.filter(
-        (f) => f.size > MAX_MB * 1024 * 1024,
+        (f) => f.size > MAX_MB * 1024 * 1024
       );
       if (oversized.length > 0) {
         window.alert(
-          `${oversized.length} file${oversized.length > 1 ? "s" : ""} exceed the ${MAX_MB}MB limit and were skipped: ${oversized.map((f) => f.name).join(", ")}`,
+          `${oversized.length} file${oversized.length > 1 ? "s" : ""} exceed the ${MAX_MB}MB limit and were skipped: ${oversized.map((f) => f.name).join(", ")}`
         );
       }
       const safeFiles = verifiedFiles.filter(
-        (f) => f.size <= MAX_MB * 1024 * 1024,
+        (f) => f.size <= MAX_MB * 1024 * 1024
       );
 
       if (safeFiles.length === 0) {
@@ -337,9 +304,7 @@ export default function CollectionPage() {
         }
       } catch (error: any) {
         console.error("Web upload error:", error.message);
-        window.alert(
-          "Upload failed. Please check your connection and try again.",
-        );
+        window.alert("Upload failed. Please check your connection and try again.");
       } finally {
         setUploading(false);
         input.value = "";
@@ -390,6 +355,7 @@ export default function CollectionPage() {
 
       setPhotos(mapped);
       preloadImages(mapped);
+
     } catch (error: any) {
       console.error("fetchPhotos error:", error.message);
       Alert.alert("Error", "Could not load photos. Please try again.");
@@ -429,9 +395,7 @@ export default function CollectionPage() {
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dx) > 10,
-      onPanResponderMove: (_, gs) => {
-        swipeX.setValue(gs.dx);
-      },
+      onPanResponderMove: (_, gs) => { swipeX.setValue(gs.dx); },
       onPanResponderRelease: (_, gs) => {
         if (gs.dx < -80) goToNext();
         else if (gs.dx > 80) goToPrev();
@@ -498,10 +462,7 @@ export default function CollectionPage() {
     // ── Native upload ─────────────────────────────────────
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
-      Alert.alert(
-        "Permission needed",
-        "Please allow access to your photo library.",
-      );
+      Alert.alert("Permission needed", "Please allow access to your photo library.");
       return;
     }
 
@@ -550,16 +511,8 @@ export default function CollectionPage() {
               "Delete Photo",
               "Are you sure you want to delete this photo?",
               [
-                {
-                  text: "Cancel",
-                  style: "cancel",
-                  onPress: () => resolve(false),
-                },
-                {
-                  text: "Delete",
-                  style: "destructive",
-                  onPress: () => resolve(true),
-                },
+                { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+                { text: "Delete", style: "destructive", onPress: () => resolve(true) },
               ],
             );
           });
@@ -593,16 +546,8 @@ export default function CollectionPage() {
               "Delete Collection",
               `Are you sure you want to delete "${collectionName}" and all its photos? This cannot be undone.`,
               [
-                {
-                  text: "Cancel",
-                  style: "cancel",
-                  onPress: () => resolve(false),
-                },
-                {
-                  text: "Delete All",
-                  style: "destructive",
-                  onPress: () => resolve(true),
-                },
+                { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+                { text: "Delete All", style: "destructive", onPress: () => resolve(true) },
               ],
             );
           });
@@ -681,16 +626,8 @@ export default function CollectionPage() {
         ? window.confirm(`Remove access for ${email}?`)
         : await new Promise<boolean>((resolve) => {
             Alert.alert("Remove Access", `Remove access for ${email}?`, [
-              {
-                text: "Cancel",
-                style: "cancel",
-                onPress: () => resolve(false),
-              },
-              {
-                text: "Remove",
-                style: "destructive",
-                onPress: () => resolve(true),
-              },
+              { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+              { text: "Remove", style: "destructive", onPress: () => resolve(true) },
             ]);
           });
     if (!confirmed) return;
@@ -762,7 +699,7 @@ export default function CollectionPage() {
   return (
     <View style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: Platform.OS === "web" ? 16 : insets.top + 6 }]}>
         <View style={styles.headerLeft}>
           <TouchableOpacity
             style={styles.iconButton}
@@ -795,11 +732,10 @@ export default function CollectionPage() {
             disabled={uploading}
             activeOpacity={0.7}
           >
-            {uploading ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <Ionicons name="add" size={22} color="#fff" />
-            )}
+            {uploading
+              ? <ActivityIndicator color="#fff" size="small" />
+              : <Ionicons name="add" size={22} color="#fff" />
+            }
           </TouchableOpacity>
 
           {isOwner && (
@@ -812,20 +748,16 @@ export default function CollectionPage() {
             >
               {sharedWith.length > 0 ? (
                 <View style={styles.shareButtonWithAvatars}>
-                  <View
-                    style={[
-                      styles.shareButtonAvatar,
-                      { backgroundColor: getAvatarColor(sharedWith[0]) },
-                    ]}
-                  >
+                  <View style={[
+                    styles.shareButtonAvatar,
+                    { backgroundColor: getAvatarColor(sharedWith[0]) },
+                  ]}>
                     <Text style={styles.shareButtonAvatarLetter}>
                       {sharedWith[0][0].toUpperCase()}
                     </Text>
                   </View>
                   {sharedWith.length > 1 && (
-                    <Text style={styles.shareButtonCount}>
-                      +{sharedWith.length - 1}
-                    </Text>
+                    <Text style={styles.shareButtonCount}>+{sharedWith.length - 1}</Text>
                   )}
                 </View>
               ) : (
@@ -840,11 +772,7 @@ export default function CollectionPage() {
               onPress={handleDeleteCollection}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <Ionicons
-                name="trash-outline"
-                size={22}
-                color="rgba(255,60,60,0.8)"
-              />
+              <Ionicons name="trash-outline" size={22} color="rgba(255,60,60,0.8)" />
             </TouchableOpacity>
           )}
         </View>
@@ -867,10 +795,7 @@ export default function CollectionPage() {
       {sharedWith.length > 0 && (
         <TouchableOpacity
           style={styles.avatarStrip}
-          onPress={() => {
-            loadShares();
-            setShowShareModal(true);
-          }}
+          onPress={() => { loadShares(); setShowShareModal(true); }}
           activeOpacity={0.8}
         >
           <View style={styles.avatarRow}>
@@ -883,21 +808,12 @@ export default function CollectionPage() {
                   { backgroundColor: getAvatarColor(email) },
                 ]}
               >
-                <Text style={styles.avatarLetter}>
-                  {email[0].toUpperCase()}
-                </Text>
+                <Text style={styles.avatarLetter}>{email[0].toUpperCase()}</Text>
               </View>
             ))}
             {sharedWith.length > 5 && (
-              <View
-                style={[
-                  styles.avatar,
-                  { marginLeft: -10, backgroundColor: "#999" },
-                ]}
-              >
-                <Text style={styles.avatarLetter}>
-                  +{sharedWith.length - 5}
-                </Text>
+              <View style={[styles.avatar, { marginLeft: -10, backgroundColor: "#999" }]}>
+                <Text style={styles.avatarLetter}>+{sharedWith.length - 5}</Text>
               </View>
             )}
           </View>
@@ -922,9 +838,7 @@ export default function CollectionPage() {
       ) : (
         <ScrollView
           contentContainerStyle={styles.grid}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.columns}>
@@ -932,9 +846,7 @@ export default function CollectionPage() {
               {leftColumn.map((item, index) => renderPhoto(item, index * 2))}
             </View>
             <View style={styles.column}>
-              {rightColumn.map((item, index) =>
-                renderPhoto(item, index * 2 + 1),
-              )}
+              {rightColumn.map((item, index) => renderPhoto(item, index * 2 + 1))}
             </View>
           </View>
         </ScrollView>
@@ -948,6 +860,7 @@ export default function CollectionPage() {
         statusBarTranslucent
       >
         <View style={styles.fullScreenViewer}>
+
           {/* Native — FlatList with paging — rendered first */}
           {selectedPhotoIndex !== null && Platform.OS !== "web" && (
             <FlatList
@@ -992,16 +905,11 @@ export default function CollectionPage() {
               <TouchableOpacity
                 onPress={goToPrev}
                 disabled={selectedPhotoIndex === 0}
-                style={[
-                  styles.webArrow,
-                  selectedPhotoIndex === 0 && styles.webArrowDisabled,
-                ]}
+                style={[styles.webArrow, selectedPhotoIndex === 0 && styles.webArrowDisabled]}
               >
                 <Text style={styles.webArrowText}>‹</Text>
               </TouchableOpacity>
-              <View
-                style={{ flex: 1, height: SCREEN_HEIGHT, position: "relative" }}
-              >
+              <View style={{ flex: 1, height: SCREEN_HEIGHT, position: "relative" }}>
                 <Image
                   source={{ uri: photos[selectedPhotoIndex].url }}
                   style={styles.fullScreenWebImage}
@@ -1016,8 +924,7 @@ export default function CollectionPage() {
                 disabled={selectedPhotoIndex === photos.length - 1}
                 style={[
                   styles.webArrow,
-                  selectedPhotoIndex === photos.length - 1 &&
-                    styles.webArrowDisabled,
+                  selectedPhotoIndex === photos.length - 1 && styles.webArrowDisabled,
                 ]}
               >
                 <Text style={styles.webArrowText}>›</Text>
@@ -1059,176 +966,150 @@ export default function CollectionPage() {
               </TouchableOpacity>
             )}
           </View>
+
         </View>
       </Modal>
 
       {/* Share Modal */}
-      {showShareModal &&
-        (Platform.OS === "web" ? (
-          <View style={styles.shareWebOverlay}>
-            <TouchableOpacity
-              style={styles.shareOverlayBackdrop}
-              activeOpacity={1}
-              onPress={() => setShowShareModal(false)}
-            >
-              <TouchableOpacity
-                activeOpacity={1}
-                style={styles.shareOverlayCard}
-                onPress={(e) => e.stopPropagation()}
-              >
-                <View style={styles.shareModalHeader}>
-                  <Text style={styles.shareModalTitle}>Share Collection</Text>
-                  <TouchableOpacity
-                    onPress={() => setShowShareModal(false)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Text style={styles.shareModalClose}>✕</Text>
-                  </TouchableOpacity>
-                </View>
-                <View style={styles.shareInputRow}>
-                  <TextInput
-                    style={styles.shareInput}
-                    placeholder="Enter email to share"
-                    placeholderTextColor="#999"
-                    value={shareEmail}
-                    onChangeText={setShareEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                  <TouchableOpacity
-                    style={[
-                      styles.shareSubmitButton,
-                      sharing && { opacity: 0.6 },
-                    ]}
-                    onPress={handleShare}
-                    disabled={sharing}
-                  >
-                    {sharing ? (
-                      <ActivityIndicator color="#fff" size="small" />
-                    ) : (
-                      <Text style={styles.shareSubmitText}>Send</Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-                {sharedWith.length > 0 && (
-                  <View style={styles.shareList}>
-                    <Text style={styles.shareListTitle}>Shared with</Text>
-                    {sharedWith.map((email) => (
-                      <View key={email} style={styles.shareListRow}>
-                        <View
-                          style={[
-                            styles.shareListAvatar,
-                            { backgroundColor: getAvatarColor(email) },
-                          ]}
-                        >
-                          <Text style={styles.shareListAvatarLetter}>
-                            {email[0].toUpperCase()}
-                          </Text>
-                        </View>
-                        <Text style={styles.shareListEmail} numberOfLines={1}>
-                          {email}
-                        </Text>
-                        <TouchableOpacity
-                          style={styles.removeButton}
-                          onPress={() => handleUnshare(email)}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                          <Text style={styles.removeButtonText}>Remove</Text>
-                        </TouchableOpacity>
-                      </View>
-                    ))}
-                  </View>
-                )}
-              </TouchableOpacity>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <Modal
-            visible={showShareModal}
-            transparent
-            animationType="fade"
-            statusBarTranslucent
-            onRequestClose={() => setShowShareModal(false)}
+      {showShareModal && (Platform.OS === "web" ? (
+        <View style={styles.shareWebOverlay}>
+          <TouchableOpacity
+            style={styles.shareOverlayBackdrop}
+            activeOpacity={1}
+            onPress={() => setShowShareModal(false)}
           >
             <TouchableOpacity
-              style={styles.shareOverlayBackdrop}
               activeOpacity={1}
-              onPress={() => setShowShareModal(false)}
+              style={styles.shareOverlayCard}
+              onPress={(e) => e.stopPropagation()}
             >
-              <TouchableOpacity
-                activeOpacity={1}
-                style={styles.shareOverlayCard}
-                onPress={(e) => e.stopPropagation()}
-              >
-                <View style={styles.shareModalHeader}>
-                  <Text style={styles.shareModalTitle}>Share Collection</Text>
-                  <TouchableOpacity
-                    onPress={() => setShowShareModal(false)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Text style={styles.shareModalClose}>✕</Text>
-                  </TouchableOpacity>
-                </View>
-                <View style={styles.shareInputRow}>
-                  <TextInput
-                    style={styles.shareInput}
-                    placeholder="Enter email to share"
-                    placeholderTextColor="#999"
-                    value={shareEmail}
-                    onChangeText={setShareEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                  <TouchableOpacity
-                    style={[
-                      styles.shareSubmitButton,
-                      sharing && { opacity: 0.6 },
-                    ]}
-                    onPress={handleShare}
-                    disabled={sharing}
-                  >
-                    {sharing ? (
-                      <ActivityIndicator color="#fff" size="small" />
-                    ) : (
-                      <Text style={styles.shareSubmitText}>Send</Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-                {sharedWith.length > 0 && (
-                  <View style={styles.shareList}>
-                    <Text style={styles.shareListTitle}>Shared with</Text>
-                    {sharedWith.map((email) => (
-                      <View key={email} style={styles.shareListRow}>
-                        <View
-                          style={[
-                            styles.shareListAvatar,
-                            { backgroundColor: getAvatarColor(email) },
-                          ]}
-                        >
-                          <Text style={styles.shareListAvatarLetter}>
-                            {email[0].toUpperCase()}
-                          </Text>
-                        </View>
-                        <Text style={styles.shareListEmail} numberOfLines={1}>
-                          {email}
-                        </Text>
-                        <TouchableOpacity
-                          style={styles.removeButton}
-                          onPress={() => handleUnshare(email)}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                          <Text style={styles.removeButtonText}>Remove</Text>
-                        </TouchableOpacity>
+              <View style={styles.shareModalHeader}>
+                <Text style={styles.shareModalTitle}>Share Collection</Text>
+                <TouchableOpacity
+                  onPress={() => setShowShareModal(false)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={styles.shareModalClose}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.shareInputRow}>
+                <TextInput
+                  style={styles.shareInput}
+                  placeholder="Enter email to share"
+                  placeholderTextColor="#999"
+                  value={shareEmail}
+                  onChangeText={setShareEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <TouchableOpacity
+                  style={[styles.shareSubmitButton, sharing && { opacity: 0.6 }]}
+                  onPress={handleShare}
+                  disabled={sharing}
+                >
+                  {sharing
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <Text style={styles.shareSubmitText}>Send</Text>
+                  }
+                </TouchableOpacity>
+              </View>
+              {sharedWith.length > 0 && (
+                <View style={styles.shareList}>
+                  <Text style={styles.shareListTitle}>Shared with</Text>
+                  {sharedWith.map((email) => (
+                    <View key={email} style={styles.shareListRow}>
+                      <View style={[styles.shareListAvatar, { backgroundColor: getAvatarColor(email) }]}>
+                        <Text style={styles.shareListAvatarLetter}>{email[0].toUpperCase()}</Text>
                       </View>
-                    ))}
-                  </View>
-                )}
-              </TouchableOpacity>
+                      <Text style={styles.shareListEmail} numberOfLines={1}>{email}</Text>
+                      <TouchableOpacity
+                        style={styles.removeButton}
+                        onPress={() => handleUnshare(email)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Text style={styles.removeButtonText}>Remove</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
             </TouchableOpacity>
-          </Modal>
-        ))}
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <Modal
+          visible={showShareModal}
+          transparent
+          animationType="fade"
+          statusBarTranslucent
+          onRequestClose={() => setShowShareModal(false)}
+        >
+          <TouchableOpacity
+            style={styles.shareOverlayBackdrop}
+            activeOpacity={1}
+            onPress={() => setShowShareModal(false)}
+          >
+            <TouchableOpacity
+              activeOpacity={1}
+              style={styles.shareOverlayCard}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <View style={styles.shareModalHeader}>
+                <Text style={styles.shareModalTitle}>Share Collection</Text>
+                <TouchableOpacity
+                  onPress={() => setShowShareModal(false)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={styles.shareModalClose}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.shareInputRow}>
+                <TextInput
+                  style={styles.shareInput}
+                  placeholder="Enter email to share"
+                  placeholderTextColor="#999"
+                  value={shareEmail}
+                  onChangeText={setShareEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <TouchableOpacity
+                  style={[styles.shareSubmitButton, sharing && { opacity: 0.6 }]}
+                  onPress={handleShare}
+                  disabled={sharing}
+                >
+                  {sharing
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <Text style={styles.shareSubmitText}>Send</Text>
+                  }
+                </TouchableOpacity>
+              </View>
+              {sharedWith.length > 0 && (
+                <View style={styles.shareList}>
+                  <Text style={styles.shareListTitle}>Shared with</Text>
+                  {sharedWith.map((email) => (
+                    <View key={email} style={styles.shareListRow}>
+                      <View style={[styles.shareListAvatar, { backgroundColor: getAvatarColor(email) }]}>
+                        <Text style={styles.shareListAvatarLetter}>{email[0].toUpperCase()}</Text>
+                      </View>
+                      <Text style={styles.shareListEmail} numberOfLines={1}>{email}</Text>
+                      <TouchableOpacity
+                        style={styles.removeButton}
+                        onPress={() => handleUnshare(email)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Text style={styles.removeButtonText}>Remove</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
+      ))}
 
       {/* Toast */}
       {toast && (
@@ -1237,14 +1118,12 @@ export default function CollectionPage() {
             styles.toast,
             {
               opacity: toastAnim,
-              transform: [
-                {
-                  translateY: toastAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [20, 0],
-                  }),
-                },
-              ],
+              transform: [{
+                translateY: toastAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [20, 0],
+                }),
+              }],
             },
           ]}
           pointerEvents="box-none"
@@ -1272,11 +1151,7 @@ export default function CollectionPage() {
         visible={showPaywall}
         reason={paywallReason}
         currentLimit={subscriptionStatus?.limits?.maxPhotosPerCollection ?? 10}
-        currentTier={
-          subscriptionStatus?.isActive
-            ? (subscriptionStatus.tier as any)
-            : "free"
-        }
+        currentTier={subscriptionStatus?.isActive ? (subscriptionStatus.tier as any) : "free"}
         onSubscribed={async (_tier) => {
           const status = await checkSubscription();
           setSubscriptionStatus(status);
@@ -1305,122 +1180,71 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 12,
-    paddingTop: Platform.OS === "web" ? 16 : 56,
     paddingBottom: 12,
     backgroundColor: "#fff",
     borderBottomWidth: 1,
     borderBottomColor: "#eee",
-    minHeight: Platform.OS === "web" ? 64 : 100,
+    minHeight: Platform.OS === "web" ? 64 : 56,
   },
   headerLeft: { flexDirection: "row", alignItems: "center", gap: 4, flex: 1 },
   headerCenter: { flex: 0 },
   headerRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    flex: 1,
-    justifyContent: "flex-end",
+    flexDirection: "row", alignItems: "center",
+    gap: 6, flex: 1, justifyContent: "flex-end",
   },
   iconButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: "center",
-    justifyContent: "center",
+    width: 44, height: 44, borderRadius: 22,
+    alignItems: "center", justifyContent: "center",
   },
   title: { fontSize: 15, fontWeight: "700", color: "#111" },
   subtitle: { fontSize: 11, color: "#999", marginTop: 2 },
 
   // ── Banner ────────────────────────────────────────────────
   collectionBanner: {
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    paddingBottom: 12,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
+    paddingHorizontal: 20, paddingTop: 14, paddingBottom: 12,
+    backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#eee",
     ...Platform.select({
-      ios: {
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.06,
-        shadowRadius: 8,
-      },
+      ios: { shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 },
       android: { elevation: 3 },
       web: { boxShadow: "0 2px 12px rgba(0,0,0,0.06)" } as any,
     }),
   },
   collectionBannerTitle: {
     fontSize: Platform.OS === "web" ? 22 : 20,
-    fontWeight: "800",
-    color: "#111",
-    letterSpacing: -0.3,
+    fontWeight: "800", color: "#111", letterSpacing: -0.3,
   },
-  collectionBannerSubtitle: {
-    fontSize: 12,
-    color: "#999",
-    marginTop: 3,
-    fontWeight: "500",
-  },
+  collectionBannerSubtitle: { fontSize: 12, color: "#999", marginTop: 3, fontWeight: "500" },
 
   // ── Upload button ─────────────────────────────────────────
   uploadIconButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "#111",
-    alignItems: "center",
-    justifyContent: "center",
+    width: 44, height: 44, borderRadius: 22, backgroundColor: "#111",
+    alignItems: "center", justifyContent: "center",
     ...Platform.select({ web: { cursor: "pointer" } as any, default: {} }),
   },
 
   // ── Share button ─────────────────────────────────────────
   shareTextButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#111",
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 44,
+    paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20,
+    borderWidth: 1, borderColor: "#111", alignItems: "center",
+    justifyContent: "center", minHeight: 44,
   },
   shareTextButtonLabel: { fontSize: 13, color: "#111", fontWeight: "600" },
-  shareButtonWithAvatars: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  shareButtonAvatar: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  shareButtonWithAvatars: { flexDirection: "row", alignItems: "center", gap: 4 },
+  shareButtonAvatar: { width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center" },
   shareButtonAvatarLetter: { color: "#fff", fontSize: 11, fontWeight: "700" },
   shareButtonCount: { fontSize: 12, color: "#111", fontWeight: "600" },
 
   // ── Avatar strip ─────────────────────────────────────────
   avatarStrip: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
-    gap: 10,
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: 16, paddingVertical: 10,
+    backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#f0f0f0", gap: 10,
   },
   avatarRow: { flexDirection: "row", alignItems: "center" },
   avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 2,
-    borderColor: "#fff",
+    width: 32, height: 32, borderRadius: 16,
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 2, borderColor: "#fff",
   },
   avatarLetter: { color: "#fff", fontSize: 13, fontWeight: "700" },
   avatarStripLabel: { fontSize: 13, color: "#666", fontWeight: "500" },
@@ -1485,10 +1309,7 @@ const styles = StyleSheet.create({
   // Legacy — kept for safety
   photoContainer: { width: "100%", borderRadius: 12, overflow: "hidden" },
   photo: { width: "100%", height: "100%" },
-  photoPlaceholder: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "#e8e8e8",
-  },
+  photoPlaceholder: { ...StyleSheet.absoluteFillObject, backgroundColor: "#e8e8e8" },
   centered: { flex: 1, justifyContent: "center", alignItems: "center", gap: 8 },
   emptyIcon: { fontSize: 48 },
   emptyTitle: { fontSize: 18, fontWeight: "600", color: "#333" },
@@ -1499,278 +1320,94 @@ const styles = StyleSheet.create({
   // Overlay rendered after FlatList — always sits on top
   viewerControls: {
     position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    top: 0, left: 0, right: 0, bottom: 0,
     zIndex: 100,
     pointerEvents: "box-none" as any,
   },
   fullScreenClose: {
     position: "absolute",
     top: Platform.OS === "web" ? 20 : 52,
-    right: 20,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    right: 20, width: 44, height: 44, borderRadius: 22,
     backgroundColor: "rgba(255,255,255,0.18)",
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: "center", justifyContent: "center",
   },
   fullScreenCounter: {
     position: "absolute",
     top: Platform.OS === "web" ? 26 : 58,
-    left: 0,
-    right: 0,
-    alignItems: "center",
+    left: 0, right: 0, alignItems: "center",
   },
-  fullScreenCounterText: {
-    color: "rgba(255,255,255,0.8)",
-    fontSize: 14,
-    fontWeight: "600",
-  },
+  fullScreenCounterText: { color: "rgba(255,255,255,0.8)", fontSize: 14, fontWeight: "600" },
   fullScreenPage: {
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#000",
+    width: SCREEN_WIDTH, height: SCREEN_HEIGHT,
+    justifyContent: "center", alignItems: "center", backgroundColor: "#000",
   },
   fullScreenImage: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT },
   fullScreenWebImage: { flex: 1, height: SCREEN_HEIGHT },
   webViewerWrapper: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    width: "100%",
-    height: SCREEN_HEIGHT,
+    flex: 1, flexDirection: "row", alignItems: "center",
+    justifyContent: "center", width: "100%", height: SCREEN_HEIGHT,
   },
   webArrow: {
-    width: 64,
-    height: "100%" as any,
+    width: 64, height: "100%" as any,
     backgroundColor: "rgba(255,255,255,0.05)",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
+    alignItems: "center", justifyContent: "center", flexShrink: 0,
   },
   webArrowDisabled: { opacity: 0.1 },
-  webArrowText: {
-    color: "#fff",
-    fontSize: 48,
-    fontWeight: "200",
-    lineHeight: 52,
-    textAlign: "center",
-  },
+  webArrowText: { color: "#fff", fontSize: 48, fontWeight: "200", lineHeight: 52, textAlign: "center" },
   swipeHint: {
-    position: "absolute",
-    bottom: 100,
-    left: 0,
-    right: 0,
-    textAlign: "center",
-    color: "rgba(255,255,255,0.35)",
-    fontSize: 12,
+    position: "absolute", bottom: 100, left: 0, right: 0,
+    textAlign: "center", color: "rgba(255,255,255,0.35)", fontSize: 12,
   },
   deleteButton: {
-    position: "absolute",
-    bottom: 40,
-    alignSelf: "center",
-    paddingHorizontal: 28,
-    paddingVertical: 14,
-    backgroundColor: "rgba(255,60,60,0.85)",
-    borderRadius: 24,
-    alignItems: "center",
-    minWidth: 160,
-    zIndex: 50,
+    position: "absolute", bottom: 40, alignSelf: "center",
+    paddingHorizontal: 28, paddingVertical: 14,
+    backgroundColor: "rgba(255,60,60,0.85)", borderRadius: 24,
+    alignItems: "center", minWidth: 160, zIndex: 50,
   },
   deleteButtonText: { color: "#fff", fontWeight: "600", fontSize: 15 },
 
   // Legacy viewer styles — kept for safety
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.92)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  modalClose: {
-    position: "absolute",
-    top: 52,
-    right: 24,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 50,
-  },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", justifyContent: "center", alignItems: "center" },
+  modalClose: { position: "absolute", top: 52, right: 24, backgroundColor: "rgba(255,255,255,0.2)", width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", zIndex: 50 },
   modalCloseText: { color: "#fff", fontSize: 16, fontWeight: "700" },
-  photoCounter: {
-    position: "absolute",
-    top: 56,
-    left: 0,
-    right: 0,
-    textAlign: "center",
-    color: "rgba(255,255,255,0.7)",
-    fontSize: 13,
-    fontWeight: "500",
-    zIndex: 50,
-  },
-  webPhotoCard: {
-    flex: 1,
-    height: SCREEN_HEIGHT * 0.75,
-    borderRadius: 16,
-    overflow: "hidden",
-    backgroundColor: "#000",
-  },
-  mobilePhotoCard: {
-    width: SCREEN_WIDTH - 24,
-    height: SCREEN_HEIGHT * 0.72,
-    borderRadius: 16,
-    overflow: "hidden",
-    backgroundColor: "#000",
-  },
+  photoCounter: { position: "absolute", top: 56, left: 0, right: 0, textAlign: "center", color: "rgba(255,255,255,0.7)", fontSize: 13, fontWeight: "500", zIndex: 50 },
+  webPhotoCard: { flex: 1, height: SCREEN_HEIGHT * 0.75, borderRadius: 16, overflow: "hidden", backgroundColor: "#000" },
+  mobilePhotoCard: { width: SCREEN_WIDTH - 24, height: SCREEN_HEIGHT * 0.72, borderRadius: 16, overflow: "hidden", backgroundColor: "#000" },
   modalImage: { width: "100%", height: "100%" },
 
   // ── Share overlay ────────────────────────────────────────
-  shareWebOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 999,
-  },
-  shareOverlayBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 24,
-  },
-  shareOverlayCard: {
-    width: "100%",
-    backgroundColor: "#fff",
-    borderRadius: 20,
-    padding: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 24,
-    elevation: 10,
-  },
-  shareModalHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
-  },
+  shareWebOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 999 },
+  shareOverlayBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", alignItems: "center", padding: 24 },
+  shareOverlayCard: { width: "100%", backgroundColor: "#fff", borderRadius: 20, padding: 20, shadowColor: "#000", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 24, elevation: 10 },
+  shareModalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
   shareModalTitle: { fontSize: 18, fontWeight: "700", color: "#111" },
   shareModalClose: { fontSize: 18, color: "#999", padding: 4 },
   shareInputRow: { flexDirection: "row", gap: 8, marginBottom: 4 },
-  shareInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: "#e0e0e0",
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    fontSize: 14,
-    color: "#111",
-    backgroundColor: "#fafafa",
-  },
-  shareSubmitButton: {
-    backgroundColor: "#111",
-    paddingHorizontal: 18,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    minWidth: 64,
-  },
+  shareInput: { flex: 1, borderWidth: 1, borderColor: "#e0e0e0", borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, fontSize: 14, color: "#111", backgroundColor: "#fafafa" },
+  shareSubmitButton: { backgroundColor: "#111", paddingHorizontal: 18, borderRadius: 12, alignItems: "center", justifyContent: "center", minWidth: 64 },
   shareSubmitText: { color: "#fff", fontWeight: "600", fontSize: 14 },
-  shareList: {
-    marginTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
-    paddingTop: 12,
-  },
-  shareListTitle: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#999",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 10,
-  },
-  shareListRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 8,
-    gap: 10,
-  },
-  shareListAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  shareList: { marginTop: 16, borderTopWidth: 1, borderTopColor: "#f0f0f0", paddingTop: 12 },
+  shareListTitle: { fontSize: 12, fontWeight: "600", color: "#999", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 },
+  shareListRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, gap: 10 },
+  shareListAvatar: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   shareListAvatarLetter: { color: "#fff", fontSize: 14, fontWeight: "700" },
   shareListEmail: { flex: 1, fontSize: 14, color: "#333" },
-  removeButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    backgroundColor: "rgba(255,60,60,0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(255,60,60,0.2)",
-  },
-  removeButtonText: {
-    fontSize: 12,
-    color: "rgba(220,40,40,0.9)",
-    fontWeight: "600",
-  },
+  removeButton: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, backgroundColor: "rgba(255,60,60,0.08)", borderWidth: 1, borderColor: "rgba(255,60,60,0.2)" },
+  removeButtonText: { fontSize: 12, color: "rgba(220,40,40,0.9)", fontWeight: "600" },
 
   // ── Toast ─────────────────────────────────────────────────
   toast: {
-    position: "absolute",
-    bottom: 32,
-    left: 16,
-    right: 16,
-    backgroundColor: "#1a1a1a",
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 16,
-    elevation: 12,
-    zIndex: 999,
+    position: "absolute", bottom: 32, left: 16, right: 16,
+    backgroundColor: "#1a1a1a", borderRadius: 16,
+    paddingHorizontal: 16, paddingVertical: 14,
+    flexDirection: "row", alignItems: "center", gap: 12,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3, shadowRadius: 16, elevation: 12, zIndex: 999,
   },
   toastEmoji: { fontSize: 26 },
   toastTextContainer: { flex: 1 },
-  toastMessage: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#fff",
-    lineHeight: 18,
-  },
-  toastSubtext: {
-    fontSize: 11,
-    color: "rgba(255,255,255,0.5)",
-    marginTop: 3,
-    lineHeight: 15,
-  },
-  toastButton: {
-    backgroundColor: "#4AE8A0",
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    flexShrink: 0,
-  },
+  toastMessage: { fontSize: 13, fontWeight: "600", color: "#fff", lineHeight: 18 },
+  toastSubtext: { fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 3, lineHeight: 15 },
+  toastButton: { backgroundColor: "#4AE8A0", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, flexShrink: 0 },
   toastButtonText: { fontSize: 12, fontWeight: "700", color: "#111" },
 });

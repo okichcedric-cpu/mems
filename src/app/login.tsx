@@ -15,6 +15,7 @@ import {
   Dimensions,
   Image,
   Animated,
+  Linking,
 } from "react-native";
 import { AntDesign } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -35,6 +36,12 @@ const NATIVE_REDIRECT = "mems://login";
 const redirectTo = Platform.OS === "web"
   ? makeRedirectUri()
   : NATIVE_REDIRECT;
+
+// Note: PKCE code exchange and session handling for the Google OAuth
+// redirect is handled exclusively by the persistent listener in
+// app/_layout.tsx — it lives at the app root so it survives even if
+// Android relaunches the activity, and is the single source of truth
+// so the one-time PKCE code only ever gets exchanged once.
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const IS_WEB = Platform.OS === "web";
 const IS_DESKTOP = IS_WEB && SCREEN_WIDTH >= 768;
@@ -228,9 +235,23 @@ async function signInWithGoogle() {
       return;
     }
     if (data?.url) {
-      // openAuthSessionAsync listens for a redirect matching NATIVE_REDIRECT
-      // exactly — this must be the SAME string that was passed as redirectTo
-      // above, and must be registered in Supabase's Redirect URLs allow-list
+      console.log("[OAuth] Opening browser for Google sign in...");
+
+      // We don't act on this promise's result at all anymore. The
+      // persistent listener registered once at the app root (see
+      // app/_layout.tsx) is the single source of truth for handling
+      // the mems://login redirect and exchanging the PKCE code for a
+      // session — it catches the redirect via both the live "url"
+      // event AND getInitialURL() in case Android relaunches the
+      // activity. Attempting to exchange the same code again here
+      // would fail, since PKCE codes are single-use and the root
+      // listener typically wins the race and consumes it first.
+      //
+      // Navigation home is also handled reactively by _layout.tsx —
+      // once onAuthStateChange fires with a real session, its routing
+      // effect redirects away from /login automatically. No manual
+      // router call is needed (or even possible from this module-level
+      // function, since it sits outside the component's render scope).
       const result = await WebBrowser.openAuthSessionAsync(data.url, NATIVE_REDIRECT, {
         showInRecents: false,
         toolbarColor: "#111111",
@@ -239,28 +260,7 @@ async function signInWithGoogle() {
         enableBarCollapsing: true,
       });
 
-      if (result.type === "success" && result.url) {
-        // Parse the returned URL for the session tokens and set the
-        // session explicitly — belt-and-braces in case onAuthStateChange
-        // doesn't fire immediately from the deep link alone
-        const url = new URL(result.url);
-        const hashParams = new URLSearchParams(url.hash.replace("#", ""));
-        const access_token = hashParams.get("access_token");
-        const refresh_token = hashParams.get("refresh_token");
-
-        if (access_token && refresh_token) {
-          const { error: sessionError } = await supabase.auth.setSession({
-            access_token,
-            refresh_token,
-          });
-          if (sessionError) {
-            console.error("setSession error:", sessionError.message);
-          }
-        }
-      } else if (result.type === "cancel" || result.type === "dismiss") {
-        // User closed the browser manually — not an error, just no-op
-        console.log("Google sign in cancelled by user");
-      }
+      console.log("[OAuth] Browser closed with result type:", result.type);
 
       try { WebBrowser.dismissBrowser(); } catch {}
     }
