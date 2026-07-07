@@ -1,6 +1,6 @@
-import { Platform } from "react-native";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import * as ImageManipulator from "expo-image-manipulator";
+import { Platform } from "react-native";
 import { compressImage, generateThumbnail } from "./imageProcessing";
 import { supabase } from "./supabase";
 
@@ -15,14 +15,20 @@ async function uploadLocalFileNative(
   presignedUrl: string,
   localUri: string,
 ): Promise<void> {
-  const result = await FileSystem.uploadAsync(presignedUrl, localUri, {
-    httpMethod: "PUT",
-    uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-    headers: { "Content-Type": "image/jpeg" },
-  });
+  let result;
+  try {
+    result = await FileSystem.uploadAsync(presignedUrl, localUri, {
+      httpMethod: "PUT",
+      uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+      headers: { "Content-Type": "image/jpeg" },
+    });
+  } catch (nativeErr: any) {
+    console.error("FileSystem.uploadAsync threw:", nativeErr.message);
+    throw new Error(`Upload failed: ${nativeErr.message ?? "native upload error"}`);
+  }
 
   if (result.status < 200 || result.status >= 300) {
-    console.error("Native upload failed with status:", result.status, result.body);
+    console.error("Native upload non-2xx response:", result.status, result.body);
     throw new Error(`Upload failed: ${result.status}`);
   }
 }
@@ -136,12 +142,18 @@ export async function uploadToS3(
       // ── NATIVE (iOS / Android) ──────────────────────────────────
       // Compress via expo-image-manipulator (native module, no fetch),
       // then upload the resulting local file directly via
-      // FileSystem.uploadAsync — never touches fetch/Blob for the
-      // actual file data, sidestepping the file:// fetch bug entirely.
+      // FileSystem.uploadAsync (legacy API) — never touches fetch/Blob
+      // for the actual file data, sidestepping the file:// fetch bug
+      // that breaks in production/standalone builds on Android.
       const compressed = await compressImageNative(uri);
 
-      const info = await FileSystem.getInfoAsync(compressed.uri);
-      const fileSize = info.exists ? (info as any).size : undefined;
+      let fileSize: number | undefined;
+      try {
+        const info = await FileSystem.getInfoAsync(compressed.uri);
+        fileSize = info.exists ? (info as any).size : undefined;
+      } catch (infoErr: any) {
+        console.warn("getInfoAsync error (non-fatal):", infoErr.message);
+      }
 
       const { data: uploadData, error: uploadError } = await supabase.functions.invoke(
         "generate-upload-url",
