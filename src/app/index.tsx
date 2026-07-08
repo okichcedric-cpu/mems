@@ -1,33 +1,25 @@
-import PaywallModal from "@/components/PaywallModal";
 import ShimmerPlaceholder from "@/components/ShimmerPlaceholder";
-import UploadProgressOverlay from "@/components/UploadProgressOverlay";
 import { useAuth } from "@/contexts/AuthContext";
 import { Ionicons } from "@expo/vector-icons";
 import { Session } from "@supabase/supabase-js";
 import { Image } from "expo-image";
-import * as ImagePicker from "expo-image-picker";
-import { useRouter } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Dimensions,
-  Keyboard,
-  KeyboardAvoidingView,
-  Modal,
   Platform,
   RefreshControl,
   Image as RNImage,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
-  TouchableWithoutFeedback,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { deleteCollection, uploadToS3 } from "../utils/s3";
+import { deleteCollection } from "../utils/s3";
 import { getSharedCollections } from "../utils/sharing";
 import { checkSubscription, SubscriptionStatus } from "../utils/subscription";
 import { supabase } from "../utils/supabase";
@@ -65,50 +57,46 @@ export default function CollectionsPage() {
   // Now this screen simply reads the already-validated session from
   // AuthContext — there is only ever one source of truth for the
   // whole app, set once in AuthProvider and shared everywhere.
-  const { session, sessionVersion } = useAuth();
+  const { session } = useAuth();
   const [collections, setCollections] = useState<Collection[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [showNewCollection, setShowNewCollection] = useState(false);
-  const [collectionName, setCollectionName] = useState("");
-  const [selectedAssets, setSelectedAssets] = useState<
-    ImagePicker.ImagePickerAsset[]
-  >([]);
-  const [creating, setCreating] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState({
-    total: 0,
-    completed: 0,
-  });
   const [subscriptionStatus, setSubscriptionStatus] =
     useState<SubscriptionStatus | null>(null);
-  const [showPaywall, setShowPaywall] = useState(false);
-  const [paywallReason, setPaywallReason] = useState<"collections" | "photos">(
-    "collections",
+
+  // ── Fetches data on focus — the ONLY place this screen fetches ──
+  //
+  // Depends on `session?.user?.id` (a plain string), NOT on `session`
+  // itself. Supabase constructs a brand new session object on every
+  // auth event — including routine TOKEN_REFRESHED events that happen
+  // automatically in the background and don't represent any real
+  // change. Depending on the object's identity meant every refresh
+  // re-triggered this effect: loading flipped back to true, the grid
+  // disappeared, then reappeared once the refetch finished — a visible
+  // flicker on every single token refresh, however often it happened.
+  // `user.id` stays stable (by value) across any number of refreshes
+  // for the same signed-in user, so this now only re-runs on a genuine
+  // sign-in or sign-out, exactly as intended. See AuthContext.tsx for
+  // the full explanation of why `session` itself should never be used
+  // as a dependency.
+  const userId = session?.user?.id ?? null;
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!session) {
+        setLoading(false);
+        setCollections([]);
+        return;
+      }
+
+      setLoading(true);
+      Promise.all([
+        fetchCollections(session),
+        checkSubscription().then(setSubscriptionStatus),
+      ]).finally(() => setLoading(false));
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [userId]),
   );
-  // Pending action to resume after subscription
-  const pendingActionRef = useRef<(() => void) | null>(null);
-
-  // Reacts to the session becoming available (or changing) from
-  // AuthContext — sessionVersion in the deps array ensures this fires
-  // even on a TOKEN_REFRESHED event where the session object's
-  // identity changes but `session` itself might look superficially
-  // similar, and reliably fires exactly once when a validated session
-  // first appears after app launch.
-  useEffect(() => {
-    if (!session) {
-      setLoading(false);
-      setCollections([]);
-      return;
-    }
-
-    setLoading(true);
-    // ── Run collections and subscription check in PARALLEL ──
-    // Neither blocks the other
-    Promise.all([
-      fetchCollections(session),
-      checkSubscription().then(setSubscriptionStatus),
-    ]).finally(() => setLoading(false));
-  }, [sessionVersion]);
 
   async function fetchCollections(currentSession: Session) {
     try {
@@ -117,7 +105,27 @@ export default function CollectionsPage() {
         await supabase.functions.invoke("list-collections", {
           body: { userId: currentSession.user.id },
         });
-      if (listError) throw new Error(listError.message);
+
+      if (listError) {
+        // supabase.functions.invoke()'s error.message is just a generic
+        // wrapper ("Edge Function returned a non-2xx status code") — the
+        // actual reason lives in the HTTP response body, accessible via
+        // error.context (a real Response object on FunctionsHttpError).
+        // Logging this is the only way to see what's actually wrong.
+        let detail = listError.message;
+        try {
+          const body = await (listError as any)?.context?.json?.();
+          if (body?.error) detail = body.error;
+        } catch {
+          try {
+            detail = await (listError as any)?.context?.text?.();
+          } catch {
+            // context wasn't readable either — fall back to the generic message
+          }
+        }
+        console.error("[fetchCollections] list-collections failed:", detail);
+        throw new Error(detail);
+      }
 
       const names: string[] = listData?.collections ?? [];
       let ownedCollections: Collection[] = [];
@@ -249,127 +257,6 @@ export default function CollectionsPage() {
     setRefreshing(true);
     if (session) fetchCollections(session);
   }, [session]);
-
-  async function pickPhotos() {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert(
-        "Permission needed",
-        "Please allow access to your photo library.",
-      );
-      return;
-    }
-
-    const maxPhotos = subscriptionStatus?.limits?.maxPhotosPerCollection ?? 10;
-    const isLimited = !subscriptionStatus?.isActive;
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsMultipleSelection: true,
-      quality: 0.8,
-      selectionLimit: isLimited ? maxPhotos : 0,
-    });
-
-    if (!result.canceled) {
-      setSelectedAssets(result.assets.slice(0, maxPhotos));
-      // If free user hit the limit — go straight to paywall
-      // Store createCollection as the pending action so it fires immediately after subscribe
-      if (isLimited && result.assets.length >= maxPhotos) {
-        setShowNewCollection(false);
-        pendingActionRef.current = createCollection;
-        setPaywallReason("photos");
-        setShowPaywall(true);
-      }
-    }
-  }
-
-  async function createCollection() {
-    if (!collectionName.trim()) {
-      Alert.alert("Name required", "Please enter a name for the collection.");
-      return;
-    }
-    if (selectedAssets.length === 0) {
-      Alert.alert("Photos required", "Please select at least one photo.");
-      return;
-    }
-    if (!session) return;
-
-    const ownedCollections = collections.filter((c) => !c.isShared);
-    const maxCollections = subscriptionStatus?.limits?.maxCollections ?? 3;
-    const isActive = subscriptionStatus?.isActive ?? false;
-
-    if (ownedCollections.length >= maxCollections) {
-      if (isActive) {
-        Alert.alert(
-          "Collection limit reached",
-          `Your ${subscriptionStatus?.limits?.label ?? "current"} plan allows up to ${maxCollections} collections. Delete one to make room or upgrade your plan.`,
-          [
-            { text: "OK", style: "cancel" },
-            { text: "View Plans", onPress: () => router.push("/subscription") },
-          ],
-        );
-      } else {
-        // Free user — close modal, store createCollection as the pending action
-        setShowNewCollection(false);
-        pendingActionRef.current = createCollection;
-        setPaywallReason("collections");
-        setShowPaywall(true);
-      }
-      return;
-    }
-
-    const maxPhotos = subscriptionStatus?.limits?.maxPhotosPerCollection ?? 10;
-    if (!isActive && selectedAssets.length > maxPhotos) {
-      setShowNewCollection(false);
-      pendingActionRef.current = createCollection;
-      setPaywallReason("photos");
-      setShowPaywall(true);
-      return;
-    }
-
-    if (
-      collections.some(
-        (c) => c.name.toLowerCase() === collectionName.trim().toLowerCase(),
-      )
-    ) {
-      Alert.alert("Name taken", "A collection with this name already exists.");
-      return;
-    }
-
-    setCreating(true);
-    setUploadProgress({ total: selectedAssets.length, completed: 0 });
-    try {
-      await Promise.all(
-        selectedAssets.map(async (asset) => {
-          const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
-          await uploadToS3(
-            session.user.id,
-            collectionName.trim(),
-            fileName,
-            asset.uri,
-            asset.width,
-            asset.height,
-          );
-          // Increment completed count as each upload finishes —
-          // functional update since these resolve out of order in parallel
-          setUploadProgress((prev) => ({
-            ...prev,
-            completed: prev.completed + 1,
-          }));
-        }),
-      );
-      setShowNewCollection(false);
-      setCollectionName("");
-      setSelectedAssets([]);
-      await fetchCollections(session);
-    } catch (error: any) {
-      console.error("Create collection error:", error.message);
-      Alert.alert("Error", "Something went wrong. Please try again.");
-    } finally {
-      setCreating(false);
-      setUploadProgress({ total: 0, completed: 0 });
-    }
-  }
 
   function confirmDeleteCollection(collection: Collection) {
     Alert.alert(
@@ -601,7 +488,7 @@ export default function CollectionsPage() {
         <View style={styles.headerRight}>
           <TouchableOpacity
             style={styles.iconButton}
-            onPress={() => setShowNewCollection(true)}
+            onPress={() => router.push("/new-collection")}
           >
             <Ionicons name="add-circle-outline" size={24} color="#111" />
           </TouchableOpacity>
@@ -715,149 +602,6 @@ export default function CollectionsPage() {
           </View>
         </ScrollView>
       )}
-
-      {/* New Collection Modal */}
-      <Modal
-        visible={showNewCollection}
-        transparent
-        animationType="slide"
-        statusBarTranslucent
-      >
-        <KeyboardAvoidingView
-          style={styles.modalBackdrop}
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-          // Small offset accounts for the status bar / notch on Android
-          // so the sheet doesn't get pushed up further than necessary
-          keyboardVerticalOffset={Platform.OS === "android" ? 0 : 0}
-        >
-          {/* Tapping the dimmed backdrop area dismisses the keyboard first
-              (rather than immediately closing the whole sheet) — matches
-              the behaviour people expect from bottom sheets everywhere */}
-          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <View style={{ flex: 1 }} />
-          </TouchableWithoutFeedback>
-
-          <View style={styles.modalCard}>
-            {/* Drag handle — also reinforces this is a sheet, not a full page */}
-            <View style={styles.modalHandle} />
-
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-              // Caps how tall the sheet can grow so it never fights the
-              // keyboard for space — content scrolls internally instead
-              style={{ maxHeight: "100%" }}
-            >
-              <Text style={styles.modalTitle}>New Collection</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Collection name"
-                placeholderTextColor="#999"
-                value={collectionName}
-                onChangeText={setCollectionName}
-                autoFocus
-                returnKeyType="done"
-                blurOnSubmit
-              />
-              <TouchableOpacity
-                style={styles.photoPickerButton}
-                onPress={pickPhotos}
-              >
-                <Text style={styles.photoPickerText}>
-                  {selectedAssets.length > 0
-                    ? `${selectedAssets.length} photo${selectedAssets.length !== 1 ? "s" : ""} selected`
-                    : "📷  Select Photos"}
-                </Text>
-              </TouchableOpacity>
-              {selectedAssets.length > 0 && (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={styles.previewStrip}
-                >
-                  {selectedAssets.map((asset, i) => (
-                    <Image
-                      key={i}
-                      source={{ uri: asset.uri }}
-                      style={styles.previewThumb}
-                      contentFit="cover"
-                    />
-                  ))}
-                </ScrollView>
-              )}
-              <View style={styles.modalActions}>
-                <TouchableOpacity
-                  style={styles.cancelButton}
-                  onPress={() => {
-                    setShowNewCollection(false);
-                    setCollectionName("");
-                    setSelectedAssets([]);
-                  }}
-                >
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.createButton, creating && { opacity: 0.6 }]}
-                  onPress={createCollection}
-                  disabled={creating}
-                >
-                  {creating ? (
-                    <ActivityIndicator color="#fff" size="small" />
-                  ) : (
-                    <Text style={styles.createButtonText}>Create</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* Paywall Modal */}
-      <PaywallModal
-        visible={showPaywall}
-        reason={paywallReason}
-        currentLimit={
-          paywallReason === "collections"
-            ? (subscriptionStatus?.limits?.maxCollections ?? 3)
-            : (subscriptionStatus?.limits?.maxPhotosPerCollection ?? 10)
-        }
-        currentTier={
-          subscriptionStatus?.isActive
-            ? (subscriptionStatus.tier as any)
-            : "free"
-        }
-        onSubscribed={async (_tier) => {
-          // Refresh subscription so limits are updated
-          const status = await checkSubscription();
-          setSubscriptionStatus(status);
-          setShowPaywall(false);
-
-          if (pendingActionRef.current) {
-            const action = pendingActionRef.current;
-            pendingActionRef.current = null;
-            // Small delay to let the paywall finish its close animation
-            // before the next action fires
-            setTimeout(() => action(), 300);
-          }
-        }}
-        onDismiss={() => {
-          setShowPaywall(false);
-          pendingActionRef.current = null;
-          // Re-open the new collection modal so user can adjust or cancel
-          if (collectionName.trim() && selectedAssets.length > 0) {
-            setTimeout(() => setShowNewCollection(true), 300);
-          }
-        }}
-      />
-
-      {/* Upload progress — shown while creating a collection with photos */}
-      <UploadProgressOverlay
-        visible={creating}
-        total={uploadProgress.total}
-        completed={uploadProgress.completed}
-        label="Creating your collection"
-      />
     </View>
   );
 }
@@ -1062,85 +806,6 @@ const styles = StyleSheet.create({
   emptyIcon: { fontSize: 48 },
   emptyTitle: { fontSize: 18, fontWeight: "600", color: "#333" },
   emptyText: { fontSize: 14, color: "#999" },
-
-  // ── New collection modal ──────────────────────────────────
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "flex-end",
-  },
-  modalCard: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 24,
-    paddingTop: 12,
-    paddingBottom: 40,
-    // Caps the sheet so it never grows taller than ~85% of the screen —
-    // combined with the KeyboardAvoidingView wrapper, this guarantees
-    // the Create/Cancel buttons and the input stay reachable even when
-    // the keyboard is open on a small device
-    maxHeight: "85%",
-  },
-  modalHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "#e0e0e0",
-    alignSelf: "center",
-    marginBottom: 16,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#111",
-    marginBottom: 16,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 12,
-    padding: 14,
-    fontSize: 16,
-    color: "#111",
-    marginBottom: 12,
-  },
-  photoPickerButton: {
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 12,
-    borderStyle: "dashed",
-    padding: 16,
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  photoPickerText: { fontSize: 15, color: "#555", fontWeight: "500" },
-  previewStrip: { marginBottom: 16 },
-  previewThumb: {
-    width: 72,
-    height: 72,
-    borderRadius: 8,
-    marginRight: 8,
-    backgroundColor: "#eee",
-  },
-  modalActions: { flexDirection: "row", gap: 12, marginTop: 8 },
-  cancelButton: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#ddd",
-    alignItems: "center",
-  },
-  cancelButtonText: { fontSize: 15, color: "#555", fontWeight: "500" },
-  createButton: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: "#111",
-    alignItems: "center",
-  },
-  createButtonText: { fontSize: 15, color: "#fff", fontWeight: "600" },
 
   // Legacy styles kept for safety
   subtitle: {

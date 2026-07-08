@@ -138,7 +138,7 @@ export default function CollectionPage() {
   // separate from _layout.tsx's session check — the same architectural
   // bug fixed in index.tsx. See AuthContext.tsx and index.tsx for the
   // full explanation of the race condition this caused.
-  const { session, sessionVersion } = useAuth();
+  const { session } = useAuth();
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -221,6 +221,19 @@ export default function CollectionPage() {
     return colors[Math.abs(hash) % colors.length];
   }
 
+  // Depends on `session?.user?.id` (a plain string), NOT on `session`
+  // itself or the removed `sessionVersion` counter — both changed on
+  // every auth event including routine TOKEN_REFRESHED events that
+  // happen automatically in the background and don't represent any
+  // real change. That caused this effect to re-run on every token
+  // refresh, flipping loading back to true and hiding the photo grid
+  // until it reloaded — a visible flicker on every refresh, however
+  // often it happened. `user.id` stays stable across any number of
+  // refreshes for the same signed-in user, so this now only re-runs
+  // on a genuine sign-in or sign-out. See AuthContext.tsx for the
+  // full explanation.
+  const userId = session?.user?.id ?? null;
+
   useEffect(() => {
     if (!session) {
       setLoading(false);
@@ -234,7 +247,8 @@ export default function CollectionPage() {
       loadShares(),
       checkSubscription().then(setSubscriptionStatus),
     ]).finally(() => setLoading(false));
-  }, [sessionVersion]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   // Create hidden file input imperatively on web
   useEffect(() => {

@@ -138,7 +138,14 @@ function RootLayoutNav() {
   // the user is logged in.
   useEffect(() => {
     if (loading) return;
-    if (segments.length === 0) return;
+    // Note: no longer guarding on segments.length === 0 here. That guard
+    // was meant to skip the check while segments are still being computed,
+    // but an empty array is also the CORRECT, final value Expo Router
+    // returns for the root "/" route — not just a "not ready yet" state.
+    // Skipping the check for that case meant visiting "/" directly (e.g.
+    // a fresh browser with no session) never got redirected to /login at
+    // all — the home screen just rendered regardless of session state.
+    // `loading` above is the actual "not ready yet" gate we need.
 
     const inAuthGroup = segments[0] === "login";
     const inPublicGroup =
