@@ -1,6 +1,7 @@
 import React from "react";
 import {
   Dimensions,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -191,9 +192,9 @@ const styles = StyleSheet.create({
   book: {
     flex: 1,
     overflow: "hidden",
-    // @ts-ignore — web only
-    userSelect: "none",
-    cursor: "grab",
+    ...Platform.select({
+      web: { userSelect: "none", cursor: "grab" } as any,
+    }),
   },
   nav: {
     flexDirection: "row",

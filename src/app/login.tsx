@@ -34,6 +34,16 @@ WebBrowser.maybeCompleteAuthSession();
 const NATIVE_REDIRECT = "mems://login";
 const redirectTo = Platform.OS === "web" ? makeRedirectUri() : NATIVE_REDIRECT;
 
+// ── Native password-recovery redirect ────────────────────────
+// Deliberately a *different* deep link than NATIVE_REDIRECT above.
+// Reusing "mems://login" here used to route the recovery link straight
+// into the OAuth code-exchange handler in app/_layout.tsx, which just
+// logged the user in and dropped them on the home screen with no way to
+// actually set a new password — effectively a dead end. This distinct
+// scheme lets _layout.tsx tell the two flows apart and send recovery
+// links to the /reset-password screen instead.
+const NATIVE_RESET_REDIRECT = "mems://reset-password";
+
 // Note: PKCE code exchange and session handling for the Google OAuth
 // redirect is handled exclusively by the persistent listener in
 // app/_layout.tsx — it lives at the app root so it survives even if
@@ -434,7 +444,7 @@ export default function LoginScreen() {
         {
           redirectTo: IS_WEB
             ? `${window.location.origin}/reset-password`
-            : redirectTo,
+            : NATIVE_RESET_REDIRECT,
         },
       );
       if (error) throw error;

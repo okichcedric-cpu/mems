@@ -18,19 +18,32 @@ import { supabase } from "../utils/supabase";
 // only reliable way to catch the real result is to listen for the
 // redirect URL directly, at a point that lives for the app's entire
 // session rather than one function call.
-async function handleAuthRedirect(url: string | null) {
-  if (!url) return;
+// Returns which kind of redirect this was (so the caller can navigate
+// appropriately), or null if the URL wasn't one we handle / the exchange
+// failed.
+async function handleAuthRedirect(
+  url: string | null,
+): Promise<"oauth" | "recovery" | null> {
+  if (!url) return null;
 
   // Mobile subscription payment callback — just needs a refresh/home nav
   if (url.includes("subscription-callback")) {
     console.log("[Deeplink] Subscription callback received");
-    return;
+    return null;
   }
 
-  // Google OAuth callback — extract and apply the session
-  if (!url.startsWith("mems://login")) return;
+  // Google OAuth callback vs. password-recovery callback — both carry a
+  // PKCE code/tokens the same way, they just land on different screens
+  // afterwards (home vs. the reset-password form).
+  const isRecovery = url.startsWith("mems://reset-password");
+  const isOAuth = url.startsWith("mems://login");
+  if (!isRecovery && !isOAuth) return null;
 
-  console.log("[OAuth] Handling redirect URL");
+  console.log(
+    isRecovery
+      ? "[Auth] Handling password recovery redirect"
+      : "[OAuth] Handling redirect URL",
+  );
 
   try {
     const parsed = new URL(url);
@@ -42,17 +55,17 @@ async function handleAuthRedirect(url: string | null) {
     const code = parsed.searchParams.get("code");
 
     if (code) {
-      console.log("[OAuth] Authorization code found — exchanging for session");
-      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+      console.log("[Auth] Authorization code found — exchanging for session");
+      const { error } = await supabase.auth.exchangeCodeForSession(code);
       if (error) {
-        console.error("[OAuth] exchangeCodeForSession failed:", error.message);
-      } else {
-        console.log("[OAuth] Session established successfully");
-        // Note: we don't need to manually update any state here — the
-        // AuthProvider's onAuthStateChange listener picks this up
-        // automatically and propagates it to the whole app.
+        console.error("[Auth] exchangeCodeForSession failed:", error.message);
+        return null;
       }
-      return;
+      console.log("[Auth] Session established successfully");
+      // Note: we don't need to manually update any state here — the
+      // AuthProvider's onAuthStateChange listener picks this up
+      // automatically and propagates it to the whole app.
+      return isRecovery ? "recovery" : "oauth";
     }
 
     // ── Fallback — implicit flow tokens in the hash fragment ────
@@ -66,15 +79,18 @@ async function handleAuthRedirect(url: string | null) {
         refresh_token,
       });
       if (error) {
-        console.error("[OAuth] setSession failed:", error.message);
-      } else {
-        console.log("[OAuth] Session set successfully via fragment tokens");
+        console.error("[Auth] setSession failed:", error.message);
+        return null;
       }
-    } else {
-      console.warn("[OAuth] Redirect URL had neither a code nor tokens");
+      console.log("[Auth] Session set successfully via fragment tokens");
+      return isRecovery ? "recovery" : "oauth";
     }
+
+    console.warn("[Auth] Redirect URL had neither a code nor tokens");
+    return null;
   } catch (err: any) {
-    console.error("[OAuth] Failed to parse redirect URL:", err.message);
+    console.error("[Auth] Failed to parse redirect URL:", err.message);
+    return null;
   }
 }
 
@@ -91,7 +107,9 @@ function RootLayoutNav() {
     if (Platform.OS === "web") return;
 
     const subscription = Linking.addEventListener("url", ({ url }) => {
-      handleAuthRedirect(url);
+      handleAuthRedirect(url).then((result) => {
+        if (result === "recovery") router.replace("/reset-password");
+      });
       if (url.includes("subscription-callback")) {
         router.replace("/");
       }
@@ -99,7 +117,9 @@ function RootLayoutNav() {
 
     Linking.getInitialURL().then((url) => {
       if (url) {
-        handleAuthRedirect(url);
+        handleAuthRedirect(url).then((result) => {
+          if (result === "recovery") router.replace("/reset-password");
+        });
         if (url.includes("subscription-callback")) {
           router.replace("/");
         }
@@ -155,6 +175,7 @@ function RootLayoutNav() {
       segments[0] === "subscription" ||
       segments[0] === "subscription-callback" ||
       segments[0] === "delete-account" ||
+      segments[0] === "reset-password" ||
       segments[0] === "child-safety";
 
     if (!session && !inAuthGroup && !inPublicGroup) {

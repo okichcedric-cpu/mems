@@ -133,7 +133,7 @@ export default function CollectionsPage() {
       if (names.length > 0) {
         // Fetch all owned collections in parallel — one call per collection
         const ownedData = await Promise.allSettled(
-          names.map(async (name: string) => {
+          names.map(async (name: string): Promise<Collection> => {
             const { data, error } = await supabase.functions.invoke(
               "list-photos",
               {
@@ -150,7 +150,7 @@ export default function CollectionsPage() {
               (p: any) => p.Key && !p.Key.includes("/thumbs/"),
             );
 
-            const previewUrls = allPhotos
+            const previewUrls: string[] = allPhotos
               .slice(0, 3)
               .map((p: any) => p.thumbUrl ?? p.url)
               .filter(Boolean);
@@ -185,47 +185,53 @@ export default function CollectionsPage() {
 
         if (shared.length > 0) {
           const sharedData = await Promise.allSettled(
-            shared.map(async ({ ownerId, ownerEmail, collectionName }) => {
-              const { data, error } = await supabase.functions.invoke(
-                "list-photos",
-                {
-                  body: {
-                    userId: ownerId,
-                    collectionName,
-                    includeUrls: true,
-                  },
-                },
-              );
-              if (error) throw new Error(error.message);
-
-              const allPhotos = (data?.photos || []).filter(
-                (p: any) => p.Key && !p.Key.includes("/thumbs/"),
-              );
-
-              // Auto-clean empty shared collections
-              if (allPhotos.length === 0) {
-                await supabase
-                  .from("shared_collections")
-                  .delete()
-                  .eq("owner_id", ownerId)
-                  .eq("collection_name", collectionName);
-                throw new Error("empty");
-              }
-
-              const previewUrls = allPhotos
-                .slice(0, 3)
-                .map((p: any) => p.thumbUrl ?? p.url)
-                .filter(Boolean);
-
-              return {
-                name: collectionName,
-                previewUrls,
-                photoCount: allPhotos.length,
+            shared.map(
+              async ({
                 ownerId,
                 ownerEmail,
-                isShared: true,
-              };
-            }),
+                collectionName,
+              }): Promise<Collection> => {
+                const { data, error } = await supabase.functions.invoke(
+                  "list-photos",
+                  {
+                    body: {
+                      userId: ownerId,
+                      collectionName,
+                      includeUrls: true,
+                    },
+                  },
+                );
+                if (error) throw new Error(error.message);
+
+                const allPhotos = (data?.photos || []).filter(
+                  (p: any) => p.Key && !p.Key.includes("/thumbs/"),
+                );
+
+                // Auto-clean empty shared collections
+                if (allPhotos.length === 0) {
+                  await supabase
+                    .from("shared_collections")
+                    .delete()
+                    .eq("owner_id", ownerId)
+                    .eq("collection_name", collectionName);
+                  throw new Error("empty");
+                }
+
+                const previewUrls: string[] = allPhotos
+                  .slice(0, 3)
+                  .map((p: any) => p.thumbUrl ?? p.url)
+                  .filter(Boolean);
+
+                return {
+                  name: collectionName,
+                  previewUrls,
+                  photoCount: allPhotos.length,
+                  ownerId,
+                  ownerEmail,
+                  isShared: true,
+                };
+              },
+            ),
           );
 
           sharedCollections = sharedData
@@ -537,21 +543,12 @@ export default function CollectionsPage() {
               style={styles.profileMenuItem}
               onPress={() => {
                 setShowProfileMenu(false);
-                router.push("/delete-account");
+                router.push("/account-management");
               }}
             >
-              <Ionicons
-                name="trash-outline"
-                size={18}
-                color="rgba(220,40,40,0.9)"
-              />
-              <Text
-                style={[
-                  styles.profileMenuItemText,
-                  styles.profileMenuItemDanger,
-                ]}
-              >
-                Deactivate account
+              <Ionicons name="settings-outline" size={18} color="#333" />
+              <Text style={styles.profileMenuItemText}>
+                Account Management
               </Text>
             </TouchableOpacity>
 
