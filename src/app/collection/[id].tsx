@@ -24,6 +24,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import PaywallModal from "../../components/PaywallModal";
 import UploadProgressOverlay from "../../components/UploadProgressOverlay";
+import { useAuth } from "../../contexts/AuthContext";
 import { deleteCollection, deleteFromS3, uploadToS3 } from "../../utils/s3";
 import {
   getCollectionShares,
@@ -132,7 +133,12 @@ export default function CollectionPage() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  const [session, setSession] = useState<Session | null>(null);
+  // ── Single source of truth ──────────────────────────────────
+  // Previously this screen ran its own independent getSession() call,
+  // separate from _layout.tsx's session check — the same architectural
+  // bug fixed in index.tsx. See AuthContext.tsx and index.tsx for the
+  // full explanation of the race condition this caused.
+  const { session, sessionVersion } = useAuth();
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -216,19 +222,19 @@ export default function CollectionPage() {
   }
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) {
-        const owner = ownerIdParam ?? session.user.id;
-        setEffectiveOwnerId(owner);
-        fetchPhotos(session, owner);
-        loadShares();
-        checkSubscription().then(setSubscriptionStatus);
-      } else {
-        setLoading(false);
-      }
-    });
-  }, []);
+    if (!session) {
+      setLoading(false);
+      return;
+    }
+    const owner = ownerIdParam ?? session.user.id;
+    setEffectiveOwnerId(owner);
+    setLoading(true);
+    Promise.all([
+      fetchPhotos(session, owner),
+      loadShares(),
+      checkSubscription().then(setSubscriptionStatus),
+    ]).finally(() => setLoading(false));
+  }, [sessionVersion]);
 
   // Create hidden file input imperatively on web
   useEffect(() => {

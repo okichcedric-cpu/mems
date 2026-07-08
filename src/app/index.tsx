@@ -1,6 +1,7 @@
 import PaywallModal from "@/components/PaywallModal";
 import ShimmerPlaceholder from "@/components/ShimmerPlaceholder";
 import UploadProgressOverlay from "@/components/UploadProgressOverlay";
+import { useAuth } from "@/contexts/AuthContext";
 import { Ionicons } from "@expo/vector-icons";
 import { Session } from "@supabase/supabase-js";
 import { Image } from "expo-image";
@@ -49,7 +50,22 @@ const RIGHT_HEIGHTS = [1.0, 1.35, 1.0, 1.2, 1.1, 1.35];
 export default function CollectionsPage() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [session, setSession] = useState<Session | null>(null);
+  // ── Single source of truth ──────────────────────────────────
+  // Previously this screen ran its OWN independent getSession() call
+  // on mount, completely separate from the session check in
+  // _layout.tsx. That created a race condition: _layout.tsx could
+  // correctly determine the user was logged in (so it let them see
+  // this screen), while THIS screen's own separate getSession() call
+  // raced and returned null at that exact moment — silently skipping
+  // fetchCollections() entirely and leaving a blank, "logged in but
+  // empty" home screen. This was the root cause of the blank homepage
+  // bug after app updates specifically, since storage read timing can
+  // shift right after an update installs.
+  //
+  // Now this screen simply reads the already-validated session from
+  // AuthContext — there is only ever one source of truth for the
+  // whole app, set once in AuthProvider and shared everywhere.
+  const { session, sessionVersion } = useAuth();
   const [collections, setCollections] = useState<Collection[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -72,21 +88,27 @@ export default function CollectionsPage() {
   // Pending action to resume after subscription
   const pendingActionRef = useRef<(() => void) | null>(null);
 
+  // Reacts to the session becoming available (or changing) from
+  // AuthContext — sessionVersion in the deps array ensures this fires
+  // even on a TOKEN_REFRESHED event where the session object's
+  // identity changes but `session` itself might look superficially
+  // similar, and reliably fires exactly once when a validated session
+  // first appears after app launch.
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) {
-        // ── Run collections and subscription check in PARALLEL ──
-        // This is the key performance fix — neither blocks the other
-        Promise.all([
-          fetchCollections(session),
-          checkSubscription().then(setSubscriptionStatus),
-        ]);
-      } else {
-        setLoading(false);
-      }
-    });
-  }, []);
+    if (!session) {
+      setLoading(false);
+      setCollections([]);
+      return;
+    }
+
+    setLoading(true);
+    // ── Run collections and subscription check in PARALLEL ──
+    // Neither blocks the other
+    Promise.all([
+      fetchCollections(session),
+      checkSubscription().then(setSubscriptionStatus),
+    ]).finally(() => setLoading(false));
+  }, [sessionVersion]);
 
   async function fetchCollections(currentSession: Session) {
     try {

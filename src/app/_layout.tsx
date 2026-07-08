@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
-import { View, ActivityIndicator, Platform } from "react-native";
-import { Slot, useRouter, useSegments } from "expo-router";
-import { Session } from "@supabase/supabase-js";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { supabase } from "../utils/supabase";
 import * as Linking from "expo-linking";
+import { Slot, useRouter, useSegments } from "expo-router";
+import { useEffect } from "react";
+import { ActivityIndicator, Platform, View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { AuthProvider, useAuth } from "../contexts/AuthContext";
+import { supabase } from "../utils/supabase";
 
 // ── OAuth redirect handling ──────────────────────────────────
 // Lives at the app root (not inside the login screen) so it survives
@@ -38,11 +38,7 @@ async function handleAuthRedirect(url: string | null) {
     // ── PKCE flow (default in current supabase-js) ──────────────
     // Supabase returns an authorization "code" as a query param,
     // e.g. mems://login?code=xxxxx — this must be exchanged for a
-    // real session via exchangeCodeForSession. This is why the old
-    // "access_token in the hash fragment" approach found nothing:
-    // that only applies to the older implicit flow, which Supabase
-    // isn't using here (confirmed by the "code challenge" warning
-    // in the logs, which only fires for PKCE).
+    // real session via exchangeCodeForSession.
     const code = parsed.searchParams.get("code");
 
     if (code) {
@@ -52,18 +48,23 @@ async function handleAuthRedirect(url: string | null) {
         console.error("[OAuth] exchangeCodeForSession failed:", error.message);
       } else {
         console.log("[OAuth] Session established successfully");
+        // Note: we don't need to manually update any state here — the
+        // AuthProvider's onAuthStateChange listener picks this up
+        // automatically and propagates it to the whole app.
       }
       return;
     }
 
     // ── Fallback — implicit flow tokens in the hash fragment ────
-    // Kept in case flowType is ever switched back to 'implicit'
     const hashParams = new URLSearchParams(parsed.hash.replace("#", ""));
     const access_token = hashParams.get("access_token");
     const refresh_token = hashParams.get("refresh_token");
 
     if (access_token && refresh_token) {
-      const { error } = await supabase.auth.setSession({ access_token, refresh_token });
+      const { error } = await supabase.auth.setSession({
+        access_token,
+        refresh_token,
+      });
       if (error) {
         console.error("[OAuth] setSession failed:", error.message);
       } else {
@@ -77,9 +78,11 @@ async function handleAuthRedirect(url: string | null) {
   }
 }
 
-export default function RootLayout() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+// ── Inner component — consumes AuthContext for routing ────────────
+// Must be a separate component from RootLayout because context can
+// only be READ below the level of the Provider that supplies it.
+function RootLayoutNav() {
+  const { session, loading } = useAuth();
   const router = useRouter();
   const segments = useSegments();
 
@@ -87,7 +90,6 @@ export default function RootLayout() {
   useEffect(() => {
     if (Platform.OS === "web") return;
 
-    // 1 — Catch the redirect if the app is already running (warm)
     const subscription = Linking.addEventListener("url", ({ url }) => {
       handleAuthRedirect(url);
       if (url.includes("subscription-callback")) {
@@ -95,9 +97,6 @@ export default function RootLayout() {
       }
     });
 
-    // 2 — Catch the redirect if Android cold-started/relaunched the
-    // activity because of the intent — this covers the case where the
-    // "url" event above never fires because the JS context was fresh
     Linking.getInitialURL().then((url) => {
       if (url) {
         handleAuthRedirect(url);
@@ -131,24 +130,12 @@ export default function RootLayout() {
     }
   }, []);
 
-  // ── Listen for auth state changes ──────────────────────────────
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoading(false);
-    });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
   // ── Handle routing based on session ────────────────────────────
+  // This is now the ONLY place in the entire app that makes a routing
+  // decision based on auth state — every screen reads the same
+  // `session`/`loading` values from AuthContext, so there is no longer
+  // any possibility of two parts of the app disagreeing about whether
+  // the user is logged in.
   useEffect(() => {
     if (loading) return;
     if (segments.length === 0) return;
@@ -164,35 +151,36 @@ export default function RootLayout() {
       segments[0] === "child-safety";
 
     if (!session && !inAuthGroup && !inPublicGroup) {
-      // Not logged in and not on a public page — go to login
       router.replace("/login");
     } else if (session && inAuthGroup) {
-      // Logged in but on login page — go to home
       router.replace("/");
     }
   }, [session, segments, loading]);
 
-  // ── Show spinner while checking session ────────────────────────
   if (loading) {
     return (
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <View
-          style={{
-            flex: 1,
-            justifyContent: "center",
-            alignItems: "center",
-            backgroundColor: "#fff",
-          }}
-        >
-          <ActivityIndicator size="large" color="#111" />
-        </View>
-      </GestureHandlerRootView>
+      <View
+        style={{
+          flex: 1,
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundColor: "#fff",
+        }}
+      >
+        <ActivityIndicator size="large" color="#111" />
+      </View>
     );
   }
 
+  return <Slot />;
+}
+
+export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <Slot />
+      <AuthProvider>
+        <RootLayoutNav />
+      </AuthProvider>
     </GestureHandlerRootView>
   );
 }
