@@ -11,6 +11,8 @@ import {
   ActivityIndicator,
   Alert,
   Dimensions,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   RefreshControl,
@@ -20,6 +22,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -698,68 +701,94 @@ export default function CollectionsPage() {
         animationType="slide"
         statusBarTranslucent
       >
-        <View style={styles.modalBackdrop}>
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          // Small offset accounts for the status bar / notch on Android
+          // so the sheet doesn't get pushed up further than necessary
+          keyboardVerticalOffset={Platform.OS === "android" ? 0 : 0}
+        >
+          {/* Tapping the dimmed backdrop area dismisses the keyboard first
+              (rather than immediately closing the whole sheet) — matches
+              the behaviour people expect from bottom sheets everywhere */}
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={{ flex: 1 }} />
+          </TouchableWithoutFeedback>
+
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>New Collection</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Collection name"
-              placeholderTextColor="#999"
-              value={collectionName}
-              onChangeText={setCollectionName}
-              autoFocus
-            />
-            <TouchableOpacity
-              style={styles.photoPickerButton}
-              onPress={pickPhotos}
+            {/* Drag handle — also reinforces this is a sheet, not a full page */}
+            <View style={styles.modalHandle} />
+
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              // Caps how tall the sheet can grow so it never fights the
+              // keyboard for space — content scrolls internally instead
+              style={{ maxHeight: "100%" }}
             >
-              <Text style={styles.photoPickerText}>
-                {selectedAssets.length > 0
-                  ? `${selectedAssets.length} photo${selectedAssets.length !== 1 ? "s" : ""} selected`
-                  : "📷  Select Photos"}
-              </Text>
-            </TouchableOpacity>
-            {selectedAssets.length > 0 && (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.previewStrip}
-              >
-                {selectedAssets.map((asset, i) => (
-                  <Image
-                    key={i}
-                    source={{ uri: asset.uri }}
-                    style={styles.previewThumb}
-                    contentFit="cover"
-                  />
-                ))}
-              </ScrollView>
-            )}
-            <View style={styles.modalActions}>
+              <Text style={styles.modalTitle}>New Collection</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Collection name"
+                placeholderTextColor="#999"
+                value={collectionName}
+                onChangeText={setCollectionName}
+                autoFocus
+                returnKeyType="done"
+                blurOnSubmit
+              />
               <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => {
-                  setShowNewCollection(false);
-                  setCollectionName("");
-                  setSelectedAssets([]);
-                }}
+                style={styles.photoPickerButton}
+                onPress={pickPhotos}
               >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
+                <Text style={styles.photoPickerText}>
+                  {selectedAssets.length > 0
+                    ? `${selectedAssets.length} photo${selectedAssets.length !== 1 ? "s" : ""} selected`
+                    : "📷  Select Photos"}
+                </Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.createButton, creating && { opacity: 0.6 }]}
-                onPress={createCollection}
-                disabled={creating}
-              >
-                {creating ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <Text style={styles.createButtonText}>Create</Text>
-                )}
-              </TouchableOpacity>
-            </View>
+              {selectedAssets.length > 0 && (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.previewStrip}
+                >
+                  {selectedAssets.map((asset, i) => (
+                    <Image
+                      key={i}
+                      source={{ uri: asset.uri }}
+                      style={styles.previewThumb}
+                      contentFit="cover"
+                    />
+                  ))}
+                </ScrollView>
+              )}
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={() => {
+                    setShowNewCollection(false);
+                    setCollectionName("");
+                    setSelectedAssets([]);
+                  }}
+                >
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.createButton, creating && { opacity: 0.6 }]}
+                  onPress={createCollection}
+                  disabled={creating}
+                >
+                  {creating ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Text style={styles.createButtonText}>Create</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Paywall Modal */}
@@ -1023,7 +1052,21 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 24,
+    paddingTop: 12,
     paddingBottom: 40,
+    // Caps the sheet so it never grows taller than ~85% of the screen —
+    // combined with the KeyboardAvoidingView wrapper, this guarantees
+    // the Create/Cancel buttons and the input stay reachable even when
+    // the keyboard is open on a small device
+    maxHeight: "85%",
+  },
+  modalHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#e0e0e0",
+    alignSelf: "center",
+    marginBottom: 16,
   },
   modalTitle: {
     fontSize: 20,

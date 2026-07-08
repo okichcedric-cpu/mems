@@ -1,24 +1,23 @@
-import * as WebBrowser from "expo-web-browser";
+import { AntDesign } from "@expo/vector-icons";
 import { makeRedirectUri } from "expo-auth-session";
+import { useRouter } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
 import { useEffect, useRef, useState } from "react";
 import {
-  View,
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Dimensions,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
-  Alert,
-  Platform,
-  ActivityIndicator,
-  ScrollView,
-  KeyboardAvoidingView,
-  Dimensions,
-  Image,
-  Animated,
-  Linking,
+  View,
 } from "react-native";
-import { AntDesign } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
 import { supabase } from "../utils/supabase";
 
 WebBrowser.maybeCompleteAuthSession();
@@ -33,9 +32,7 @@ WebBrowser.maybeCompleteAuthSession();
 // way to reopen the native app, which is exactly "stuck on browser".
 // A literal "mems://" leaves zero ambiguity.
 const NATIVE_REDIRECT = "mems://login";
-const redirectTo = Platform.OS === "web"
-  ? makeRedirectUri()
-  : NATIVE_REDIRECT;
+const redirectTo = Platform.OS === "web" ? makeRedirectUri() : NATIVE_REDIRECT;
 
 // Note: PKCE code exchange and session handling for the Google OAuth
 // redirect is handled exclusively by the persistent listener in
@@ -45,9 +42,11 @@ const redirectTo = Platform.OS === "web"
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const IS_WEB = Platform.OS === "web";
 const IS_DESKTOP = IS_WEB && SCREEN_WIDTH >= 768;
-const FORM_WIDTH = IS_DESKTOP ? 360 : IS_WEB
-  ? Math.min(420, SCREEN_WIDTH * 0.9)
-  : SCREEN_WIDTH - 48;
+const FORM_WIDTH = IS_DESKTOP
+  ? 360
+  : IS_WEB
+    ? Math.min(420, SCREEN_WIDTH * 0.9)
+    : SCREEN_WIDTH - 48;
 
 type Mode = "login" | "signup";
 
@@ -73,26 +72,35 @@ const POLAROID_PHOTOS = [
   {
     // Mid-right — family in bed
     source: require("@/assets/images/hero/family-bed.jpg"),
-    style: { top: "40%", right: "4%", rotate: "-4deg", width: 126, height: 138 },
+    style: {
+      top: "40%",
+      right: "4%",
+      rotate: "-4deg",
+      width: 126,
+      height: 138,
+    },
   },
 ];
 
 // ── Desktop left hero panel ──────────────────────────────────
 function DesktopHeroPanel() {
   const polaroidAnims = useRef(
-    POLAROID_PHOTOS.map(() => new Animated.Value(0))
+    POLAROID_PHOTOS.map(() => new Animated.Value(0)),
   ).current;
 
   useEffect(() => {
     POLAROID_PHOTOS.forEach((_, i) => {
-      setTimeout(() => {
-        Animated.spring(polaroidAnims[i], {
-          toValue: 1,
-          tension: 60,
-          friction: 10,
-          useNativeDriver: true,
-        }).start();
-      }, 200 + i * 160);
+      setTimeout(
+        () => {
+          Animated.spring(polaroidAnims[i], {
+            toValue: 1,
+            tension: 60,
+            friction: 10,
+            useNativeDriver: true,
+          }).start();
+        },
+        200 + i * 160,
+      );
     });
   }, []);
 
@@ -102,7 +110,7 @@ function DesktopHeroPanel() {
     size = 130,
     height = 110,
   }: {
-    photo: typeof POLAROID_PHOTOS[0];
+    photo: (typeof POLAROID_PHOTOS)[0];
     anim: Animated.Value;
     size?: number;
     height?: number;
@@ -113,7 +121,12 @@ function DesktopHeroPanel() {
           {
             transform: [
               { rotate: photo.style.rotate },
-              { scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) },
+              {
+                scale: anim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.7, 1],
+                }),
+              },
             ],
             opacity: anim,
           },
@@ -133,7 +146,6 @@ function DesktopHeroPanel() {
 
   return (
     <View style={heroStyles.panel}>
-
       {/* ── Logo row — no banner, just clean on white ── */}
       <View style={heroStyles.logoRow}>
         <Image
@@ -177,8 +189,8 @@ function DesktopHeroPanel() {
           </Text>
           <View style={heroStyles.accentLine} />
           <Text style={heroStyles.sub}>
-            Keep your memories safe, beautifully organised and shared
-            with the people who matter most.
+            Keep your memories safe, beautifully organised and shared with the
+            people who matter most.
           </Text>
         </View>
 
@@ -193,21 +205,23 @@ function DesktopHeroPanel() {
 
       {/* ── Pills row ── */}
       <View style={heroStyles.pillsRow}>
-        {["📸 Create albums", "🤝 Share moments", "☁️ Safe forever"].map((pill) => (
-          <View key={pill} style={heroStyles.pill}>
-            <Text style={heroStyles.pillText}>{pill}</Text>
-          </View>
-        ))}
+        {["📸 Create albums", "🤝 Share moments", "☁️ Safe forever"].map(
+          (pill) => (
+            <View key={pill} style={heroStyles.pill}>
+              <Text style={heroStyles.pillText}>{pill}</Text>
+            </View>
+          ),
+        )}
       </View>
-
     </View>
   );
 }
-async function signInWithGoogle() {
+async function signInWithGoogle(onLoadingChange?: (loading: boolean) => void) {
   if (IS_WEB) {
-    const params = typeof window !== "undefined"
-      ? new URLSearchParams(window.location.search)
-      : new URLSearchParams();
+    const params =
+      typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search)
+        : new URLSearchParams();
     const redirect = params.get("redirect");
     const redirectTo = redirect
       ? `${window.location.origin}/${redirect}`
@@ -237,6 +251,14 @@ async function signInWithGoogle() {
     if (data?.url) {
       console.log("[OAuth] Opening browser for Google sign in...");
 
+      // Second, more precise prefetch — targets the exact final URL
+      // (including the specific query params for this sign-in attempt)
+      // rather than just the base host. Runs in parallel with opening
+      // the session below rather than blocking on it.
+      if (Platform.OS === "android") {
+        WebBrowser.mayInitWithUrlAsync(data.url).catch(() => {});
+      }
+
       // We don't act on this promise's result at all anymore. The
       // persistent listener registered once at the app root (see
       // app/_layout.tsx) is the single source of truth for handling
@@ -252,17 +274,34 @@ async function signInWithGoogle() {
       // effect redirects away from /login automatically. No manual
       // router call is needed (or even possible from this module-level
       // function, since it sits outside the component's render scope).
-      const result = await WebBrowser.openAuthSessionAsync(data.url, NATIVE_REDIRECT, {
-        showInRecents: false,
-        toolbarColor: "#111111",
-        controlsColor: "#ffffff",
-        enableDefaultShareMenuItem: false,
-        enableBarCollapsing: true,
-      });
+      const result = await WebBrowser.openAuthSessionAsync(
+        data.url,
+        NATIVE_REDIRECT,
+        {
+          showInRecents: false,
+          toolbarColor: "#111111",
+          controlsColor: "#ffffff",
+          enableDefaultShareMenuItem: false,
+          enableBarCollapsing: true,
+        },
+      );
 
       console.log("[OAuth] Browser closed with result type:", result.type);
 
-      try { WebBrowser.dismissBrowser(); } catch {}
+      try {
+        WebBrowser.dismissBrowser();
+      } catch {}
+
+      // Keep the loading overlay up — it bridges the gap between the
+      // browser closing and _layout.tsx finishing the code exchange +
+      // navigating away. If navigation hasn't happened within a few
+      // seconds, something went wrong (or the user genuinely cancelled)
+      // — fall back to revealing the normal login form again.
+      if (onLoadingChange) {
+        setTimeout(() => onLoadingChange(false), 6000);
+      }
+    } else {
+      onLoadingChange?.(false);
     }
   }
 }
@@ -276,6 +315,50 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [showEmailForm, setShowEmailForm] = useState(IS_DESKTOP);
+  // Covers the brief gap between the OAuth browser closing and the
+  // app finishing the code exchange + navigating home — without this,
+  // the bare login form flashes back into view for a moment first
+  const [oauthLoading, setOauthLoading] = useState(false);
+
+  // ── Pre-warm the Android Custom Tab process ──────────────────
+  // Two separate optimisations, stacked:
+  //
+  // 1. warmUpAsync() spins up the Custom Tabs browser PROCESS itself
+  //    generically — without this, tapping the Google button has to
+  //    cold-start the browser from nothing.
+  //
+  // 2. mayInitWithUrlAsync() goes further and pre-establishes the
+  //    actual network connection (DNS lookup + TLS handshake) to the
+  //    specific host we already know we're about to load — Supabase's
+  //    own auth endpoint — well before the user even taps anything.
+  //    This is the more targeted fix for the blank-page flash, since
+  //    that blank moment is largely the time spent on DNS+TLS+redirect
+  //    processing for supabase.co, not just the browser app opening.
+  //
+  // Note: some residual flash can still happen even with both of these
+  // in place — Supabase's authorize endpoint does a genuine server-side
+  // 302 redirect to Google with no visible content of its own, and a
+  // browser has nothing to render during that hop regardless of how
+  // warmed-up the connection is. This is standard behaviour for OAuth
+  // authorize redirects generally (visible in most apps that use this
+  // flow) — these two calls minimise it as much as is technically
+  // possible, but a very brief flash is inherent to the redirect chain.
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+
+    WebBrowser.warmUpAsync().catch(() => {});
+
+    const authHost = (supabase as any).supabaseUrl;
+    if (authHost) {
+      WebBrowser.mayInitWithUrlAsync(`${authHost}/auth/v1/authorize`).catch(
+        () => {},
+      );
+    }
+
+    return () => {
+      WebBrowser.coolDownAsync().catch(() => {});
+    };
+  }, []);
 
   async function handleEmailAuth() {
     if (!email.trim()) {
@@ -325,9 +408,10 @@ export default function LoginScreen() {
     } catch (error: any) {
       // Log internally, show generic message — never expose Supabase errors
       console.error("Auth error:", error.message);
-      const userMessage = mode === "login"
-        ? "Sign in failed. Please check your email and password."
-        : "Sign up failed. Please try again.";
+      const userMessage =
+        mode === "login"
+          ? "Sign in failed. Please check your email and password."
+          : "Sign up failed. Please try again.";
       if (IS_WEB) {
         window.alert(userMessage);
       } else {
@@ -351,13 +435,16 @@ export default function LoginScreen() {
           redirectTo: IS_WEB
             ? `${window.location.origin}/reset-password`
             : redirectTo,
-        }
+        },
       );
       if (error) throw error;
       if (IS_WEB) {
         window.alert("Password reset email sent. Check your inbox.");
       } else {
-        Alert.alert("Email sent", "Check your inbox for a password reset link.");
+        Alert.alert(
+          "Email sent",
+          "Check your inbox for a password reset link.",
+        );
       }
     } catch (error: any) {
       console.error("Forgot password error:", error.message);
@@ -377,10 +464,12 @@ export default function LoginScreen() {
       <View style={styles.container}>
         {IS_DESKTOP && <DesktopHeroPanel />}
         {IS_DESKTOP && <View style={styles.separator} />}
-        <View style={[
-          styles.confirmationCard,
-          IS_DESKTOP && styles.confirmationCardDesktop,
-        ]}>
+        <View
+          style={[
+            styles.confirmationCard,
+            IS_DESKTOP && styles.confirmationCardDesktop,
+          ]}
+        >
           <Text style={styles.confirmationIcon}>📧</Text>
           <Text style={styles.confirmationTitle}>Check your email</Text>
           <Text style={styles.confirmationText}>
@@ -456,8 +545,12 @@ export default function LoginScreen() {
       {/* ── Google button — hero ── */}
       <TouchableOpacity
         style={[styles.googleButton, { width: FORM_WIDTH }]}
-        onPress={signInWithGoogle}
+        onPress={() => {
+          if (!IS_WEB) setOauthLoading(true);
+          signInWithGoogle(setOauthLoading);
+        }}
         activeOpacity={0.85}
+        disabled={oauthLoading}
       >
         <View style={styles.googleIconWrapper}>
           <AntDesign name="google" size={20} color="#EA4335" />
@@ -480,14 +573,20 @@ export default function LoginScreen() {
         <View style={[styles.emailToggleRow, { width: FORM_WIDTH }]}>
           <TouchableOpacity
             style={styles.emailToggleButton}
-            onPress={() => { setMode("login"); setShowEmailForm(true); }}
+            onPress={() => {
+              setMode("login");
+              setShowEmailForm(true);
+            }}
           >
             <Text style={styles.emailToggleText}>Sign in with email</Text>
           </TouchableOpacity>
           <View style={styles.emailToggleDot} />
           <TouchableOpacity
             style={styles.emailToggleButton}
-            onPress={() => { setMode("signup"); setShowEmailForm(true); }}
+            onPress={() => {
+              setMode("signup");
+              setShowEmailForm(true);
+            }}
           >
             <Text style={styles.emailToggleText}>Create account</Text>
           </TouchableOpacity>
@@ -497,24 +596,37 @@ export default function LoginScreen() {
           {/* Mode toggle */}
           <View style={[styles.modeToggle, { width: FORM_WIDTH }]}>
             <TouchableOpacity
-              style={[styles.modeButton, mode === "login" && styles.modeButtonActive]}
-              onPress={() => { setMode("login"); setConfirmPassword(""); }}
+              style={[
+                styles.modeButton,
+                mode === "login" && styles.modeButtonActive,
+              ]}
+              onPress={() => {
+                setMode("login");
+                setConfirmPassword("");
+              }}
             >
-              <Text style={[
-                styles.modeButtonText,
-                mode === "login" && styles.modeButtonTextActive,
-              ]}>
+              <Text
+                style={[
+                  styles.modeButtonText,
+                  mode === "login" && styles.modeButtonTextActive,
+                ]}
+              >
                 Sign In
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.modeButton, mode === "signup" && styles.modeButtonActive]}
+              style={[
+                styles.modeButton,
+                mode === "signup" && styles.modeButtonActive,
+              ]}
               onPress={() => setMode("signup")}
             >
-              <Text style={[
-                styles.modeButtonText,
-                mode === "signup" && styles.modeButtonTextActive,
-              ]}>
+              <Text
+                style={[
+                  styles.modeButtonText,
+                  mode === "signup" && styles.modeButtonTextActive,
+                ]}
+              >
                 Sign Up
               </Text>
             </TouchableOpacity>
@@ -566,12 +678,13 @@ export default function LoginScreen() {
               onPress={handleEmailAuth}
               disabled={loading}
             >
-              {loading
-                ? <ActivityIndicator color="#fff" />
-                : <Text style={styles.submitButtonText}>
-                    {mode === "login" ? "Sign In" : "Create Account"}
-                  </Text>
-              }
+              {loading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.submitButtonText}>
+                  {mode === "login" ? "Sign In" : "Create Account"}
+                </Text>
+              )}
             </TouchableOpacity>
 
             {/* Mobile collapse */}
@@ -580,7 +693,9 @@ export default function LoginScreen() {
                 style={styles.collapseButton}
                 onPress={() => setShowEmailForm(false)}
               >
-                <Text style={styles.collapseText}>← Back to sign in options</Text>
+                <Text style={styles.collapseText}>
+                  ← Back to sign in options
+                </Text>
               </TouchableOpacity>
             )}
           </View>
@@ -607,9 +722,7 @@ export default function LoginScreen() {
       <View style={styles.desktopContainer}>
         <DesktopHeroPanel />
         <View style={styles.separator} />
-        <View style={styles.desktopRight}>
-          {authForm}
-        </View>
+        <View style={styles.desktopRight}>{authForm}</View>
       </View>
     );
   }
@@ -621,6 +734,22 @@ export default function LoginScreen() {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
       {authForm}
+
+      {/* ── OAuth loading overlay ──────────────────────────────
+          Covers the brief gap between the Google browser closing and
+          the app finishing sign-in + navigating home. Without this,
+          the bare login form flashes back into view for a moment
+          first, which reads as "did my login fail?" even though it
+          didn't — this replaces that flash with a clear "signing in"
+          state instead. */}
+      {oauthLoading && (
+        <View style={styles.oauthOverlay}>
+          <View style={styles.oauthCard}>
+            <ActivityIndicator size="large" color="#111" />
+            <Text style={styles.oauthOverlayText}>Signing you in…</Text>
+          </View>
+        </View>
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -652,8 +781,8 @@ const heroStyles = StyleSheet.create({
     borderRadius: 0,
   },
   logoName: {
-    fontSize: 28,       // matches headline weight and size feel
-    fontWeight: "800",  // same as headline
+    fontSize: 28, // matches headline weight and size feel
+    fontWeight: "800", // same as headline
     color: "#111",
     letterSpacing: -0.3, // same as headline
   },
@@ -756,6 +885,27 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: IS_WEB ? "#f5f5f5" : "#fff",
+  },
+  // ── OAuth loading overlay ─────────────────────────────────
+  oauthOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(255,255,255,0.97)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 999,
+  },
+  oauthCard: {
+    alignItems: "center",
+    gap: 14,
+  },
+  oauthOverlayText: {
+    fontSize: 14,
+    color: "#666",
+    fontWeight: "500",
   },
   desktopContainer: {
     flex: 1,
@@ -1013,7 +1163,12 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   footer: { fontSize: 12, color: "#999", lineHeight: 18 },
-  footerLink: { fontSize: 12, color: "#111", fontWeight: "500", lineHeight: 18 },
+  footerLink: {
+    fontSize: 12,
+    color: "#111",
+    fontWeight: "500",
+    lineHeight: 18,
+  },
 
   // ── Confirmation ──────────────────────────────────────────
   confirmationCard: {
