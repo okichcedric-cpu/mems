@@ -1039,21 +1039,20 @@ export default function CollectionPage() {
             />
           )}
 
-          {/* Web — arrows with full-res */}
+          {/* Web (including mobile web browsers) — edge-to-edge image with
+              floating nav arrows overlaid on top, plus drag-to-swipe via the
+              panResponder declared above (previously wired up but never
+              attached to anything). Arrows and swiping both call the same
+              goToNext/goToPrev, so they always stay in sync. */}
           {selectedPhotoIndex !== null && Platform.OS === "web" && (
             <View style={styles.webViewerWrapper}>
-              <TouchableOpacity
-                onPress={goToPrev}
-                disabled={selectedPhotoIndex === 0}
+              <Animated.View
                 style={[
-                  styles.webArrow,
-                  selectedPhotoIndex === 0 && styles.webArrowDisabled,
+                  StyleSheet.absoluteFill,
+                  styles.webImageDragLayer,
+                  { transform: [{ translateX: swipeX }] },
                 ]}
-              >
-                <Text style={styles.webArrowText}>‹</Text>
-              </TouchableOpacity>
-              <View
-                style={{ flex: 1, height: SCREEN_HEIGHT, position: "relative" }}
+                {...panResponder.panHandlers}
               >
                 <Image
                   source={{ uri: photos[selectedPhotoIndex].url }}
@@ -1063,18 +1062,29 @@ export default function CollectionPage() {
                   recyclingKey={photos[selectedPhotoIndex].key}
                   transition={{ duration: 250, effect: "cross-dissolve" }}
                 />
-              </View>
-              <TouchableOpacity
-                onPress={goToNext}
-                disabled={selectedPhotoIndex === photos.length - 1}
-                style={[
-                  styles.webArrow,
-                  selectedPhotoIndex === photos.length - 1 &&
-                    styles.webArrowDisabled,
-                ]}
-              >
-                <Text style={styles.webArrowText}>›</Text>
-              </TouchableOpacity>
+              </Animated.View>
+
+              {selectedPhotoIndex > 0 && (
+                <TouchableOpacity
+                  onPress={goToPrev}
+                  style={[styles.webArrowFloating, styles.webArrowFloatingLeft]}
+                  hitSlop={{ top: 24, bottom: 24, left: 12, right: 12 }}
+                >
+                  <Ionicons name="chevron-back" size={26} color="#fff" />
+                </TouchableOpacity>
+              )}
+              {selectedPhotoIndex < photos.length - 1 && (
+                <TouchableOpacity
+                  onPress={goToNext}
+                  style={[
+                    styles.webArrowFloating,
+                    styles.webArrowFloatingRight,
+                  ]}
+                  hitSlop={{ top: 24, bottom: 24, left: 12, right: 12 }}
+                >
+                  <Ionicons name="chevron-forward" size={26} color="#fff" />
+                </TouchableOpacity>
+              )}
             </View>
           )}
 
@@ -1096,7 +1106,7 @@ export default function CollectionPage() {
               </View>
             )}
 
-            {Platform.OS !== "web" && photos.length > 1 && (
+            {photos.length > 1 && (
               <Text style={styles.swipeHint}>← swipe to navigate →</Text>
             )}
 
@@ -1597,31 +1607,41 @@ const styles = StyleSheet.create({
     backgroundColor: "#000",
   },
   fullScreenImage: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT },
-  fullScreenWebImage: { flex: 1, height: SCREEN_HEIGHT },
+  // Full viewport width — the image now runs edge-to-edge instead of being
+  // squeezed between two fixed-width arrow columns.
+  fullScreenWebImage: { width: "100%", height: SCREEN_HEIGHT },
   webViewerWrapper: {
     flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
     width: "100%",
     height: SCREEN_HEIGHT,
+    position: "relative",
+    overflow: "hidden",
   },
-  webArrow: {
-    width: 64,
-    height: "100%" as any,
-    backgroundColor: "rgba(255,255,255,0.05)",
+  // The draggable layer sits under the floating arrows (rendered after it,
+  // so on top by DOM/paint order) — panResponder only ever sees touches
+  // that land on the image itself, never on the arrow buttons.
+  webImageDragLayer: {
+    justifyContent: "center",
+    alignItems: "center",
+    ...Platform.select({ web: { touchAction: "pan-y" } as any, default: {} }),
+  },
+  // Floating nav arrows — hover directly over the image edges rather than
+  // pushing it inward, mirroring the close button's overlay treatment.
+  webArrowFloating: {
+    position: "absolute",
+    top: "50%",
+    marginTop: -22,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(0,0,0,0.35)",
     alignItems: "center",
     justifyContent: "center",
-    flexShrink: 0,
+    zIndex: 60,
+    ...Platform.select({ web: { cursor: "pointer" } as any, default: {} }),
   },
-  webArrowDisabled: { opacity: 0.1 },
-  webArrowText: {
-    color: "#fff",
-    fontSize: 48,
-    fontWeight: "200",
-    lineHeight: 52,
-    textAlign: "center",
-  },
+  webArrowFloatingLeft: { left: 12 },
+  webArrowFloatingRight: { right: 12 },
   swipeHint: {
     position: "absolute",
     bottom: 100,
