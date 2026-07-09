@@ -344,3 +344,38 @@ export async function deleteCollection(
     throw new Error("Could not delete collection. Please try again.");
   }
 }
+
+// ── Rename ────────────────────────────────────────────────────────────────────
+// A collection's "name" is also its literal S3 folder — there's no separate
+// database row to just update, so this hands off to an edge function that
+// copies every object (photos + thumbnails) to the new prefix, deletes the
+// old ones, and repoints any active shares at the new name. Returns the
+// final name the collection now has.
+export async function renameCollection(
+  oldName: string,
+  newName: string,
+): Promise<string> {
+  const { data, error } = await supabase.functions.invoke("rename-collection", {
+    body: { oldName, newName },
+  });
+
+  if (error) {
+    // supabase.functions.invoke()'s error.message is just a generic
+    // wrapper — the actual reason lives in the response body.
+    let detail = error.message;
+    try {
+      const body = await (error as any)?.context?.json?.();
+      if (body?.error) detail = body.error;
+    } catch {
+      try {
+        detail = await (error as any)?.context?.text?.();
+      } catch {
+        // context wasn't readable either — fall back to the generic message
+      }
+    }
+    console.error("renameCollection error:", detail);
+    throw new Error(detail);
+  }
+
+  return data?.newName ?? newName;
+}

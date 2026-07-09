@@ -25,7 +25,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import PaywallModal from "../../components/PaywallModal";
 import UploadProgressOverlay from "../../components/UploadProgressOverlay";
 import { useAuth } from "../../contexts/AuthContext";
-import { deleteCollection, deleteFromS3, uploadToS3 } from "../../utils/s3";
+import {
+  deleteCollection,
+  deleteFromS3,
+  renameCollection,
+  uploadToS3,
+} from "../../utils/s3";
 import {
   getCollectionShares,
   shareCollection,
@@ -198,6 +203,9 @@ export default function CollectionPage() {
   const [shareEmail, setShareEmail] = useState("");
   const [sharing, setSharing] = useState(false);
   const [sharedWith, setSharedWith] = useState<string[]>([]);
+  const [showRenameModal, setShowRenameModal] = useState(false);
+  const [renameInput, setRenameInput] = useState("");
+  const [renaming, setRenaming] = useState(false);
   const [effectiveOwnerId, setEffectiveOwnerId] = useState<string | null>(null);
   const [subscriptionStatus, setSubscriptionStatus] =
     useState<SubscriptionStatus | null>(null);
@@ -452,11 +460,23 @@ export default function CollectionPage() {
     }
   }, [effectiveOwnerId]);
 
-  async function fetchPhotos(currentSession: Session, ownerId?: string) {
+  // `nameOverride` exists solely for the rename flow — the route's `id`
+  // param may not actually cause this screen to remount (expo-router
+  // reuses the same instance across param changes on the same route),
+  // so `collectionName` in the closure below can still be the OLD name
+  // for a moment right after a rename succeeds. Passing the fresh name
+  // explicitly avoids fetching photos from a prefix that no longer
+  // exists (rename-collection has already deleted the old one).
+  async function fetchPhotos(
+    currentSession: Session,
+    ownerId?: string,
+    nameOverride?: string,
+  ) {
     const owner = ownerId ?? effectiveOwnerId ?? currentSession.user.id;
+    const name = nameOverride ?? collectionName;
     try {
       const { data, error } = await supabase.functions.invoke("list-photos", {
-        body: { userId: owner, collectionName, includeUrls: true },
+        body: { userId: owner, collectionName: name, includeUrls: true },
       });
       if (error) throw new Error(error.message);
 
@@ -738,10 +758,61 @@ export default function CollectionPage() {
     }
   }
 
-  async function loadShares() {
+  async function handleRenameCollection() {
+    const trimmed = renameInput.trim();
+    if (!trimmed) {
+      const msg = "Please enter a collection name.";
+      Platform.OS === "web"
+        ? window.alert(msg)
+        : Alert.alert("Name required", msg);
+      return;
+    }
+    if (trimmed === collectionName) {
+      setShowRenameModal(false);
+      return;
+    }
+
+    setRenaming(true);
+    try {
+      const finalName = await renameCollection(collectionName, trimmed);
+      setShowRenameModal(false);
+
+      // Load photos from the new prefix explicitly — expo-router may
+      // reuse this same screen instance for the URL change below rather
+      // than remounting it, so we can't rely on navigation alone to
+      // trigger a refetch (see the comment on fetchPhotos).
+      if (session) {
+        await fetchPhotos(session, effectiveOwnerId ?? session.user.id, finalName);
+      }
+      await loadShares(finalName);
+
+      // Update the URL too, so the address bar, refreshes, and the
+      // back/forward history all point at the collection's real name.
+      const ownerQuery = ownerIdParam
+        ? `?ownerId=${encodeURIComponent(ownerIdParam)}`
+        : "";
+      router.replace(
+        `/collection/${encodeURIComponent(finalName)}${ownerQuery}` as any,
+      );
+    } catch (error: any) {
+      console.error("Rename collection error:", error.message);
+      const msg =
+        error.message || "Could not rename collection. Please try again.";
+      Platform.OS === "web" ? window.alert(msg) : Alert.alert("Error", msg);
+    } finally {
+      setRenaming(false);
+    }
+  }
+
+  // Same reasoning as fetchPhotos' nameOverride — right after a rename,
+  // the closure's `collectionName` can still briefly be the old name.
+  async function loadShares(nameOverride?: string) {
     if (!session) return;
     try {
-      const emails = await getCollectionShares(session.user.id, collectionName);
+      const emails = await getCollectionShares(
+        session.user.id,
+        nameOverride ?? collectionName,
+      );
       setSharedWith(emails);
     } catch (error: any) {
       console.warn("loadShares error:", error.message);
@@ -971,9 +1042,23 @@ export default function CollectionPage() {
 
       {/* Collection name banner */}
       <View style={styles.collectionBanner}>
-        <Text style={styles.collectionBannerTitle} numberOfLines={1}>
-          {collectionName}
-        </Text>
+        <View style={styles.collectionBannerTitleRow}>
+          <Text style={styles.collectionBannerTitle} numberOfLines={1}>
+            {collectionName}
+          </Text>
+          {isOwner && (
+            <TouchableOpacity
+              onPress={() => {
+                setRenameInput(collectionName);
+                setShowRenameModal(true);
+              }}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={styles.renameIconButton}
+            >
+              <Ionicons name="pencil" size={14} color="#999" />
+            </TouchableOpacity>
+          )}
+        </View>
         <Text style={styles.collectionBannerSubtitle}>
           {photos.length} photo{photos.length !== 1 ? "s" : ""}
           {subscriptionStatus?.limits?.maxPhotosPerCollection
@@ -1377,6 +1462,118 @@ export default function CollectionPage() {
           </Modal>
         ))}
 
+      {/* Rename Modal */}
+      {showRenameModal &&
+        (Platform.OS === "web" ? (
+          <View style={styles.shareWebOverlay}>
+            <TouchableOpacity
+              style={styles.shareOverlayBackdrop}
+              activeOpacity={1}
+              onPress={() => !renaming && setShowRenameModal(false)}
+            >
+              <TouchableOpacity
+                activeOpacity={1}
+                style={styles.shareOverlayCard}
+                onPress={(e) => e.stopPropagation()}
+              >
+                <View style={styles.shareModalHeader}>
+                  <Text style={styles.shareModalTitle}>Rename Collection</Text>
+                  <TouchableOpacity
+                    onPress={() => setShowRenameModal(false)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={styles.shareModalClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.shareInputRow}>
+                  <TextInput
+                    style={styles.shareInput}
+                    placeholder="Collection name"
+                    placeholderTextColor="#999"
+                    value={renameInput}
+                    onChangeText={setRenameInput}
+                    autoFocus
+                    maxLength={80}
+                    returnKeyType="done"
+                    onSubmitEditing={handleRenameCollection}
+                  />
+                  <TouchableOpacity
+                    style={[
+                      styles.shareSubmitButton,
+                      renaming && { opacity: 0.6 },
+                    ]}
+                    onPress={handleRenameCollection}
+                    disabled={renaming}
+                  >
+                    {renaming ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.shareSubmitText}>Save</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <Modal
+            visible={showRenameModal}
+            transparent
+            animationType="fade"
+            statusBarTranslucent
+            onRequestClose={() => setShowRenameModal(false)}
+          >
+            <TouchableOpacity
+              style={styles.shareOverlayBackdrop}
+              activeOpacity={1}
+              onPress={() => !renaming && setShowRenameModal(false)}
+            >
+              <TouchableOpacity
+                activeOpacity={1}
+                style={styles.shareOverlayCard}
+                onPress={(e) => e.stopPropagation()}
+              >
+                <View style={styles.shareModalHeader}>
+                  <Text style={styles.shareModalTitle}>Rename Collection</Text>
+                  <TouchableOpacity
+                    onPress={() => setShowRenameModal(false)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={styles.shareModalClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.shareInputRow}>
+                  <TextInput
+                    style={styles.shareInput}
+                    placeholder="Collection name"
+                    placeholderTextColor="#999"
+                    value={renameInput}
+                    onChangeText={setRenameInput}
+                    autoFocus
+                    maxLength={80}
+                    returnKeyType="done"
+                    onSubmitEditing={handleRenameCollection}
+                  />
+                  <TouchableOpacity
+                    style={[
+                      styles.shareSubmitButton,
+                      renaming && { opacity: 0.6 },
+                    ]}
+                    onPress={handleRenameCollection}
+                    disabled={renaming}
+                  >
+                    {renaming ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.shareSubmitText}>Save</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </Modal>
+        ))}
+
       {/* Toast */}
       {toast && (
         <Animated.View
@@ -1504,11 +1701,21 @@ const styles = StyleSheet.create({
       web: { boxShadow: "0 2px 12px rgba(0,0,0,0.06)" } as any,
     }),
   },
+  collectionBannerTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   collectionBannerTitle: {
     fontSize: Platform.OS === "web" ? 22 : 20,
     fontWeight: "800",
     color: "#111",
     letterSpacing: -0.3,
+    flexShrink: 1,
+  },
+  renameIconButton: {
+    padding: 4,
+    ...Platform.select({ web: { cursor: "pointer" } as any, default: {} }),
   },
   collectionBannerSubtitle: {
     fontSize: 12,
