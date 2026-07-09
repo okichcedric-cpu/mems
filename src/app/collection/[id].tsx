@@ -51,9 +51,9 @@ const COLLECTION_BG = "#f0ece4";
 // card then shrinks to fit its content (see getPolaroidViewerFrame below),
 // so these are ceilings, not fixed dimensions.
 const VIEWER_CARD_MAX_WIDTH = IS_DESKTOP_WEB
-  ? Math.min(560, SCREEN_WIDTH * 0.5)
+  ? Math.min(900, SCREEN_WIDTH * 0.72)
   : SCREEN_WIDTH - 32;
-const VIEWER_CARD_MAX_HEIGHT = SCREEN_HEIGHT * (IS_DESKTOP_WEB ? 0.78 : 0.68);
+const VIEWER_CARD_MAX_HEIGHT = SCREEN_HEIGHT * (IS_DESKTOP_WEB ? 0.86 : 0.68);
 // A real Polaroid's white border is thin and even on three sides, with a
 // noticeably deeper strip along the bottom for the caption.
 const VIEWER_POLAROID_TOP = 10;
