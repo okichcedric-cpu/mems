@@ -40,6 +40,25 @@ import { supabase } from "../../utils/supabase";
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const SCREEN_HEIGHT = Dimensions.get("window").height;
 const COLUMN_WIDTH = (SCREEN_WIDTH - 32) / 2;
+const IS_DESKTOP_WEB = Platform.OS === "web" && SCREEN_WIDTH >= 768;
+// Warm off-white "table" colour used behind the collection grid — reused
+// as the full-screen viewer's background too, so opening a photo feels
+// like the same page rather than dropping into an unrelated black modal.
+const COLLECTION_BG = "#f0ece4";
+
+// ── Full-screen polaroid frame sizing ─────────────────────────
+// The outer box a photo's polaroid card is allowed to occupy — the actual
+// card then shrinks to fit its content (see getPolaroidViewerFrame below),
+// so these are ceilings, not fixed dimensions.
+const VIEWER_CARD_MAX_WIDTH = IS_DESKTOP_WEB
+  ? Math.min(560, SCREEN_WIDTH * 0.5)
+  : SCREEN_WIDTH - 32;
+const VIEWER_CARD_MAX_HEIGHT = SCREEN_HEIGHT * (IS_DESKTOP_WEB ? 0.78 : 0.68);
+// A real Polaroid's white border is thin and even on three sides, with a
+// noticeably deeper strip along the bottom for the caption.
+const VIEWER_POLAROID_TOP = 10;
+const VIEWER_POLAROID_SIDE = 10;
+const VIEWER_POLAROID_BOTTOM = 36;
 
 type Photo = {
   key: string;
@@ -48,6 +67,34 @@ type Photo = {
   width: number;
   height: number;
 };
+
+// ── Full-screen polaroid image sizing ────────────────────────
+// Sizes the image to the photo's own aspect ratio (same idea as the grid's
+// renderPhoto) instead of dropping it into a fixed-shape box. Previously
+// the image box was a fixed screen-based rectangle for every photo, so any
+// photo whose aspect ratio didn't match it left large, uneven letterbox
+// bars inside the card on top of the card's own padding — that's what
+// made the white margins look oversized and inconsistent. Fitting the box
+// to the actual photo means the card's padding is the ONLY white space
+// you see, which is what makes it read as a deliberate, evenly-sized
+// polaroid border rather than accidental letterboxing.
+function getPolaroidViewerFrame(item: Photo) {
+  const maxImageWidth = VIEWER_CARD_MAX_WIDTH - VIEWER_POLAROID_SIDE * 2;
+  const maxImageHeight =
+    VIEWER_CARD_MAX_HEIGHT - VIEWER_POLAROID_TOP - VIEWER_POLAROID_BOTTOM;
+
+  const hasDimensions = item.width !== 1 || item.height !== 1;
+  const aspectRatio = hasDimensions ? item.height / item.width : 1;
+
+  let width = maxImageWidth;
+  let height = width * aspectRatio;
+  if (height > maxImageHeight) {
+    height = maxImageHeight;
+    width = height / aspectRatio;
+  }
+
+  return { width, height };
+}
 
 // ── Preload full-res images in the background ──────────────
 // Called after photos load — by the time user taps, images are cached
@@ -467,6 +514,25 @@ export default function CollectionPage() {
     });
   }
 
+  // ── Why goToNext/goToPrev are routed through refs ────────────
+  // PanResponder.create() is only ever called once (it lives inside
+  // useRef's initializer), so its handlers permanently close over
+  // whichever goToNext/goToPrev — and by extension, whichever `photos`
+  // array — existed on that very first render. `photos` starts out as
+  // `[]` before the fetch resolves, so the ORIGINAL goToNext saw
+  // `photos.length === 0` and its bounds check (`prev >= photos.length - 1`)
+  // was permanently `prev >= -1`, i.e. always true — silently no-opping
+  // forever. goToPrev's bounds check only depends on `prev`, not on
+  // `photos.length`, so it was never affected — which is exactly why
+  // swiping backward kept working while swiping forward never did.
+  // Stashing the latest functions in refs (updated every render) and
+  // having the responder call through `.current` fixes this without
+  // having to recreate the PanResponder itself.
+  const goToNextRef = useRef(goToNext);
+  const goToPrevRef = useRef(goToPrev);
+  goToNextRef.current = goToNext;
+  goToPrevRef.current = goToPrev;
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -475,8 +541,8 @@ export default function CollectionPage() {
         swipeX.setValue(gs.dx);
       },
       onPanResponderRelease: (_, gs) => {
-        if (gs.dx < -80) goToNext();
-        else if (gs.dx > 80) goToPrev();
+        if (gs.dx < -80) goToNextRef.current();
+        else if (gs.dx > 80) goToPrevRef.current();
         Animated.spring(swipeX, { toValue: 0, useNativeDriver: true }).start();
       },
     }),
@@ -1023,14 +1089,23 @@ export default function CollectionPage() {
               }}
               renderItem={({ item }) => (
                 <View style={styles.fullScreenPage}>
-                  <Image
-                    source={{ uri: item.url }}
-                    style={styles.fullScreenImage}
-                    contentFit="contain"
-                    cachePolicy="memory-disk"
-                    recyclingKey={item.key}
-                    transition={{ duration: 250, effect: "cross-dissolve" }}
-                  />
+                  <View style={styles.polaroidViewerCard}>
+                    <View
+                      style={[
+                        styles.polaroidViewerImageBox,
+                        getPolaroidViewerFrame(item),
+                      ]}
+                    >
+                      <Image
+                        source={{ uri: item.url }}
+                        style={styles.polaroidViewerImage}
+                        contentFit="contain"
+                        cachePolicy="memory-disk"
+                        recyclingKey={item.key}
+                        transition={{ duration: 250, effect: "cross-dissolve" }}
+                      />
+                    </View>
+                  </View>
                 </View>
               )}
               windowSize={5}
@@ -1039,11 +1114,11 @@ export default function CollectionPage() {
             />
           )}
 
-          {/* Web (including mobile web browsers) — edge-to-edge image with
-              floating nav arrows overlaid on top, plus drag-to-swipe via the
-              panResponder declared above (previously wired up but never
-              attached to anything). Arrows and swiping both call the same
-              goToNext/goToPrev, so they always stay in sync. */}
+          {/* Web (including mobile web browsers) — polaroid-framed image
+              over the same warm background as the collection grid, with
+              floating nav arrows overlaid on top and drag-to-swipe via the
+              panResponder declared above. Arrows and swiping both call the
+              same goToNext/goToPrev, so they always stay in sync. */}
           {selectedPhotoIndex !== null && Platform.OS === "web" && (
             <View style={styles.webViewerWrapper}>
               <Animated.View
@@ -1054,14 +1129,23 @@ export default function CollectionPage() {
                 ]}
                 {...panResponder.panHandlers}
               >
-                <Image
-                  source={{ uri: photos[selectedPhotoIndex].url }}
-                  style={styles.fullScreenWebImage}
-                  contentFit="contain"
-                  cachePolicy="memory-disk"
-                  recyclingKey={photos[selectedPhotoIndex].key}
-                  transition={{ duration: 250, effect: "cross-dissolve" }}
-                />
+                <View style={styles.polaroidViewerCard}>
+                  <View
+                    style={[
+                      styles.polaroidViewerImageBox,
+                      getPolaroidViewerFrame(photos[selectedPhotoIndex]),
+                    ]}
+                  >
+                    <Image
+                      source={{ uri: photos[selectedPhotoIndex].url }}
+                      style={styles.polaroidViewerImage}
+                      contentFit="contain"
+                      cachePolicy="memory-disk"
+                      recyclingKey={photos[selectedPhotoIndex].key}
+                      transition={{ duration: 250, effect: "cross-dissolve" }}
+                    />
+                  </View>
+                </View>
               </Animated.View>
 
               {selectedPhotoIndex > 0 && (
@@ -1565,7 +1649,9 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 14, color: "#999" },
 
   // ── Full screen viewer ────────────────────────────────────
-  fullScreenViewer: { flex: 1, backgroundColor: "#000" },
+  // Same warm background as the collection grid (was solid black) so
+  // opening a photo feels continuous with the page it came from.
+  fullScreenViewer: { flex: 1, backgroundColor: COLLECTION_BG },
   // Overlay rendered after FlatList — always sits on top
   viewerControls: {
     position: "absolute",
@@ -1576,6 +1662,9 @@ const styles = StyleSheet.create({
     zIndex: 100,
     pointerEvents: "box-none" as any,
   },
+  // Was a translucent white circle on a black backdrop — flipped to dark
+  // now that the backdrop is the light collection colour, so the icon
+  // still has something to contrast against.
   fullScreenClose: {
     position: "absolute",
     top: Platform.OS === "web" ? 20 : 52,
@@ -1583,7 +1672,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.18)",
+    backgroundColor: "rgba(0,0,0,0.35)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -1595,7 +1684,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   fullScreenCounterText: {
-    color: "rgba(255,255,255,0.8)",
+    color: "rgba(0,0,0,0.55)",
     fontSize: 14,
     fontWeight: "600",
   },
@@ -1604,12 +1693,8 @@ const styles = StyleSheet.create({
     height: SCREEN_HEIGHT,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#000",
+    backgroundColor: COLLECTION_BG,
   },
-  fullScreenImage: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT },
-  // Full viewport width — the image now runs edge-to-edge instead of being
-  // squeezed between two fixed-width arrow columns.
-  fullScreenWebImage: { width: "100%", height: SCREEN_HEIGHT },
   webViewerWrapper: {
     flex: 1,
     width: "100%",
@@ -1625,6 +1710,34 @@ const styles = StyleSheet.create({
     alignItems: "center",
     ...Platform.select({ web: { touchAction: "pan-y" } as any, default: {} }),
   },
+  // ── Polaroid-framed photo — same white card treatment as the grid
+  // thumbnails, just scaled up to fill most of the viewer. Shared by both
+  // the native FlatList pages and the web viewer. No explicit width/height
+  // here — the card shrink-wraps around polaroidViewerImageBox, which is
+  // sized per-photo by getPolaroidViewerFrame() to match that photo's own
+  // aspect ratio, so the padding below is the only white space that shows.
+  polaroidViewerCard: {
+    backgroundColor: "#fff",
+    borderRadius: 4,
+    paddingTop: VIEWER_POLAROID_TOP,
+    paddingHorizontal: VIEWER_POLAROID_SIDE,
+    paddingBottom: VIEWER_POLAROID_BOTTOM,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.28,
+        shadowRadius: 20,
+      },
+      android: { elevation: 12 },
+      web: { boxShadow: "0 12px 40px rgba(0,0,0,0.3)" } as any,
+    }),
+  },
+  polaroidViewerImageBox: {
+    overflow: "hidden",
+    backgroundColor: "#fff",
+  },
+  polaroidViewerImage: { width: "100%", height: "100%" },
   // Floating nav arrows — hover directly over the image edges rather than
   // pushing it inward, mirroring the close button's overlay treatment.
   webArrowFloating: {
@@ -1648,7 +1761,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     textAlign: "center",
-    color: "rgba(255,255,255,0.35)",
+    color: "rgba(0,0,0,0.3)",
     fontSize: 12,
   },
   deleteButton: {
