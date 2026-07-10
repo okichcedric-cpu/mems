@@ -81,25 +81,6 @@ type Props = {
   onDismiss: () => void;
 };
 
-function doesSolve(
-  tier: Tier,
-  reason: PaywallReason,
-  currentLimit: number,
-): boolean {
-  const config = TIERS[tier];
-  return reason === "collections"
-    ? config.maxCollections > currentLimit
-    : config.maxPhotosPerCollection > currentLimit;
-}
-
-function recommendedTier(reason: PaywallReason, currentLimit: number): Tier {
-  const all: Tier[] = ["small", "medium", "big"];
-  for (const tier of all) {
-    if (doesSolve(tier, reason, currentLimit)) return tier;
-  }
-  return "big";
-}
-
 export default function PaywallModal({
   visible,
   reason,
@@ -115,7 +96,6 @@ export default function PaywallModal({
   const [mounted, setMounted] = useState(false);
 
   const limit = currentLimit ?? (reason === "collections" ? 3 : 10);
-  const recommended = recommendedTier(reason, limit);
   const ALL_PAID_TIERS: Tier[] = ["small", "medium", "big"];
 
   useEffect(() => {
@@ -162,15 +142,8 @@ export default function PaywallModal({
 
   const sub =
     reason === "collections"
-      ? `Your ${currentTier === "free" ? "free" : (TIERS[currentTier as Tier]?.label ?? "")} plan allows ${limit} collection${limit === 1 ? "" : "s"}. Upgrade to store more memories.`
-      : `Your ${currentTier === "free" ? "free" : (TIERS[currentTier as Tier]?.label ?? "")} plan allows ${limit} photos per collection. Upgrade to keep adding moments.`;
-
-  const recommendedConfig = TIERS[recommended];
-
-  const unlockText =
-    reason === "collections"
-      ? `${recommendedConfig.maxCollections} collections`
-      : `${recommendedConfig.maxPhotosPerCollection} photos per collection`;
+      ? `Your ${currentTier === "free" ? "free" : (TIERS[currentTier as Tier]?.label ?? "")} plan allows ${limit} collection${limit === 1 ? "" : "s"}. Pick a plan below to store more memories.`
+      : `Your ${currentTier === "free" ? "free" : (TIERS[currentTier as Tier]?.label ?? "")} plan allows ${limit} photos per collection. Pick a plan below to keep adding moments.`;
 
   async function handlePurchase(tier: Tier) {
     const {
@@ -351,16 +324,10 @@ export default function PaywallModal({
           <Text style={styles.headerTitle}>{title}</Text>
           <Text style={styles.headerSub}>{sub}</Text>
 
-          {/* Limit banner */}
-          <View
-            style={[
-              styles.limitBanner,
-              {
-                borderColor: `${recommendedConfig.accent}40`,
-                backgroundColor: `${recommendedConfig.accent}0d`,
-              },
-            ]}
-          >
+          {/* Limit banner — states what was hit, without steering toward
+              any one specific plan; which plan solves it is left entirely
+              to the person to decide from the cards below. */}
+          <View style={styles.limitBanner}>
             <View style={styles.limitBannerLeft}>
               <Text style={styles.limitBannerEmoji}>
                 {currentTier === "free"
@@ -381,64 +348,33 @@ export default function PaywallModal({
                 </Text>
               </View>
             </View>
-            <Ionicons
-              name="arrow-forward"
-              size={16}
-              color={recommendedConfig.accent}
-            />
-            <View>
-              <Text
-                style={[
-                  styles.limitBannerUpgrade,
-                  { color: recommendedConfig.accent },
-                ]}
-              >
-                {recommendedConfig.emoji} {recommendedConfig.label}
-              </Text>
-              <Text
-                style={[
-                  styles.limitBannerUnlock,
-                  { color: recommendedConfig.accent },
-                ]}
-              >
-                {unlockText}
-              </Text>
-            </View>
           </View>
 
-          {/* Tier cards */}
-          <Text style={styles.sectionTitle}>Choose your upgrade</Text>
+          {/* Tier cards — every plan is fully selectable. Nothing here is
+              greyed out or disabled based on current usage; "Most Popular"
+              is a fixed marketing label (TIERS[...].featured), not a
+              suggestion computed from what would fix the limit. */}
+          <Text style={styles.sectionTitle}>Choose your plan</Text>
 
           {ALL_PAID_TIERS.map((tier) => {
             const config = TIERS[tier];
             const isPurchasing = purchasing === tier;
-            const isRecommended = tier === recommended;
-            const solves = doesSolve(tier, reason, limit);
-            const isGreyed = !solves;
+            const isFeatured = config.featured;
 
             return (
               <TouchableOpacity
                 key={tier}
                 style={[
                   styles.tierCard,
-                  isGreyed && styles.tierCardGreyed,
-                  !isGreyed && isRecommended && styles.tierCardRecommended,
-                  !isGreyed && {
-                    borderColor: isRecommended ? config.accent : "#e0e0e0",
-                  },
+                  isFeatured && styles.tierCardRecommended,
+                  { borderColor: isFeatured ? config.accent : "#e0e0e0" },
                   isPurchasing && { opacity: 0.7 },
                 ]}
-                onPress={() => !isGreyed && handlePurchase(tier)}
-                disabled={!!purchasing || isGreyed}
-                activeOpacity={isGreyed ? 1 : 0.85}
+                onPress={() => handlePurchase(tier)}
+                disabled={!!purchasing}
+                activeOpacity={0.85}
               >
-                {isGreyed ? (
-                  <View style={styles.greyedBadge}>
-                    <Text style={styles.greyedBadgeText}>
-                      Too small for your current usage
-                    </Text>
-                  </View>
-                ) : isRecommended ? (
+                {isFeatured && (
                   <View
                     style={[
                       styles.popularBadge,
@@ -446,53 +382,25 @@ export default function PaywallModal({
                     ]}
                   >
                     <Text style={styles.popularBadgeText}>
-                      ✦ Recommended for you
+                      ✦ Most Popular
                     </Text>
                   </View>
-                ) : null}
+                )}
 
-                <View
-                  style={[styles.tierLeft, isGreyed && styles.tierLeftGreyed]}
-                >
-                  <Text
-                    style={[styles.tierEmoji, isGreyed && { opacity: 0.35 }]}
-                  >
-                    {config.emoji}
-                  </Text>
+                <View style={styles.tierLeft}>
+                  <Text style={styles.tierEmoji}>{config.emoji}</Text>
                   <View style={styles.tierInfo}>
-                    <Text
-                      style={[styles.tierLabel, isGreyed && styles.greyedText]}
-                    >
-                      {config.label} Album
-                    </Text>
-                    <Text
-                      style={[
-                        styles.tierTagline,
-                        isGreyed && styles.greyedSubText,
-                      ]}
-                    >
-                      {config.tagline}
-                    </Text>
+                    <Text style={styles.tierLabel}>{config.label} Album</Text>
+                    <Text style={styles.tierTagline}>{config.tagline}</Text>
                     <View style={styles.tierStats}>
                       <View
                         style={[
                           styles.tierStat,
-                          isGreyed
-                            ? styles.tierStatGreyed
-                            : { backgroundColor: `${config.accent}18` },
-                          !isGreyed &&
-                            reason === "collections" &&
-                            isRecommended &&
-                            styles.tierStatHighlight,
+                          { backgroundColor: `${config.accent}18` },
                         ]}
                       >
                         <Text
-                          style={[
-                            styles.tierStatText,
-                            isGreyed
-                              ? styles.greyedStatText
-                              : { color: config.accent },
-                          ]}
+                          style={[styles.tierStatText, { color: config.accent }]}
                         >
                           {config.maxCollections} collections
                         </Text>
@@ -500,22 +408,11 @@ export default function PaywallModal({
                       <View
                         style={[
                           styles.tierStat,
-                          isGreyed
-                            ? styles.tierStatGreyed
-                            : { backgroundColor: `${config.accent}18` },
-                          !isGreyed &&
-                            reason === "photos" &&
-                            isRecommended &&
-                            styles.tierStatHighlight,
+                          { backgroundColor: `${config.accent}18` },
                         ]}
                       >
                         <Text
-                          style={[
-                            styles.tierStatText,
-                            isGreyed
-                              ? styles.greyedStatText
-                              : { color: config.accent },
-                          ]}
+                          style={[styles.tierStatText, { color: config.accent }]}
                         >
                           {config.maxPhotosPerCollection} photos each
                         </Text>
@@ -527,13 +424,6 @@ export default function PaywallModal({
                 <View style={styles.tierRight}>
                   {isPurchasing ? (
                     <ActivityIndicator color={config.accent} size="small" />
-                  ) : isGreyed ? (
-                    <View style={styles.greyedPriceBlock}>
-                      <Text style={styles.greyedPrice}>
-                        KES {config.price.toLocaleString()}
-                      </Text>
-                      <Text style={styles.greyedOnce}>/mo</Text>
-                    </View>
                   ) : (
                     <>
                       <Text
@@ -546,7 +436,7 @@ export default function PaywallModal({
                         style={[
                           styles.tierButton,
                           {
-                            backgroundColor: isRecommended
+                            backgroundColor: isFeatured
                               ? config.accent
                               : "#efefef",
                           },
@@ -555,10 +445,10 @@ export default function PaywallModal({
                         <Text
                           style={[
                             styles.tierButtonText,
-                            !isRecommended && { color: "#666" },
+                            !isFeatured && { color: "#666" },
                           ]}
                         >
-                          {isRecommended ? "Upgrade" : "Get"}
+                          Choose
                         </Text>
                       </View>
                     </>
@@ -656,6 +546,8 @@ const styles = StyleSheet.create({
     gap: 10,
     borderRadius: 12,
     borderWidth: 1,
+    borderColor: "#eee",
+    backgroundColor: "#f7f7f7",
     padding: 14,
     marginBottom: 4,
   },
@@ -671,13 +563,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#555",
     fontWeight: "700",
-    marginTop: 1,
-  },
-  limitBannerUpgrade: { fontSize: 13, fontWeight: "800", textAlign: "right" },
-  limitBannerUnlock: {
-    fontSize: 11,
-    fontWeight: "500",
-    textAlign: "right",
     marginTop: 1,
   },
 
@@ -720,30 +605,6 @@ const styles = StyleSheet.create({
       web: { boxShadow: "0 4px 20px rgba(59,130,246,0.15)" } as any,
     }),
   },
-  tierCardGreyed: {
-    borderColor: "#ececec",
-    backgroundColor: "#fafafa",
-    opacity: 0.6,
-  },
-  tierLeftGreyed: { opacity: 0.5 },
-  greyedText: { color: "#bbb" },
-  greyedSubText: { color: "#ccc" },
-  greyedBadge: {
-    backgroundColor: "#f0f0f0",
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    alignSelf: "flex-start",
-    borderRadius: 6,
-    marginBottom: 6,
-  },
-  greyedBadgeText: { fontSize: 10, color: "#bbb", fontWeight: "600" },
-  tierStatGreyed: { backgroundColor: "#f0f0f0" },
-  greyedStatText: { color: "#ccc" },
-  greyedPriceBlock: { alignItems: "flex-end", gap: 2 },
-  greyedPrice: { fontSize: 14, fontWeight: "700", color: "#ccc" },
-  greyedOnce: { fontSize: 10, color: "#ddd" },
-  tierStatHighlight: { borderWidth: 1, borderColor: "rgba(0,0,0,0.08)" },
-
   popularBadge: {
     position: "absolute",
     top: -10,
