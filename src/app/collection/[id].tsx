@@ -1127,84 +1127,92 @@ export default function CollectionPage() {
 
       {/* Collection name banner */}
       <View style={styles.collectionBanner}>
-        <View style={styles.collectionBannerTitleRow}>
-          <Text style={styles.collectionBannerTitle} numberOfLines={1}>
-            {collectionName}
-          </Text>
-          {isOwner && (
+        {/* Title (with its rename pencil right beside it) wraps freely on
+            the left; the memory-date badge sits on the right, top-aligned
+            with the name via this row's `alignItems: flex-start` — both
+            groups start at the same vertical position regardless of how
+            many lines the title wraps to. */}
+        <View style={styles.collectionBannerHeaderRow}>
+          <View style={styles.collectionBannerTitleRow}>
+            <Text style={styles.collectionBannerTitle} numberOfLines={3}>
+              {collectionName}
+            </Text>
+            {isOwner && (
+              <TouchableOpacity
+                onPress={() => {
+                  setRenameInput(collectionName);
+                  setShowRenameModal(true);
+                }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                style={styles.renameIconButton}
+              >
+                <Ionicons name="pencil" size={14} color="#999" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Memory date — the "wow" moment. A collection with a date set
+              gets a warm gradient badge showing how long ago it was (with
+              a special treatment if today happens to be the anniversary);
+              without one, owners get a low-key invitation to add one. */}
+          {memoryDateInfo ? (
             <TouchableOpacity
-              onPress={() => {
-                setRenameInput(collectionName);
-                setShowRenameModal(true);
-              }}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              style={styles.renameIconButton}
+              activeOpacity={isOwner ? 0.85 : 1}
+              onPress={isOwner ? openDateModal : undefined}
+              style={styles.memoryBadgeWrapper}
             >
-              <Ionicons name="pencil" size={14} color="#999" />
+              <LinearGradient
+                colors={
+                  memoryDateInfo.isAnniversaryToday
+                    ? ["#f59e0b", "#ec4899"]
+                    : ["#fef3c7", "#fde8d7"]
+                }
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.memoryBadge}
+              >
+                <Text style={styles.memoryBadgeIcon}>
+                  {memoryDateInfo.isAnniversaryToday ? "✨" : "📅"}
+                </Text>
+                <View style={styles.memoryBadgeTextBlock}>
+                  <Text
+                    style={[
+                      styles.memoryBadgeRelative,
+                      memoryDateInfo.isAnniversaryToday &&
+                        styles.memoryBadgeTextSpecial,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {memoryDateInfo.isAnniversaryToday
+                      ? `On this day, ${memoryDateInfo.relative}`
+                      : memoryDateInfo.relative}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.memoryBadgeFull,
+                      memoryDateInfo.isAnniversaryToday &&
+                        styles.memoryBadgeFullSpecial,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {memoryDateInfo.full}
+                  </Text>
+                </View>
+              </LinearGradient>
             </TouchableOpacity>
+          ) : (
+            isOwner && (
+              <TouchableOpacity
+                style={styles.addDateButton}
+                onPress={openDateModal}
+                activeOpacity={0.75}
+              >
+                <Ionicons name="calendar-outline" size={13} color="#999" />
+                <Text style={styles.addDateButtonText}>Add a memory date</Text>
+              </TouchableOpacity>
+            )
           )}
         </View>
-
-        {/* Memory date — the "wow" moment. A collection with a date set
-            gets a warm gradient badge showing how long ago it was (with a
-            special treatment if today happens to be the anniversary);
-            without one, owners get a low-key invitation to add one. */}
-        {memoryDateInfo ? (
-          <TouchableOpacity
-            activeOpacity={isOwner ? 0.85 : 1}
-            onPress={isOwner ? openDateModal : undefined}
-            style={styles.memoryBadgeWrapper}
-          >
-            <LinearGradient
-              colors={
-                memoryDateInfo.isAnniversaryToday
-                  ? ["#f59e0b", "#ec4899"]
-                  : ["#fef3c7", "#fde8d7"]
-              }
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.memoryBadge}
-            >
-              <Text style={styles.memoryBadgeIcon}>
-                {memoryDateInfo.isAnniversaryToday ? "✨" : "📅"}
-              </Text>
-              <View style={styles.memoryBadgeTextBlock}>
-                <Text
-                  style={[
-                    styles.memoryBadgeRelative,
-                    memoryDateInfo.isAnniversaryToday &&
-                      styles.memoryBadgeTextSpecial,
-                  ]}
-                  numberOfLines={1}
-                >
-                  {memoryDateInfo.isAnniversaryToday
-                    ? `On this day, ${memoryDateInfo.relative}`
-                    : memoryDateInfo.relative}
-                </Text>
-                <Text
-                  style={[
-                    styles.memoryBadgeFull,
-                    memoryDateInfo.isAnniversaryToday &&
-                      styles.memoryBadgeFullSpecial,
-                  ]}
-                >
-                  {memoryDateInfo.full}
-                </Text>
-              </View>
-            </LinearGradient>
-          </TouchableOpacity>
-        ) : (
-          isOwner && (
-            <TouchableOpacity
-              style={styles.addDateButton}
-              onPress={openDateModal}
-              activeOpacity={0.75}
-            >
-              <Ionicons name="calendar-outline" size={13} color="#999" />
-              <Text style={styles.addDateButtonText}>Add a memory date</Text>
-            </TouchableOpacity>
-          )
-        )}
 
         <Text style={styles.collectionBannerSubtitle}>
           {photos.length} photo{photos.length !== 1 ? "s" : ""}
@@ -2024,10 +2032,21 @@ const styles = StyleSheet.create({
       web: { boxShadow: "0 2px 12px rgba(0,0,0,0.06)" } as any,
     }),
   },
+  // Title (+ its rename pencil) on the left is allowed to wrap across
+  // multiple lines; the date badge on the right stays top-aligned with the
+  // name, since both this row and the title row use `alignItems: flex-start`.
+  collectionBannerHeaderRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
   collectionBannerTitleRow: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
+    alignItems: "flex-start",
+    flex: 1,
+    flexShrink: 1,
+    gap: 6,
   },
   collectionBannerTitle: {
     fontSize: Platform.OS === "web" ? 22 : 20,
@@ -2038,6 +2057,7 @@ const styles = StyleSheet.create({
   },
   renameIconButton: {
     padding: 4,
+    marginTop: Platform.OS === "web" ? 5 : 3,
     ...Platform.select({ web: { cursor: "pointer" } as any, default: {} }),
   },
   collectionBannerSubtitle: {
@@ -2048,7 +2068,7 @@ const styles = StyleSheet.create({
   },
 
   // ── Memory date badge ─────────────────────────────────────
-  memoryBadgeWrapper: { marginTop: 10, alignSelf: "flex-start", maxWidth: "100%" },
+  memoryBadgeWrapper: { maxWidth: "100%" },
   memoryBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -2083,8 +2103,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    alignSelf: "flex-start",
-    marginTop: 10,
     paddingVertical: 7,
     paddingHorizontal: 12,
     borderRadius: 20,
