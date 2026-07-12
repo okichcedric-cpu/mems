@@ -1195,7 +1195,7 @@ export default function CollectionPage() {
                     ]}
                     numberOfLines={1}
                   >
-                    {memoryDateInfo.full}
+                    {IS_DESKTOP_WEB ? ` · ${memoryDateInfo.full}` : memoryDateInfo.full}
                   </Text>
                 </View>
               </LinearGradient>
@@ -2073,7 +2073,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    paddingVertical: 10,
+    paddingVertical: IS_DESKTOP_WEB ? 8 : 10,
     paddingHorizontal: 14,
     borderRadius: 14,
     ...Platform.select({
@@ -2088,13 +2088,18 @@ const styles = StyleSheet.create({
     }),
   },
   memoryBadgeIcon: { fontSize: 20 },
-  memoryBadgeTextBlock: { flexShrink: 1 },
+  // On desktop web the relative + full date sit side by side on one line
+  // (e.g. "3 months ago · July 12, 2026") to avoid extra vertical space in
+  // the banner; on mobile they stay stacked since horizontal room is tighter.
+  memoryBadgeTextBlock: IS_DESKTOP_WEB
+    ? { flexShrink: 1, flexDirection: "row", alignItems: "baseline", gap: 0 }
+    : { flexShrink: 1 },
   memoryBadgeRelative: { fontSize: 14, fontWeight: "800", color: "#92400e" },
   memoryBadgeTextSpecial: { color: "#fff" },
   memoryBadgeFull: {
     fontSize: 12,
     color: "#a8825c",
-    marginTop: 1,
+    marginTop: IS_DESKTOP_WEB ? 0 : 1,
     fontWeight: "500",
   },
   memoryBadgeFullSpecial: { color: "rgba(255,255,255,0.9)" },
