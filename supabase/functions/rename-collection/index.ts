@@ -219,7 +219,8 @@ serve(async (req) => {
       }),
     );
 
-    // ── Keep any active shares pointed at the new name ────────────
+    // ── Keep any active shares — and any memory-date metadata row —
+    // pointed at the new name ─────────────────────────────────────
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
@@ -234,6 +235,23 @@ serve(async (req) => {
       console.error(
         "rename-collection: failed to update shared_collections:",
         shareUpdateError.message,
+      );
+    }
+
+    // The collections table is optional metadata (a collection may not
+    // have a row at all if no memory date has ever been set on it), so
+    // this update is a no-op — not an error — when there's nothing to
+    // rename.
+    const { error: metadataUpdateError } = await supabase
+      .from("collections")
+      .update({ name: trimmedNew })
+      .eq("owner_id", userId)
+      .eq("name", trimmedOld);
+
+    if (metadataUpdateError) {
+      console.error(
+        "rename-collection: failed to update collections metadata:",
+        metadataUpdateError.message,
       );
     }
 

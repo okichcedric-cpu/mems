@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Session } from "@supabase/supabase-js";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
+import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -25,6 +26,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import PaywallModal from "../../components/PaywallModal";
 import UploadProgressOverlay from "../../components/UploadProgressOverlay";
 import { useAuth } from "../../contexts/AuthContext";
+import {
+  getCollectionMemoryDate,
+  setCollectionMemoryDate,
+} from "../../utils/collections";
+import {
+  buildIsoDateFromParts,
+  getMemoryDateInfo,
+  splitIsoDateToParts,
+} from "../../utils/memoryDate";
 import {
   deleteCollection,
   deleteFromS3,
@@ -206,6 +216,12 @@ export default function CollectionPage() {
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameInput, setRenameInput] = useState("");
   const [renaming, setRenaming] = useState(false);
+  const [memoryDate, setMemoryDate] = useState<string | null>(null);
+  const [showDateModal, setShowDateModal] = useState(false);
+  const [dateDay, setDateDay] = useState("");
+  const [dateMonth, setDateMonth] = useState("");
+  const [dateYear, setDateYear] = useState("");
+  const [savingDate, setSavingDate] = useState(false);
   const [effectiveOwnerId, setEffectiveOwnerId] = useState<string | null>(null);
   const [subscriptionStatus, setSubscriptionStatus] =
     useState<SubscriptionStatus | null>(null);
@@ -301,6 +317,7 @@ export default function CollectionPage() {
       fetchPhotos(session, owner),
       loadShares(),
       checkSubscription().then(setSubscriptionStatus),
+      getCollectionMemoryDate(owner, collectionName).then(setMemoryDate),
     ]).finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
@@ -804,6 +821,72 @@ export default function CollectionPage() {
     }
   }
 
+  function openDateModal() {
+    if (memoryDate) {
+      const parts = splitIsoDateToParts(memoryDate);
+      setDateDay(parts.day);
+      setDateMonth(parts.month);
+      setDateYear(parts.year);
+    } else {
+      setDateDay("");
+      setDateMonth("");
+      setDateYear("");
+    }
+    setShowDateModal(true);
+  }
+
+  async function handleSaveMemoryDate() {
+    if (!session) return;
+
+    const result = buildIsoDateFromParts(dateDay, dateMonth, dateYear);
+    if (result.status === "error") {
+      Platform.OS === "web"
+        ? window.alert(result.message)
+        : Alert.alert("Check the date", result.message);
+      return;
+    }
+
+    const iso = result.status === "ok" ? result.iso : null;
+    setSavingDate(true);
+    try {
+      await setCollectionMemoryDate(
+        effectiveOwnerId ?? session.user.id,
+        collectionName,
+        iso,
+      );
+      setMemoryDate(iso);
+      setShowDateModal(false);
+    } catch (error: any) {
+      console.error("Save memory date error:", error.message);
+      const msg =
+        error.message || "Could not save the date. Please try again.";
+      Platform.OS === "web" ? window.alert(msg) : Alert.alert("Error", msg);
+    } finally {
+      setSavingDate(false);
+    }
+  }
+
+  async function handleClearMemoryDate() {
+    if (!session) return;
+    setSavingDate(true);
+    try {
+      await setCollectionMemoryDate(
+        effectiveOwnerId ?? session.user.id,
+        collectionName,
+        null,
+      );
+      setMemoryDate(null);
+      setShowDateModal(false);
+    } catch (error: any) {
+      console.error("Clear memory date error:", error.message);
+      const msg =
+        error.message || "Could not clear the date. Please try again.";
+      Platform.OS === "web" ? window.alert(msg) : Alert.alert("Error", msg);
+    } finally {
+      setSavingDate(false);
+    }
+  }
+
   // Same reasoning as fetchPhotos' nameOverride — right after a rename,
   // the closure's `collectionName` can still briefly be the old name.
   async function loadShares(nameOverride?: string) {
@@ -891,6 +974,8 @@ export default function CollectionPage() {
   // Deterministic tilt per photo — same every render, no jitter
   // Alternates between slight left and right tilts for a scattered feel
   const TILTS = [-2.5, 1.8, -1.2, 2.8, -2.0, 1.5, -3.0, 2.2];
+
+  const memoryDateInfo = getMemoryDateInfo(memoryDate);
 
   const renderPhoto = (item: Photo, index: number) => {
     const hasDimensions = item.width !== 1 || item.height !== 1;
@@ -1059,6 +1144,68 @@ export default function CollectionPage() {
             </TouchableOpacity>
           )}
         </View>
+
+        {/* Memory date — the "wow" moment. A collection with a date set
+            gets a warm gradient badge showing how long ago it was (with a
+            special treatment if today happens to be the anniversary);
+            without one, owners get a low-key invitation to add one. */}
+        {memoryDateInfo ? (
+          <TouchableOpacity
+            activeOpacity={isOwner ? 0.85 : 1}
+            onPress={isOwner ? openDateModal : undefined}
+            style={styles.memoryBadgeWrapper}
+          >
+            <LinearGradient
+              colors={
+                memoryDateInfo.isAnniversaryToday
+                  ? ["#f59e0b", "#ec4899"]
+                  : ["#fef3c7", "#fde8d7"]
+              }
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.memoryBadge}
+            >
+              <Text style={styles.memoryBadgeIcon}>
+                {memoryDateInfo.isAnniversaryToday ? "✨" : "📅"}
+              </Text>
+              <View style={styles.memoryBadgeTextBlock}>
+                <Text
+                  style={[
+                    styles.memoryBadgeRelative,
+                    memoryDateInfo.isAnniversaryToday &&
+                      styles.memoryBadgeTextSpecial,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {memoryDateInfo.isAnniversaryToday
+                    ? `On this day, ${memoryDateInfo.relative}`
+                    : memoryDateInfo.relative}
+                </Text>
+                <Text
+                  style={[
+                    styles.memoryBadgeFull,
+                    memoryDateInfo.isAnniversaryToday &&
+                      styles.memoryBadgeFullSpecial,
+                  ]}
+                >
+                  {memoryDateInfo.full}
+                </Text>
+              </View>
+            </LinearGradient>
+          </TouchableOpacity>
+        ) : (
+          isOwner && (
+            <TouchableOpacity
+              style={styles.addDateButton}
+              onPress={openDateModal}
+              activeOpacity={0.75}
+            >
+              <Ionicons name="calendar-outline" size={13} color="#999" />
+              <Text style={styles.addDateButtonText}>Add a memory date</Text>
+            </TouchableOpacity>
+          )
+        )}
+
         <Text style={styles.collectionBannerSubtitle}>
           {photos.length} photo{photos.length !== 1 ? "s" : ""}
           {subscriptionStatus?.limits?.maxPhotosPerCollection
@@ -1574,6 +1721,182 @@ export default function CollectionPage() {
           </Modal>
         ))}
 
+      {/* Memory Date Modal */}
+      {showDateModal &&
+        (Platform.OS === "web" ? (
+          <View style={styles.shareWebOverlay}>
+            <TouchableOpacity
+              style={styles.shareOverlayBackdrop}
+              activeOpacity={1}
+              onPress={() => !savingDate && setShowDateModal(false)}
+            >
+              <TouchableOpacity
+                activeOpacity={1}
+                style={styles.shareOverlayCard}
+                onPress={(e) => e.stopPropagation()}
+              >
+                <View style={styles.shareModalHeader}>
+                  <Text style={styles.shareModalTitle}>Memory Date</Text>
+                  <TouchableOpacity
+                    onPress={() => setShowDateModal(false)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={styles.shareModalClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.dateModalHint}>
+                  When did these memories actually happen?
+                </Text>
+                <View style={styles.dateModalRow}>
+                  <TextInput
+                    style={[styles.dateModalInput, styles.dateModalInputSmall]}
+                    placeholder="DD"
+                    placeholderTextColor="#999"
+                    value={dateDay}
+                    onChangeText={(t) => setDateDay(t.replace(/[^0-9]/g, ""))}
+                    keyboardType="number-pad"
+                    maxLength={2}
+                  />
+                  <TextInput
+                    style={[styles.dateModalInput, styles.dateModalInputSmall]}
+                    placeholder="MM"
+                    placeholderTextColor="#999"
+                    value={dateMonth}
+                    onChangeText={(t) => setDateMonth(t.replace(/[^0-9]/g, ""))}
+                    keyboardType="number-pad"
+                    maxLength={2}
+                  />
+                  <TextInput
+                    style={[styles.dateModalInput, styles.dateModalInputLarge]}
+                    placeholder="YYYY"
+                    placeholderTextColor="#999"
+                    value={dateYear}
+                    onChangeText={(t) => setDateYear(t.replace(/[^0-9]/g, ""))}
+                    keyboardType="number-pad"
+                    maxLength={4}
+                  />
+                </View>
+                <TouchableOpacity
+                  style={[
+                    styles.primaryModalButton,
+                    savingDate && { opacity: 0.6 },
+                  ]}
+                  onPress={handleSaveMemoryDate}
+                  disabled={savingDate}
+                >
+                  {savingDate ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Text style={styles.primaryModalButtonText}>
+                      Save date
+                    </Text>
+                  )}
+                </TouchableOpacity>
+                {memoryDate && (
+                  <TouchableOpacity
+                    style={styles.clearDateButton}
+                    onPress={handleClearMemoryDate}
+                    disabled={savingDate}
+                  >
+                    <Text style={styles.clearDateButtonText}>
+                      Remove memory date
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <Modal
+            visible={showDateModal}
+            transparent
+            animationType="fade"
+            statusBarTranslucent
+            onRequestClose={() => setShowDateModal(false)}
+          >
+            <TouchableOpacity
+              style={styles.shareOverlayBackdrop}
+              activeOpacity={1}
+              onPress={() => !savingDate && setShowDateModal(false)}
+            >
+              <TouchableOpacity
+                activeOpacity={1}
+                style={styles.shareOverlayCard}
+                onPress={(e) => e.stopPropagation()}
+              >
+                <View style={styles.shareModalHeader}>
+                  <Text style={styles.shareModalTitle}>Memory Date</Text>
+                  <TouchableOpacity
+                    onPress={() => setShowDateModal(false)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={styles.shareModalClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.dateModalHint}>
+                  When did these memories actually happen?
+                </Text>
+                <View style={styles.dateModalRow}>
+                  <TextInput
+                    style={[styles.dateModalInput, styles.dateModalInputSmall]}
+                    placeholder="DD"
+                    placeholderTextColor="#999"
+                    value={dateDay}
+                    onChangeText={(t) => setDateDay(t.replace(/[^0-9]/g, ""))}
+                    keyboardType="number-pad"
+                    maxLength={2}
+                  />
+                  <TextInput
+                    style={[styles.dateModalInput, styles.dateModalInputSmall]}
+                    placeholder="MM"
+                    placeholderTextColor="#999"
+                    value={dateMonth}
+                    onChangeText={(t) => setDateMonth(t.replace(/[^0-9]/g, ""))}
+                    keyboardType="number-pad"
+                    maxLength={2}
+                  />
+                  <TextInput
+                    style={[styles.dateModalInput, styles.dateModalInputLarge]}
+                    placeholder="YYYY"
+                    placeholderTextColor="#999"
+                    value={dateYear}
+                    onChangeText={(t) => setDateYear(t.replace(/[^0-9]/g, ""))}
+                    keyboardType="number-pad"
+                    maxLength={4}
+                  />
+                </View>
+                <TouchableOpacity
+                  style={[
+                    styles.primaryModalButton,
+                    savingDate && { opacity: 0.6 },
+                  ]}
+                  onPress={handleSaveMemoryDate}
+                  disabled={savingDate}
+                >
+                  {savingDate ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Text style={styles.primaryModalButtonText}>
+                      Save date
+                    </Text>
+                  )}
+                </TouchableOpacity>
+                {memoryDate && (
+                  <TouchableOpacity
+                    style={styles.clearDateButton}
+                    onPress={handleClearMemoryDate}
+                    disabled={savingDate}
+                  >
+                    <Text style={styles.clearDateButtonText}>
+                      Remove memory date
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </Modal>
+        ))}
+
       {/* Toast */}
       {toast && (
         <Animated.View
@@ -1722,6 +2045,83 @@ const styles = StyleSheet.create({
     color: "#999",
     marginTop: 3,
     fontWeight: "500",
+  },
+
+  // ── Memory date badge ─────────────────────────────────────
+  memoryBadgeWrapper: { marginTop: 10, alignSelf: "flex-start", maxWidth: "100%" },
+  memoryBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.12,
+        shadowRadius: 8,
+      },
+      android: { elevation: 3 },
+      web: { boxShadow: "0 3px 14px rgba(0,0,0,0.08)" } as any,
+    }),
+  },
+  memoryBadgeIcon: { fontSize: 20 },
+  memoryBadgeTextBlock: { flexShrink: 1 },
+  memoryBadgeRelative: { fontSize: 14, fontWeight: "800", color: "#92400e" },
+  memoryBadgeTextSpecial: { color: "#fff" },
+  memoryBadgeFull: {
+    fontSize: 12,
+    color: "#a8825c",
+    marginTop: 1,
+    fontWeight: "500",
+  },
+  memoryBadgeFullSpecial: { color: "rgba(255,255,255,0.9)" },
+
+  addDateButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    alignSelf: "flex-start",
+    marginTop: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: "#ddd",
+    ...Platform.select({ web: { cursor: "pointer" } as any, default: {} }),
+  },
+  addDateButtonText: { fontSize: 12, color: "#999", fontWeight: "600" },
+
+  // ── Memory date modal ─────────────────────────────────────
+  dateModalHint: { fontSize: 13, color: "#888", marginBottom: 14 },
+  dateModalRow: { flexDirection: "row", gap: 8, marginBottom: 16 },
+  dateModalInput: {
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+    borderRadius: 12,
+    paddingVertical: 11,
+    fontSize: 15,
+    color: "#111",
+    backgroundColor: "#fafafa",
+    textAlign: "center",
+  },
+  dateModalInputSmall: { width: 64 },
+  dateModalInputLarge: { flex: 1 },
+  primaryModalButton: {
+    backgroundColor: "#111",
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: "center",
+  },
+  primaryModalButtonText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  clearDateButton: { alignItems: "center", paddingVertical: 12 },
+  clearDateButtonText: {
+    fontSize: 13,
+    color: "rgba(220,40,40,0.8)",
+    fontWeight: "600",
   },
 
   // ── Upload button ─────────────────────────────────────────

@@ -111,6 +111,19 @@ serve(async (req) => {
       console.error("Error removing received shares:", sharedInError.message);
     }
 
+    // ── Step 3b — Delete this user's collection metadata (memory dates) ──
+    const { error: collectionsMetaError } = await supabase
+      .from("collections")
+      .delete()
+      .eq("owner_id", userId);
+
+    if (collectionsMetaError) {
+      console.error(
+        "Error removing collections metadata:",
+        collectionsMetaError.message,
+      );
+    }
+
     // ── Step 4 — Delete subscription record ──
     const { error: subError } = await supabase
       .from("subscriptions")

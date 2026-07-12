@@ -1,6 +1,7 @@
 import * as FileSystem from "expo-file-system/legacy";
 import * as ImageManipulator from "expo-image-manipulator";
 import { Platform } from "react-native";
+import { deleteCollectionMetadata } from "./collections";
 import { compressImage, generateThumbnail } from "./imageProcessing";
 import { supabase } from "./supabase";
 
@@ -342,6 +343,15 @@ export async function deleteCollection(
   } catch (error: any) {
     console.error("deleteCollection error:", error.message);
     throw new Error("Could not delete collection. Please try again.");
+  }
+
+  // Best-effort — the collection itself is already gone from S3 at this
+  // point, so a failure here just leaves a harmless orphaned metadata row
+  // rather than blocking the deletion the user actually asked for.
+  try {
+    await deleteCollectionMetadata(userId, collectionName);
+  } catch (error: any) {
+    console.warn("deleteCollection metadata cleanup error:", error.message);
   }
 }
 

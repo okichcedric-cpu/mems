@@ -1,6 +1,8 @@
 import PaywallModal from "@/components/PaywallModal";
 import UploadProgressOverlay from "@/components/UploadProgressOverlay";
 import { useAuth } from "@/contexts/AuthContext";
+import { setCollectionMemoryDate } from "@/utils/collections";
+import { buildIsoDateFromParts } from "@/utils/memoryDate";
 import { uploadToS3 } from "@/utils/s3";
 import { checkSubscription, SubscriptionStatus } from "@/utils/subscription";
 import { supabase } from "@/utils/supabase";
@@ -74,6 +76,11 @@ export default function NewCollectionPage() {
   const { session } = useAuth();
 
   const [collectionName, setCollectionName] = useState("");
+  // Memory date — optional, so these are plain strings rather than a Date;
+  // an empty set of fields is a valid "no date" state, not a partial one.
+  const [memoryDay, setMemoryDay] = useState("");
+  const [memoryMonth, setMemoryMonth] = useState("");
+  const [memoryYear, setMemoryYear] = useState("");
   const [selectedAssets, setSelectedAssets] = useState<
     ImagePicker.ImagePickerAsset[]
   >([]);
@@ -199,6 +206,14 @@ export default function NewCollectionPage() {
       return;
     }
 
+    // Validate the memory date fields before uploading anything — cheaper
+    // to fail fast here than after photos are already on their way up.
+    const dateResult = buildIsoDateFromParts(memoryDay, memoryMonth, memoryYear);
+    if (dateResult.status === "error") {
+      Alert.alert("Check the memory date", dateResult.message);
+      return;
+    }
+
     setCreating(true);
     setUploadProgress({ total: selectedAssets.length, completed: 0 });
     try {
@@ -219,6 +234,22 @@ export default function NewCollectionPage() {
           }));
         }),
       );
+
+      // Optional, best-effort — the collection itself is already created
+      // (it exists as soon as it has photos), so a failure saving the
+      // memory date shouldn't undo that or block navigating away.
+      if (dateResult.status === "ok") {
+        try {
+          await setCollectionMemoryDate(
+            session.user.id,
+            collectionName.trim(),
+            dateResult.iso,
+          );
+        } catch (dateError: any) {
+          console.warn("Save memory date error:", dateError.message);
+        }
+      }
+
       // Success — go back to the home screen, which refetches on focus
       goBack();
     } catch (error: any) {
@@ -269,6 +300,44 @@ export default function NewCollectionPage() {
           autoFocus
           returnKeyType="done"
         />
+
+        <View style={styles.dateLabelRow}>
+          <Text style={styles.label}>Memory date</Text>
+          <Text style={styles.optionalTag}>Optional</Text>
+        </View>
+        <Text style={styles.dateHint}>
+          When did these memories actually happen? Leave blank if you'd
+          rather not say.
+        </Text>
+        <View style={styles.dateRow}>
+          <TextInput
+            style={[styles.input, styles.dateInputSmall]}
+            placeholder="DD"
+            placeholderTextColor="#999"
+            value={memoryDay}
+            onChangeText={(t) => setMemoryDay(t.replace(/[^0-9]/g, ""))}
+            keyboardType="number-pad"
+            maxLength={2}
+          />
+          <TextInput
+            style={[styles.input, styles.dateInputSmall]}
+            placeholder="MM"
+            placeholderTextColor="#999"
+            value={memoryMonth}
+            onChangeText={(t) => setMemoryMonth(t.replace(/[^0-9]/g, ""))}
+            keyboardType="number-pad"
+            maxLength={2}
+          />
+          <TextInput
+            style={[styles.input, styles.dateInputLarge]}
+            placeholder="YYYY"
+            placeholderTextColor="#999"
+            value={memoryYear}
+            onChangeText={(t) => setMemoryYear(t.replace(/[^0-9]/g, ""))}
+            keyboardType="number-pad"
+            maxLength={4}
+          />
+        </View>
 
         <Text style={styles.label}>Photos</Text>
         <TouchableOpacity
@@ -400,6 +469,36 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#111",
   },
+
+  dateLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  optionalTag: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#bbb",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    backgroundColor: "#f5f5f5",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  dateHint: {
+    fontSize: 13,
+    color: "#999",
+    lineHeight: 18,
+    marginBottom: 12,
+    marginTop: -4,
+  },
+  dateRow: { flexDirection: "row", gap: 10 },
+  dateInputSmall: { width: 70, textAlign: "center" },
+  dateInputLarge: { flex: 1, textAlign: "center" },
+
   photoPickerButton: {
     borderWidth: 1,
     borderColor: "#ddd",
