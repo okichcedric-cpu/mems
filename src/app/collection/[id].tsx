@@ -1213,13 +1213,6 @@ export default function CollectionPage() {
             )
           )}
         </View>
-
-        <Text style={styles.collectionBannerSubtitle}>
-          {photos.length} photo{photos.length !== 1 ? "s" : ""}
-          {subscriptionStatus?.limits?.maxPhotosPerCollection
-            ? ` · ${subscriptionStatus.limits.maxPhotosPerCollection} max`
-            : ""}
-        </Text>
       </View>
 
       {/* Avatar strip */}
@@ -2060,13 +2053,6 @@ const styles = StyleSheet.create({
     marginTop: Platform.OS === "web" ? 5 : 3,
     ...Platform.select({ web: { cursor: "pointer" } as any, default: {} }),
   },
-  collectionBannerSubtitle: {
-    fontSize: 12,
-    color: "#999",
-    marginTop: 3,
-    fontWeight: "500",
-  },
-
   // ── Memory date badge ─────────────────────────────────────
   memoryBadgeWrapper: { maxWidth: "100%" },
   memoryBadge: {
