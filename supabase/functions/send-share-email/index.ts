@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "npm:@supabase/supabase-js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,13 +7,108 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
+// Loose but sane RFC-5322-ish check — this only guards against the field
+// being used to smuggle arbitrary content, not full spec validation.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Escape values before they're interpolated into the HTML email body.
+// recipientEmail/collectionName ultimately trace back to user input
+// (collection names are user-chosen, emails come from the share form),
+// so without this an attacker could inject markup/script-bearing tags
+// into an email sent from our domain.
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    const { recipientEmail, ownerEmail, collectionName } = await req.json();
+    // ── Auth check ────────────────────────────────────────────────
+    // Without this, anyone holding the (public) anon key could call this
+    // function directly and use it as an open relay to send arbitrary
+    // "Mems" branded email to any address.
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: corsHeaders,
+      });
+    }
+
+    const supabaseAuth = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+    );
+
+    const {
+      data: { user },
+      error: authError,
+    } = await supabaseAuth.auth.getUser(authHeader.replace("Bearer ", ""));
+
+    if (authError || !user || !user.email) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: corsHeaders,
+      });
+    }
+
+    const { recipientEmail, collectionName } = await req.json();
+
+    if (!recipientEmail || typeof recipientEmail !== "string" || !EMAIL_RE.test(recipientEmail)) {
+      return new Response(JSON.stringify({ error: "Invalid recipient email" }), {
+        status: 400,
+        headers: corsHeaders,
+      });
+    }
+
+    if (!collectionName || typeof collectionName !== "string") {
+      return new Response(JSON.stringify({ error: "Missing collection name" }), {
+        status: 400,
+        headers: corsHeaders,
+      });
+    }
+
+    // ── Ownership derived from the verified JWT, never from the request
+    // body ── prevents a caller from impersonating a different "sharer"
+    // in the email content.
+    const ownerEmail = user.email;
+    const normalisedRecipient = recipientEmail.trim().toLowerCase();
+
+    // ── Confirm a real share exists before sending ─────────────────
+    // Ties this function to an actual shareCollection() call (which
+    // inserts into shared_collections first) rather than letting it be
+    // used as a standalone mailer for arbitrary owner/recipient pairs.
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+
+    const { data: share } = await supabase
+      .from("shared_collections")
+      .select("id")
+      .eq("owner_id", user.id)
+      .eq("collection_name", collectionName)
+      .eq("recipient_email", normalisedRecipient)
+      .maybeSingle();
+
+    if (!share) {
+      return new Response(JSON.stringify({ error: "No matching share found" }), {
+        status: 403,
+        headers: corsHeaders,
+      });
+    }
+
+    const safeOwnerEmail = escapeHtml(ownerEmail);
+    const safeRecipientEmail = escapeHtml(normalisedRecipient);
+    const safeCollectionName = escapeHtml(collectionName);
 
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -27,7 +123,7 @@ serve(async (req) => {
         // ── Reply-To gives recipients a real address to respond to ──
         reply_to: "contact@mems-app.com",
 
-        to: [recipientEmail],
+        to: [normalisedRecipient],
 
         subject: `${ownerEmail} shared a photo collection with you`,
 
@@ -78,7 +174,7 @@ If you did not expect this, you can safely ignore it.
                 📸 You've been invited!
               </p>
               <p style="margin:0 0 24px;font-size:15px;color:#555555;line-height:24px;">
-                <strong>${ownerEmail}</strong> has shared a photo collection with you.
+                <strong>${safeOwnerEmail}</strong> has shared a photo collection with you.
               </p>
 
               <!-- Collection card -->
@@ -91,7 +187,7 @@ If you did not expect this, you can safely ignore it.
                       Collection
                     </p>
                     <p style="margin:0;font-size:20px;font-weight:800;color:#111111;">
-                      ${collectionName}
+                      ${safeCollectionName}
                     </p>
                   </td>
                 </tr>
@@ -120,8 +216,8 @@ If you did not expect this, you can safely ignore it.
           <tr>
             <td style="background:#f9f9f9;padding:20px 32px;border-top:1px solid #eeeeee;">
               <p style="margin:0;font-size:12px;color:#bbbbbb;line-height:18px;text-align:center;">
-                You received this because ${ownerEmail} shared a Mems collection with
-                ${recipientEmail}.<br/>
+                You received this because ${safeOwnerEmail} shared a Mems collection with
+                ${safeRecipientEmail}.<br/>
                 If you did not expect this email you can safely ignore it.<br/><br/>
                 <a href="https://www.mems-app.com" style="color:#999999;">mems-app.com</a>
               </p>

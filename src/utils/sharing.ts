@@ -36,13 +36,18 @@ export async function shareCollection(
 
   if (error) throw new Error(error.message);
 
-  // Send email via edge function
+  // Send email via edge function. The function now requires auth (it
+  // verifies the caller, derives ownerEmail from the JWT itself, and
+  // checks the shared_collections row we just inserted) — pass the
+  // access token explicitly rather than relying on the client's default
+  // session attachment, same as getSharedCollections() below.
+  const { data: { session } } = await supabase.auth.getSession();
+
   const { error: fnError } = await supabase.functions.invoke('send-share-email', {
+    headers: session ? { Authorization: `Bearer ${session.access_token}` } : undefined,
     body: {
       recipientEmail: email,
-      ownerEmail,
       collectionName,
-      appUrl: typeof window !== 'undefined' ? window.location.origin : 'https://yourapp.com',
     },
   });
 
