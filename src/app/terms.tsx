@@ -62,12 +62,12 @@ export default function TermsOfService() {
             {
               emoji: "✅",
               title: "2. Accepting These Terms",
-              body: "By creating an account or using Mems in any way, you agree to be bound by these terms. If you don't agree, please don't use the app — though we'd love to know why so we can do better.",
+              body: "By creating an account or using Mems in any way, you agree to be bound by these terms. If you don't agree, please don't use the app; though we'd love to know why so we can do better.",
             },
             {
               emoji: "🗂️",
               title: "3. Free and Pro Accounts",
-              body: "Free accounts are limited to 3 collections with a maximum of 10 photos per collection. Pro subscriptions unlock unlimited collections and photos and are billed monthly or annually. You can cancel at any time — your access continues until the end of your current billing period with no partial refunds.",
+              body: "Free accounts are limited to 3 collections with a maximum of 10 photos per collection. Pro subscriptions unlock more collections and photos and are billed monthly. You can cancel at any time though your access continues until the end of your current billing period with no partial refunds.",
             },
             {
               emoji: "💳",
@@ -77,7 +77,7 @@ export default function TermsOfService() {
             {
               emoji: "📸",
               title: "5. Your Content",
-              body: "Every photo you upload belongs entirely to you. We don't claim ownership of your memories. By uploading content, you grant Mems a limited licence to store and display your photos solely to provide the service to you — nothing more.",
+              body: "Every photo you upload belongs entirely to you. We don't claim ownership of your memories. By uploading content, you grant Mems a licence to store your photos solely to provide the service to you, nothing more.",
             },
             {
               emoji: "🤝",

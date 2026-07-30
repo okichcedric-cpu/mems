@@ -46,7 +46,7 @@ export default function PrivacyPolicy() {
           {/* Intro */}
           <View style={styles.introCard}>
             <Text style={styles.introText}>
-              Privacy isn't a legal formality for us — it's a promise. Mems was
+              Privacy isn't a legal formality for us, it's a promise. Mems was
               built on the belief that your photos and personal moments deserve
               to be protected. Here's exactly how we do that.
             </Text>
@@ -71,7 +71,7 @@ export default function PrivacyPolicy() {
             {
               emoji: "📖",
               title: "1. Who This Applies To",
-              body: "This policy applies to everyone who uses Mems — on Web, Android, or iOS. By using the app, you agree to the practices explained here.",
+              body: "This policy applies to everyone who uses Mems; on Web, Android, or iOS. By using the app, you agree to the practices explained here.",
             },
             {
               emoji: "📦",
