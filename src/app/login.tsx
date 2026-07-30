@@ -718,9 +718,13 @@ export default function LoginScreen() {
         <TouchableOpacity onPress={() => router.push("/terms")}>
           <Text style={styles.footerLink}>Terms of Service</Text>
         </TouchableOpacity>
-        <Text style={styles.footer}> and </Text>
+        <Text style={styles.footer}>, </Text>
         <TouchableOpacity onPress={() => router.push("/privacy")}>
           <Text style={styles.footerLink}>Privacy Policy</Text>
+        </TouchableOpacity>
+        <Text style={styles.footer}> and </Text>
+        <TouchableOpacity onPress={() => router.push("/child-safety")}>
+          <Text style={styles.footerLink}>Child Safety Standards</Text>
         </TouchableOpacity>
       </View>
     </ScrollView>

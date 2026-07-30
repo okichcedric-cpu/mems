@@ -36,8 +36,8 @@ export default function ChildSafetyStandardsPage() {
           keep and share their most precious memories. We have a zero-tolerance
           policy toward child sexual abuse and exploitation (CSAE) and child
           sexual abuse material (CSAM) in any form. This page sets out Mems'
-          published standards against CSAE and explains how we detect, prevent, report
-          and act on any violation of these standards.
+          published standards against CSAE and explains how we detect, prevent,
+          report and act on any violation of these standards.
         </Text>
       ),
     },
@@ -161,16 +161,13 @@ export default function ChildSafetyStandardsPage() {
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity
-          onPress={() => {
-            if (router.canGoBack()) router.back();
-            else router.replace("/");
-          }}
+          onPress={() => router.replace("/login")}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          style={styles.backLink}
         >
-          <Ionicons name="arrow-back" size={22} color="#111" />
+          <Ionicons name="arrow-back" size={18} color="#111" />
+          <Text style={styles.backLinkText}>Back</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Child Safety Standards</Text>
-        <View style={{ width: 22 }} />
       </View>
 
       <ScrollView
@@ -222,7 +219,6 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     paddingHorizontal: 20,
     paddingTop: IS_WEB ? 20 : 56,
     paddingBottom: 16,
@@ -230,7 +226,13 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#eee",
   },
-  headerTitle: { fontSize: 17, fontWeight: "700", color: "#111" },
+  backLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    ...Platform.select({ web: { cursor: "pointer" } as any, default: {} }),
+  },
+  backLinkText: { fontSize: 15, fontWeight: "500", color: "#111" },
 
   page: { padding: 20, paddingBottom: 60, alignItems: "center" },
   pageDesktop: { paddingTop: 48 },
