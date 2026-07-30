@@ -77,10 +77,10 @@ export default function AboutPage() {
               somehow they feel less permanent. They're buried in a phone camera
               roll or lost in a group chat. We don't even remember what photos
               we have! Scattered across three different cloud services and old
-              phones or lost phones.
+              or lost phones.
             </Text>
             <Text style={styles.sectionBody}>
-              The memories are there. We just can't find them anymore.
+              The memories are there. But just all over the place.
             </Text>
           </View>
 
@@ -111,8 +111,8 @@ export default function AboutPage() {
               The photos you take today are the history your children and
               grandchildren will look back to. Mems is built with that in mind.
               Your collections are stored securely in the cloud, accessible
-              across devices — not tied to a device that can break, a phone that
-              can be stolen, or a hard drive that can fail or disappear.
+              across devices, not just tied to a device that can break, a phone
+              that can be stolen, or a hard drive that can get lost.
             </Text>
             <Text style={styles.sectionBody}>
               The album your grandmother kept for fifty years deserved to last
@@ -123,7 +123,7 @@ export default function AboutPage() {
           {/* Features section */}
           <View style={styles.featuresCard}>
             <Text style={styles.featuresTitle}>
-              Everything you need, nothing you don't
+              Photos you want to remember, nothing you don't
             </Text>
             {[
               {
