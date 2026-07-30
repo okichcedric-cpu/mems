@@ -41,14 +41,6 @@ export default function PrivacyPolicy() {
             <Text style={styles.heroSubtitle}>
               Your memories are yours. We're just looking after them.
             </Text>
-            <Text style={styles.heroDate}>
-              Last updated:{" "}
-              {new Date().toLocaleDateString("en-KE", {
-                day: "numeric",
-                month: "long",
-                year: "numeric",
-              })}
-            </Text>
           </View>
 
           {/* Intro */}
@@ -79,17 +71,17 @@ export default function PrivacyPolicy() {
             {
               emoji: "📖",
               title: "1. Who This Applies To",
-              body: "This policy applies to everyone who uses Mems — on iOS, Android, or the web. By using the app, you agree to the practices described here.",
+              body: "This policy applies to everyone who uses Mems — on Web, Android, or iOS. By using the app, you agree to the practices explained here.",
             },
             {
               emoji: "📦",
               title: "2. What We Collect",
-              body: "We collect the minimum needed to run the service:\n\n• Your email address — for login and important notifications\n• Photos you choose to upload — stored securely in the cloud\n• Collection names and sharing relationships\n• Payment records (processed by Pesapal — we never see your card)\n• Basic usage data to keep the app running well\n\nThat's it. We don't track you across other apps or websites.",
+              body: "We collect the minimum needed to run the platform:\n\n• Your email address — for login and important notifications\n• Photos you choose to upload — stored securely in the cloud\n• Collection names and sharing relationships\n• Payment records (processed by Pesapal — we never see your card)\n• Usage data; collecting bugs that occur or any crashes\n\nThat's it. We don't track you across any other apps or websites.",
             },
             {
               emoji: "🎯",
               title: "3. How We Use It",
-              body: "Every piece of data we collect has a specific purpose:\n\n• Email — to authenticate you and send important account messages\n• Photos — to display your collections to you and people you share with\n• Sharing data — to connect owners and recipients of shared collections\n• Payments — to manage your subscription\n\nWe never use your data for advertising.",
+              body: "Every piece of data we collect has a specific purpose:\n\n• Email — to authenticate you and send important account messages\n• Photos — to display your collections to you and people you share with\n• Sharing data — to connect owners and recipients of shared collections\n• Payments — to manage your subscription\n\nWe DO NOT use your data for advertising.",
             },
             {
               emoji: "👨‍👩‍👧",
@@ -99,12 +91,12 @@ export default function PrivacyPolicy() {
             {
               emoji: "🕰️",
               title: "5. How Long We Keep Your Data",
-              body: "We keep your data for as long as your account is active. If you delete your account, all your photos, collections, and personal data are permanently removed within 30 days. Payment records may be retained longer for legal and accounting purposes as required by law.",
+              body: "We keep your data for as long as your account is active. If you delete your account, all your photos, collections, and personal data are permanently removed immediately. Payment records may be retained longer for legal and accounting purposes as required by law.",
             },
             {
               emoji: "✊",
               title: "6. Your Rights",
-              body: "You are always in control:\n\n• Access — ask us what data we hold about you\n• Correct — fix anything that's inaccurate\n• Delete — remove your account and all your data\n• Export — download your photos at any time\n\nTo exercise any of these rights, email us at support@yourdomain.com.",
+              body: "You are always in control:\n\n• Access — ask us what data we hold about you\n• Correct — fix anything that's inaccurate\n• Delete — remove your account and all your data\n\nTo exercise any of these rights, email us at contact@mems-app.com.",
             },
             {
               emoji: "🍪",
@@ -119,7 +111,7 @@ export default function PrivacyPolicy() {
             {
               emoji: "🔄",
               title: "9. Policy Updates",
-              body: "If we make significant changes to this policy, we'll notify you by email before the changes take effect. Minor clarifications may be made without notice. The date at the top of this page always shows when it was last updated.",
+              body: "If we make significant changes to this policy, we'll notify you by email before the changes take effect.",
             },
           ].map((section) => (
             <View key={section.title} style={styles.section}>

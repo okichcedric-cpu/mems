@@ -41,14 +41,6 @@ export default function TermsOfService() {
             <Text style={styles.heroSubtitle}>
               Simple, fair, and transparent — just like we are.
             </Text>
-            <Text style={styles.heroDate}>
-              Last updated:{" "}
-              {new Date().toLocaleDateString("en-KE", {
-                day: "numeric",
-                month: "long",
-                year: "numeric",
-              })}
-            </Text>
           </View>
 
           {/* Intro */}
