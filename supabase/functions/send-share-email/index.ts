@@ -11,6 +11,15 @@ const corsHeaders = {
 // being used to smuggle arbitrary content, not full spec validation.
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+const PLAY_STORE_URL =
+  "https://play.google.com/store/apps/details?id=com.cedricodera.Mems";
+
+// Google's own CDN-hosted "Get it on Google Play" badge — referencing
+// their asset directly means no hosting on our side and it always stays
+// in line with Google's branding guidelines.
+const PLAY_STORE_BADGE_URL =
+  "https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png";
+
 // Escape values before they're interpolated into the HTML email body.
 // recipientEmail/collectionName ultimately trace back to user input
 // (collection names are user-chosen, emails come from the share form),
@@ -133,7 +142,7 @@ Hi,
 
 ${ownerEmail} has shared a photo collection called "${collectionName}" with you on Mems.
 
-Open the Mems app or visit https://www.mems-app.com to view it.
+View it on the web at https://www.mems-app.com, or get the Android app on Google Play: ${PLAY_STORE_URL}
 
 You received this email because someone shared a Mems collection with your email address.
 If you did not expect this, you can safely ignore it.
@@ -206,9 +215,20 @@ If you did not expect this, you can safely ignore it.
                 </tr>
               </table>
 
-              <p style="margin:24px 0 0;font-size:13px;color:#999999;line-height:20px;">
-                Open the Mems app and the collection will appear in your home screen.
+              <p style="margin:24px 0 12px;font-size:13px;color:#999999;line-height:20px;">
+                View it right in your browser at mems-app.com, or get the
+                Android app and the collection will appear in your home screen.
               </p>
+
+              <a href="${PLAY_STORE_URL}" style="display:inline-block;">
+                <img
+                  src="${PLAY_STORE_BADGE_URL}"
+                  alt="Get it on Google Play"
+                  width="150"
+                  height="45"
+                  style="display:block;border:0;width:150px;height:45px;"
+                />
+              </a>
             </td>
           </tr>
 
