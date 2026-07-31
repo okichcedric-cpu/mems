@@ -216,8 +216,8 @@ If you did not expect this, you can safely ignore it.
               </table>
 
               <p style="margin:24px 0 12px;font-size:13px;color:#999999;line-height:20px;">
-                View it right in your browser at mems-app.com, or get the
-                Android app and the collection will appear in your home screen.
+                Or get the Android app and the collection will appear in
+                your home screen.
               </p>
 
               <a href="${PLAY_STORE_URL}" style="display:inline-block;">
@@ -225,8 +225,8 @@ If you did not expect this, you can safely ignore it.
                   src="${PLAY_STORE_BADGE_URL}"
                   alt="Get it on Google Play"
                   width="150"
-                  height="45"
-                  style="display:block;border:0;width:150px;height:45px;"
+                  height="58"
+                  style="display:block;border:0;width:150px;height:58px;"
                 />
               </a>
             </td>
