@@ -42,6 +42,11 @@ type TierConfig = {
   maxCollections: number;
   maxPhotosPerCollection: number;
   price: number;
+  // Display-only USD equivalent shown to users — the actual charge is
+  // still placed in KES server-side (create-subscription/pesapal-webhook
+  // derive the real amount from `tier`, never from anything the client
+  // sends), so this is purely cosmetic for an international audience.
+  priceUSD: string;
   accent: string;
   bg: string;
   featured: boolean;
@@ -54,6 +59,7 @@ const FREE_TIER: TierConfig = {
   maxCollections: 3,
   maxPhotosPerCollection: 10,
   price: 0,
+  priceUSD: "0",
   accent: "#888",
   bg: "#f5f5f5",
   featured: false,
@@ -67,6 +73,7 @@ const TIERS: Record<PaidTier, TierConfig> = {
     maxCollections: 15,
     maxPhotosPerCollection: 35,
     price: 99,
+    priceUSD: "0.77",
     accent: "#22c55e",
     bg: "#f0fdf4",
     featured: false,
@@ -78,6 +85,7 @@ const TIERS: Record<PaidTier, TierConfig> = {
     maxCollections: 30,
     maxPhotosPerCollection: 50,
     price: 179,
+    priceUSD: "1.39",
     accent: "#3b82f6",
     bg: "#eff6ff",
     featured: true,
@@ -89,6 +97,7 @@ const TIERS: Record<PaidTier, TierConfig> = {
     maxCollections: 50,
     maxPhotosPerCollection: 75,
     price: 299,
+    priceUSD: "2.32",
     accent: "#f59e0b",
     bg: "#fffbeb",
     featured: false,
@@ -334,7 +343,7 @@ function ComparisonTable({
       <View style={tableStyles.row}>
         <View style={tableStyles.featureCol}>
           <Ionicons name="pricetag-outline" size={13} color="#999" />
-          <Text style={tableStyles.featureLabel}>Price (KES)</Text>
+          <Text style={tableStyles.featureLabel}>Price (USD)</Text>
         </View>
         {ALL_TIERS.map((tier) => {
           const config = getTierConfig(tier);
@@ -358,7 +367,7 @@ function ComparisonTable({
                       { color: isActive ? config.accent : "#444" },
                     ]}
                   >
-                    {config.price.toLocaleString()}
+                    ${config.priceUSD}
                   </Text>
                   <Text style={tableStyles.priceSub}>Per Month</Text>
                 </>
@@ -656,16 +665,16 @@ export default function SubscriptionPage() {
     if (isActive) return "✓ Active";
     if (status?.isLapsed && status.tier === tier) return "Renew plan";
     if (!session) return `Sign up to get ${TIERS[tier].label}`;
-    return `Subscribe — KES ${TIERS[tier].price.toLocaleString()}/mo`;
+    return `Subscribe — $${TIERS[tier].priceUSD}/mo`;
   }
 
   function mobileBuyLabel(tier: PaidTier, isActive: boolean): string {
     if (isActive) return "✓ Active plan";
     if (status?.isLapsed && status.tier === tier)
-      return `Renew ${TIERS[tier].label} — KES ${TIERS[tier].price.toLocaleString()}/mo`;
+      return `Renew ${TIERS[tier].label} — $${TIERS[tier].priceUSD}/mo`;
     if (!session)
-      return `Sign up — KES ${TIERS[tier].price.toLocaleString()}/mo`;
-    return `Subscribe — KES ${TIERS[tier].price.toLocaleString()}/mo`;
+      return `Sign up — $${TIERS[tier].priceUSD}/mo`;
+    return `Subscribe — $${TIERS[tier].priceUSD}/mo`;
   }
 
   function mobileBuySub(isActive: boolean): string {
@@ -861,11 +870,11 @@ export default function SubscriptionPage() {
                       </View>
                     </View>
                     <View style={styles.webCardPricing}>
-                      <Text style={styles.webCardCurrency}>KES</Text>
+                      <Text style={styles.webCardCurrency}>$</Text>
                       <Text
                         style={[styles.webCardPrice, { color: config.accent }]}
                       >
-                        {config.price.toLocaleString()}
+                        {config.priceUSD}
                       </Text>
                       <Text style={styles.webCardOnce}>/mo</Text>
                     </View>
@@ -1056,7 +1065,7 @@ export default function SubscriptionPage() {
                             { color: config.accent },
                           ]}
                         >
-                          KES {config.price.toLocaleString()}
+                          ${config.priceUSD}
                         </Text>
                         <Text style={styles.mobilePriceLabel}>/month</Text>
                       </View>
