@@ -360,7 +360,7 @@ function ComparisonTable({
                   >
                     {config.price.toLocaleString()}
                   </Text>
-                  <Text style={tableStyles.priceSub}>once</Text>
+                  <Text style={tableStyles.priceSub}>per month</Text>
                 </>
               )}
             </View>
