@@ -71,24 +71,31 @@ const VIEWER_CARD_MAX_WIDTH = IS_DESKTOP_WEB
 // Mobile's height ceiling used to be a flat 68% of screen height on every
 // device — width already fills the screen edge-to-edge, so that flat cap
 // was the only thing keeping portrait photos from reading as genuinely
-// big. The card sits centered in a fixed-height page (see fullScreenPage
-// below), so the gap it leaves above and below is always equal — meaning
-// that gap only needs to clear whichever overlay sits further from the
-// edge: the close button/counter at the top, or the delete button at the
-// bottom (the swipe hint sits between them and is translucent decorative
-// text, so a little visual overlap with it is fine). VIEWER_MOBILE_CHROME
-// is that single worst-case clearance; the card is then capped at the
-// SMALLER of a generous 84% of screen height (so taller phones get real
-// growth) and screen height minus twice that clearance (so on the
-// smallest phones it only grows as far as it safely can). Both numbers
-// scale with SCREEN_HEIGHT, so this stays responsive across device
-// sizes, and since the result never exceeds the page's own fixed height,
-// it changes how much of that non-scrolling page the card fills without
-// ever making the page itself scrollable.
-const VIEWER_MOBILE_CHROME = Platform.OS === "web" ? 96 : 106;
+// big.
+//
+// The card is centered, but it doesn't need to be centered in the WHOLE
+// page — only in the safe zone between the top overlay (close button/
+// counter) and the bottom overlay (delete button; the swipe hint sits
+// between them and is translucent decorative text, so a little visual
+// overlap with it is fine). fullScreenPage/webImageDragLayer below give
+// the card exactly that padded safe zone to center within
+// (paddingTop/paddingBottom = the chrome constants), so the reserved
+// space is spent once each, not doubled on both sides the way a single
+// symmetric clearance value would.
+//
+// The two overlays sit at different distances from their respective
+// edges, AND mobile web's viewport is shorter than native's to begin
+// with (window.innerHeight excludes the browser's address bar/toolbar
+// chrome, unlike a native app which owns the full device screen) — so
+// web gets its own, tighter top clearance rather than reusing native's.
+const VIEWER_TOP_CHROME = Platform.OS === "web" ? 72 : 104;
+const VIEWER_BOTTOM_CHROME = 94;
 const VIEWER_CARD_MAX_HEIGHT = IS_DESKTOP_WEB
   ? SCREEN_HEIGHT * 0.86
-  : Math.min(SCREEN_HEIGHT * 0.84, SCREEN_HEIGHT - VIEWER_MOBILE_CHROME * 2);
+  : Math.min(
+      SCREEN_HEIGHT * 0.84,
+      SCREEN_HEIGHT - VIEWER_TOP_CHROME - VIEWER_BOTTOM_CHROME,
+    );
 // A real Polaroid's white border is thin and even on three sides, with a
 // noticeably deeper strip along the bottom for the caption.
 const VIEWER_POLAROID_TOP = 10;
@@ -2324,12 +2331,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
   },
+  // paddingTop/paddingBottom carve out the safe zone described above the
+  // VIEWER_TOP_CHROME/VIEWER_BOTTOM_CHROME constants — the card still
+  // centers via justifyContent, just within that padded box instead of
+  // the full page, so it can grow right up to the overlays on both sides
+  // without the reserved space being wasted twice over.
   fullScreenPage: {
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: COLLECTION_BG,
+    paddingTop: VIEWER_TOP_CHROME,
+    paddingBottom: VIEWER_BOTTOM_CHROME,
   },
   webViewerWrapper: {
     flex: 1,
@@ -2344,6 +2358,8 @@ const styles = StyleSheet.create({
   webImageDragLayer: {
     justifyContent: "center",
     alignItems: "center",
+    paddingTop: IS_DESKTOP_WEB ? 0 : VIEWER_TOP_CHROME,
+    paddingBottom: IS_DESKTOP_WEB ? 0 : VIEWER_BOTTOM_CHROME,
     ...Platform.select({ web: { touchAction: "pan-y" } as any, default: {} }),
   },
   // ── Polaroid-framed photo — same white card treatment as the grid
