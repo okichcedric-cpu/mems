@@ -68,7 +68,27 @@ const COLLECTION_BG = "#f0ece4";
 const VIEWER_CARD_MAX_WIDTH = IS_DESKTOP_WEB
   ? Math.min(900, SCREEN_WIDTH * 0.72)
   : SCREEN_WIDTH - 32;
-const VIEWER_CARD_MAX_HEIGHT = SCREEN_HEIGHT * (IS_DESKTOP_WEB ? 0.86 : 0.68);
+// Mobile's height ceiling used to be a flat 68% of screen height on every
+// device — width already fills the screen edge-to-edge, so that flat cap
+// was the only thing keeping portrait photos from reading as genuinely
+// big. The card sits centered in a fixed-height page (see fullScreenPage
+// below), so the gap it leaves above and below is always equal — meaning
+// that gap only needs to clear whichever overlay sits further from the
+// edge: the close button/counter at the top, or the delete button at the
+// bottom (the swipe hint sits between them and is translucent decorative
+// text, so a little visual overlap with it is fine). VIEWER_MOBILE_CHROME
+// is that single worst-case clearance; the card is then capped at the
+// SMALLER of a generous 84% of screen height (so taller phones get real
+// growth) and screen height minus twice that clearance (so on the
+// smallest phones it only grows as far as it safely can). Both numbers
+// scale with SCREEN_HEIGHT, so this stays responsive across device
+// sizes, and since the result never exceeds the page's own fixed height,
+// it changes how much of that non-scrolling page the card fills without
+// ever making the page itself scrollable.
+const VIEWER_MOBILE_CHROME = Platform.OS === "web" ? 96 : 106;
+const VIEWER_CARD_MAX_HEIGHT = IS_DESKTOP_WEB
+  ? SCREEN_HEIGHT * 0.86
+  : Math.min(SCREEN_HEIGHT * 0.84, SCREEN_HEIGHT - VIEWER_MOBILE_CHROME * 2);
 // A real Polaroid's white border is thin and even on three sides, with a
 // noticeably deeper strip along the bottom for the caption.
 const VIEWER_POLAROID_TOP = 10;

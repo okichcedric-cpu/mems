@@ -3,6 +3,7 @@ import * as ImageManipulator from "expo-image-manipulator";
 import { Platform } from "react-native";
 import { deleteCollectionMetadata } from "./collections";
 import { compressImage, generateThumbnail } from "./imageProcessing";
+import { deleteAllCollectionShares } from "./sharing";
 import { supabase } from "./supabase";
 
 // ── Native upload helper ───────────────────────────────────────────────────
@@ -352,6 +353,18 @@ export async function deleteCollection(
     await deleteCollectionMetadata(userId, collectionName);
   } catch (error: any) {
     console.warn("deleteCollection metadata cleanup error:", error.message);
+  }
+
+  // Also best-effort, and just as important: shared_collections is keyed
+  // on (owner_id, collection_name) rather than a stable per-collection id,
+  // since collections themselves are just S3 prefixes with no id of their
+  // own. Leaving these rows behind after a delete means a future
+  // collection that reuses this exact name would silently inherit the old
+  // shares. See deleteAllCollectionShares() for the full explanation.
+  try {
+    await deleteAllCollectionShares(userId, collectionName);
+  } catch (error: any) {
+    console.warn("deleteCollection shares cleanup error:", error.message);
   }
 }
 

@@ -124,3 +124,27 @@ export async function unshareCollection(
 
   if (error) throw new Error(error.message);
 }
+
+// Wipe every share of a collection at once — used when the collection
+// itself is deleted. Without this, `shared_collections` rows are keyed
+// only on (owner_id, collection_name), which is just a name, not a
+// stable id tied to any particular S3 folder "instance". If those rows
+// are left behind after a delete, creating a brand new collection that
+// happens to reuse the same name silently inherits the old shares —
+// the previous recipients would see themselves as sharees of a
+// collection they were never actually invited to. Best-effort: called
+// after S3 deletion already succeeded, so a failure here should never
+// block the delete the user asked for, it just risks the name-reuse
+// scenario above rather than losing user data.
+export async function deleteAllCollectionShares(
+  ownerId: string,
+  collectionName: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from('shared_collections')
+    .delete()
+    .eq('owner_id', ownerId)
+    .eq('collection_name', collectionName);
+
+  if (error) throw new Error(error.message);
+}
