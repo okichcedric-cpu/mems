@@ -208,7 +208,11 @@ export default function NewCollectionPage() {
 
     // Validate the memory date fields before uploading anything — cheaper
     // to fail fast here than after photos are already on their way up.
-    const dateResult = buildIsoDateFromParts(memoryDay, memoryMonth, memoryYear);
+    const dateResult = buildIsoDateFromParts(
+      memoryDay,
+      memoryMonth,
+      memoryYear,
+    );
     if (dateResult.status === "error") {
       Alert.alert("Check the memory date", dateResult.message);
       return;
@@ -234,7 +238,6 @@ export default function NewCollectionPage() {
           }));
         }),
       );
-
       // Best-effort — the collection itself is already created (it
       // exists as soon as it has photos), so a failure here shouldn't
       // undo that or block navigating away.
@@ -313,8 +316,8 @@ export default function NewCollectionPage() {
           <Text style={styles.optionalTag}>Optional</Text>
         </View>
         <Text style={styles.dateHint}>
-          When did these memories actually happen? Leave blank if you'd
-          rather not say.
+          When did these memories actually happen? Leave blank if you'd rather
+          not say.
         </Text>
         <View style={styles.dateRow}>
           <TextInput
