@@ -235,19 +235,26 @@ export default function NewCollectionPage() {
         }),
       );
 
-      // Optional, best-effort — the collection itself is already created
-      // (it exists as soon as it has photos), so a failure saving the
-      // memory date shouldn't undo that or block navigating away.
-      if (dateResult.status === "ok") {
-        try {
-          await setCollectionMemoryDate(
-            session.user.id,
-            collectionName.trim(),
-            dateResult.iso,
-          );
-        } catch (dateError: any) {
-          console.warn("Save memory date error:", dateError.message);
-        }
+      // Best-effort — the collection itself is already created (it
+      // exists as soon as it has photos), so a failure here shouldn't
+      // undo that or block navigating away.
+      //
+      // Every collection created from this point forward gets a
+      // `collections` row regardless of whether a memory date was set —
+      // pass null when it wasn't rather than skipping the write. This
+      // only affects newly created collections; older ones that predate
+      // this change simply continue to have no row, which the rest of
+      // the app already treats identically to "no date set" (see
+      // getCollectionMemoryDate), so nothing needs to change there and
+      // nothing is backfilled.
+      try {
+        await setCollectionMemoryDate(
+          session.user.id,
+          collectionName.trim(),
+          dateResult.status === "ok" ? dateResult.iso : null,
+        );
+      } catch (dateError: any) {
+        console.warn("Save memory date error:", dateError.message);
       }
 
       // Success — go back to the home screen, which refetches on focus
