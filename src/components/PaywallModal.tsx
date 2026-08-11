@@ -76,6 +76,10 @@ type Props = {
   visible: boolean;
   reason: PaywallReason;
   currentLimit?: number;
+  // How many photos the user actually selected, when reason is "photos" —
+  // lets the copy below say exactly what was exceeded ("18 selected, plan
+  // allows 10") instead of only stating the plan's limit.
+  selectedCount?: number;
   currentTier?: "free" | "small" | "medium" | "big";
   onSubscribed: (tier: Tier) => void;
   onDismiss: () => void;
@@ -93,6 +97,7 @@ export default function PaywallModal({
   visible,
   reason,
   currentLimit,
+  selectedCount,
   currentTier = "free",
   onSubscribed,
   onDismiss,
@@ -105,7 +110,16 @@ export default function PaywallModal({
   const [mounted, setMounted] = useState(false);
 
   const limit = currentLimit ?? (reason === "collections" ? 3 : 10);
-  const ALL_PAID_TIERS: Tier[] = ["small", "medium", "big"];
+  // Only offer tiers that are a genuine upgrade. For a free user that's
+  // all three, but an already-paying user must never see their own (or a
+  // lower) tier listed here — tapping it would re-run a real charge for
+  // a plan they already have.
+  const TIER_ORDER: Tier[] = ["small", "medium", "big"];
+  const currentTierIndex =
+    currentTier === "free" ? -1 : TIER_ORDER.indexOf(currentTier as Tier);
+  const ALL_PAID_TIERS: Tier[] = TIER_ORDER.filter(
+    (t) => TIER_ORDER.indexOf(t) > currentTierIndex,
+  );
 
   useEffect(() => {
     if (visible) {
@@ -143,16 +157,24 @@ export default function PaywallModal({
   if (!mounted && !visible) return null;
 
   const emoji = reason === "collections" ? "🗂️" : "📸";
+  const tierLabel =
+    currentTier === "free" ? "free" : (TIERS[currentTier as Tier]?.label ?? "");
+  const overSelection =
+    reason === "photos" && !!selectedCount && selectedCount > limit;
 
   const title =
     reason === "collections"
       ? `You've used all ${limit} collection${limit === 1 ? "" : "s"}`
-      : `You've reached the ${limit} photo limit`;
+      : overSelection
+        ? `${selectedCount} photos selected — ${limit} max on your plan`
+        : `You've reached the ${limit} photo limit`;
 
   const sub =
     reason === "collections"
-      ? `Your ${currentTier === "free" ? "free" : (TIERS[currentTier as Tier]?.label ?? "")} plan allows ${limit} collection${limit === 1 ? "" : "s"}. Pick a plan below to store more memories.`
-      : `Your ${currentTier === "free" ? "free" : (TIERS[currentTier as Tier]?.label ?? "")} plan allows ${limit} photos per collection. Pick a plan below to keep adding moments.`;
+      ? `Your ${tierLabel} plan allows ${limit} collection${limit === 1 ? "" : "s"}. Pick a plan below to store more memories.`
+      : overSelection
+        ? `Your ${tierLabel} plan allows ${limit} photos per collection. Pick a plan below that fits all ${selectedCount} photos, or continue and we'll upload the first ${limit}.`
+        : `Your ${tierLabel} plan allows ${limit} photos per collection. Pick a plan below to keep adding moments.`;
 
   async function handlePurchase(tier: Tier) {
     const {
@@ -389,6 +411,13 @@ export default function PaywallModal({
               is a fixed marketing label (TIERS[...].featured), not a
               suggestion computed from what would fix the limit. */}
           <Text style={styles.sectionTitle}>Choose your plan</Text>
+
+          {ALL_PAID_TIERS.length === 0 && (
+            <Text style={styles.headerSub}>
+              You're already on our top plan — this can't be fixed with an
+              upgrade. Please free up room instead.
+            </Text>
+          )}
 
           {ALL_PAID_TIERS.map((tier) => {
             const config = TIERS[tier];

@@ -252,25 +252,25 @@ export default function NewCollectionPage() {
       return;
     }
 
-    const maxPhotos = subscriptionStatus?.limits?.maxPhotosPerCollection ?? 10;
-    const isLimited = !subscriptionStatus?.isActive;
-
     setPickingPhotos(true);
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsMultipleSelection: true,
         quality: 0.8,
-        selectionLimit: isLimited ? maxPhotos : 0,
+        // No OS-level cap here at all, for anyone — free or paying.
+        // createCollection() is what tells them they've gone over their
+        // plan's limit and offers one that fits, once they actually try
+        // to create the collection. Capping selectionLimit at pick time
+        // (the old behaviour) blocked native users from ever selecting
+        // past their limit in the first place, so upgrading afterwards
+        // didn't help — they'd already been stopped short by the OS
+        // picker before getting anywhere near "Create".
+        selectionLimit: 0,
       });
 
       if (!result.canceled) {
-        setSelectedAssets(result.assets.slice(0, maxPhotos));
-        if (isLimited && result.assets.length >= maxPhotos) {
-          pendingActionRef.current = createCollection;
-          setPaywallReason("photos");
-          setShowPaywall(true);
-        }
+        setSelectedAssets(result.assets);
       }
     } finally {
       setPickingPhotos(false);
@@ -310,7 +310,18 @@ export default function NewCollectionPage() {
     }
 
     const maxPhotos = subscriptionStatus?.limits?.maxPhotosPerCollection ?? 10;
-    if (!isActive && selectedAssets.length > maxPhotos) {
+    if (selectedAssets.length > maxPhotos) {
+      // Already on the top tier — no plan left to offer, so there's
+      // nothing the paywall could actually fix. Ask them to trim the
+      // selection instead of opening a modal with no upgrade option.
+      if (isActive && subscriptionStatus?.tier === "big") {
+        const over = selectedAssets.length - maxPhotos;
+        Alert.alert(
+          "Photo limit reached",
+          `Your ${subscriptionStatus?.limits?.label ?? "Big Album"} plan allows up to ${maxPhotos} photos per collection — that's the highest available. Remove ${over} photo${over === 1 ? "" : "s"} to continue.`,
+        );
+        return;
+      }
       pendingActionRef.current = createCollection;
       setPaywallReason("photos");
       setShowPaywall(true);
@@ -576,6 +587,9 @@ export default function NewCollectionPage() {
             ? (subscriptionStatus?.limits?.maxCollections ?? 3)
             : (subscriptionStatus?.limits?.maxPhotosPerCollection ?? 10)
         }
+        selectedCount={
+          paywallReason === "photos" ? selectedAssets.length : undefined
+        }
         currentTier={
           subscriptionStatus?.isActive
             ? (subscriptionStatus.tier as any)
@@ -597,6 +611,14 @@ export default function NewCollectionPage() {
         onDismiss={() => {
           setShowPaywall(false);
           pendingActionRef.current = null;
+          // Declined to pay — trim back down to what their current plan
+          // actually allows rather than leaving an over-limit selection
+          // sitting in state (Create would otherwise just re-show this
+          // same paywall in a loop).
+          if (paywallReason === "photos") {
+            const cap = subscriptionStatus?.limits?.maxPhotosPerCollection ?? 10;
+            setSelectedAssets((prev) => prev.slice(0, cap));
+          }
         }}
       />
 
