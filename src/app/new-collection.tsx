@@ -10,6 +10,11 @@ import {
   markPendingUploadHint,
   savePendingCollectionUpload,
 } from "@/utils/pendingUpload";
+import {
+  clearNativePendingUpload,
+  getNativePendingUpload,
+  saveNativePendingUpload,
+} from "@/utils/pendingUploadNative";
 import { uploadToS3 } from "@/utils/s3";
 import { checkSubscription, SubscriptionStatus } from "@/utils/subscription";
 import { supabase } from "@/utils/supabase";
@@ -129,22 +134,51 @@ export default function NewCollectionPage() {
       .catch(() => {});
   }, [session]);
 
-  // ── Resume an upload that survived a payment redirect (web only) ────
-  // See utils/pendingUpload.ts: if the Pesapal popup got blocked, buying
-  // a plan from the paywall falls back to a same-tab redirect — a real
-  // page navigation that wipes React state, so by the time the user is
-  // routed back here after paying, `selectedAssets` from before is gone.
-  // subscription-callback.tsx sends them back to THIS screen specifically
-  // when it detects a saved draft; this effect is what actually finishes
-  // the job once we land here, picking the persisted photos back up from
-  // IndexedDB and uploading them without any further action from the user.
+  // ── Resume an upload that survived a payment redirect ────────────────
+  // Web: if the Pesapal popup got blocked, buying a plan from the paywall
+  // falls back to a same-tab redirect — a real page navigation that wipes
+  // React state (see utils/pendingUpload.ts). subscription-callback.tsx
+  // sends the user back to THIS screen when it detects a saved draft.
+  //
+  // Native: no popup/redirect involved, but the OS can kill the app
+  // process outright while the payment browser is open (aggressively
+  // battery-optimized Android skins like MIUI do this readily), which
+  // has the same net effect — everything in memory is gone. When that
+  // happens, app/_layout.tsx's cold-launch handler routes back here the
+  // same way, using a saved draft on disk instead (see
+  // utils/pendingUploadNative.ts).
+  //
+  // Either way, this effect is what actually finishes the job once we
+  // land here, picking the persisted photos back up and uploading them
+  // without any further action from the user.
   useEffect(() => {
-    if (Platform.OS !== "web" || !session || resumeAttemptedRef.current) return;
+    if (!session || resumeAttemptedRef.current) return;
     resumeAttemptedRef.current = true;
     resumePendingUpload();
   }, [session]);
 
+  async function pollForActiveSubscription(): Promise<boolean> {
+    // The Pesapal webhook that activates the subscription runs
+    // asynchronously and may not have landed the instant we're routed
+    // back — poll briefly rather than treating that timing gap as a
+    // failure.
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const status = await checkSubscription();
+      if (status.isActive) {
+        setSubscriptionStatus(status);
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    return false;
+  }
+
   async function resumePendingUpload() {
+    if (Platform.OS === "web") await resumeWebPendingUpload();
+    else await resumeNativePendingUpload();
+  }
+
+  async function resumeWebPendingUpload() {
     const pending = await getPendingCollectionUpload();
     if (!pending || !session || pending.ownerId !== session.user.id) return;
 
@@ -159,21 +193,7 @@ export default function NewCollectionPage() {
     setUploadProgress({ total: pending.photos.length, completed: 0 });
 
     try {
-      // The Pesapal webhook that activates the subscription runs
-      // asynchronously and may not have landed the instant we're routed
-      // back — poll briefly rather than treating that timing gap as a
-      // failure.
-      let active = false;
-      for (let attempt = 0; attempt < 8; attempt++) {
-        const status = await checkSubscription();
-        if (status.isActive) {
-          active = true;
-          setSubscriptionStatus(status);
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-      }
-
+      const active = await pollForActiveSubscription();
       if (!active) {
         // Leave the draft in IndexedDB untouched so reloading (or
         // reopening this screen) can pick it up and retry — don't lose
@@ -237,6 +257,70 @@ export default function NewCollectionPage() {
     }
   }
 
+  async function resumeNativePendingUpload() {
+    const pending = await getNativePendingUpload();
+    if (!pending || !session || pending.ownerId !== session.user.id) return;
+
+    setResuming(true);
+    setCreating(true);
+    setUploadProgress({ total: pending.photos.length, completed: 0 });
+
+    try {
+      const active = await pollForActiveSubscription();
+      if (!active) {
+        // Leave the draft on disk so reopening this screen can pick it
+        // up and retry — don't lose the photos over what's most likely
+        // just a slow webhook.
+        Alert.alert(
+          "Still confirming your payment",
+          "We're still waiting for your payment to be confirmed. Reopen New Collection in a moment and we'll finish creating it automatically.",
+        );
+        return;
+      }
+
+      await Promise.all(
+        pending.photos.map(async (photo) => {
+          const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
+          await uploadToS3(
+            pending.ownerId,
+            pending.collectionName,
+            fileName,
+            photo.uri,
+            photo.width,
+            photo.height,
+          );
+          setUploadProgress((prev) => ({
+            ...prev,
+            completed: prev.completed + 1,
+          }));
+        }),
+      );
+
+      try {
+        await setCollectionMemoryDate(
+          pending.ownerId,
+          pending.collectionName,
+          pending.memoryDateIso,
+        );
+      } catch (dateError: any) {
+        console.warn("Save memory date error (resume):", dateError.message);
+      }
+
+      await clearNativePendingUpload();
+      goBack();
+    } catch (error: any) {
+      console.error("Resume pending upload error:", error.message);
+      Alert.alert(
+        "Payment succeeded, upload didn't finish",
+        "Your payment went through, but something interrupted the upload. Your photos are still saved — reopen New Collection to try again.",
+      );
+    } finally {
+      setCreating(false);
+      setResuming(false);
+      setUploadProgress({ total: 0, completed: 0 });
+    }
+  }
+
   function goBack() {
     if (router.canGoBack()) router.back();
     else router.replace("/");
@@ -286,7 +370,18 @@ export default function NewCollectionPage() {
       Alert.alert("Photos required", "Please select at least one photo.");
       return;
     }
-    if (!session) return;
+    if (!session) {
+      // Silently no-op-ing here used to leave "nothing happens" when
+      // tapped right after a cold-launch resume (e.g. on a device that
+      // killed the app mid-payment and just relaunched it), since the
+      // session takes a moment to rehydrate from storage. Tell the user
+      // something's happening instead of looking broken.
+      Alert.alert(
+        "Just a moment",
+        "Still signing you in — please try again in a second.",
+      );
+      return;
+    }
 
     const maxCollections = subscriptionStatus?.limits?.maxCollections ?? 3;
     const isActive = subscriptionStatus?.isActive ?? false;
@@ -402,43 +497,67 @@ export default function NewCollectionPage() {
     }
   }
 
-  // ── Web only — persist the picked photos before payment (see
-  // utils/pendingUpload.ts). Passed to PaywallModal as onBeforePurchase,
-  // which awaits this after it's already opened the payment popup, so it
-  // never delays or interferes with the browser's popup-gesture check.
+  // ── Persist the picked photos before payment ─────────────────────────
+  // Passed to PaywallModal as onBeforePurchase, which awaits this after
+  // it's already kicked off the payment (opened the popup on web, or
+  // right before opening the in-app browser on native), so it never
+  // delays or interferes with anything time-sensitive on either path.
+  //
+  // Web needs the actual bytes (see utils/pendingUpload.ts) because a
+  // same-tab redirect fallback wipes the blob: URLs backing selectedAssets
+  // entirely. Native just needs to remember which files to upload and
+  // where (see utils/pendingUploadNative.ts) — the picker's URIs already
+  // point to real files on disk that survive an app process restart —
+  // but it still needs *something* persisted in case the OS kills the
+  // app outright while the payment browser is open.
   async function persistPendingUploadForPayment() {
     if (!session || selectedAssets.length === 0) return;
 
+    const dateResult = buildIsoDateFromParts(
+      memoryDay,
+      memoryMonth,
+      memoryYear,
+    );
+    const memoryDateIso = dateResult.status === "ok" ? dateResult.iso : null;
+
     try {
-      const dateResult = buildIsoDateFromParts(
-        memoryDay,
-        memoryMonth,
-        memoryYear,
-      );
-      const photos = await Promise.all(
-        selectedAssets.map(async (asset) => {
-          const res = await fetch(asset.uri);
-          const blob = await res.blob();
-          return {
-            name: asset.fileName ?? `${Date.now()}.jpg`,
-            blob,
+      if (Platform.OS === "web") {
+        const photos = await Promise.all(
+          selectedAssets.map(async (asset) => {
+            const res = await fetch(asset.uri);
+            const blob = await res.blob();
+            return {
+              name: asset.fileName ?? `${Date.now()}.jpg`,
+              blob,
+              width: asset.width,
+              height: asset.height,
+            };
+          }),
+        );
+
+        await savePendingCollectionUpload({
+          ownerId: session.user.id,
+          collectionName: collectionName.trim(),
+          memoryDateIso,
+          photos,
+        });
+        markPendingUploadHint();
+      } else {
+        await saveNativePendingUpload({
+          ownerId: session.user.id,
+          collectionName: collectionName.trim(),
+          memoryDateIso,
+          photos: selectedAssets.map((asset) => ({
+            uri: asset.uri,
             width: asset.width,
             height: asset.height,
-          };
-        }),
-      );
-
-      await savePendingCollectionUpload({
-        ownerId: session.user.id,
-        collectionName: collectionName.trim(),
-        memoryDateIso: dateResult.status === "ok" ? dateResult.iso : null,
-        photos,
-      });
-      markPendingUploadHint();
+          })),
+        });
+      }
     } catch (error: any) {
       // Best-effort — if this fails, the user just ends up back at the
-      // pre-fix behaviour (reselect photos after paying) rather than
-      // anything actually breaking.
+      // pre-fix behaviour (reselect photos / retap Create after paying)
+      // rather than anything actually breaking.
       console.warn("persistPendingUploadForPayment error:", error.message);
     }
   }
@@ -595,9 +714,7 @@ export default function NewCollectionPage() {
             ? (subscriptionStatus.tier as any)
             : "free"
         }
-        onBeforePurchase={
-          Platform.OS === "web" ? persistPendingUploadForPayment : undefined
-        }
+        onBeforePurchase={persistPendingUploadForPayment}
         onSubscribed={async (_tier) => {
           const status = await checkSubscription();
           setSubscriptionStatus(status);

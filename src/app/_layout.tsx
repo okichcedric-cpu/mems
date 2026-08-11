@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { AuthProvider, useAuth } from "../contexts/AuthContext";
+import { hasNativePendingUpload } from "../utils/pendingUploadNative";
 import { supabase } from "../utils/supabase";
 
 // ── OAuth redirect handling ──────────────────────────────────
@@ -136,17 +137,25 @@ function RootLayoutNav() {
       }
     });
 
-    Linking.getInitialURL().then((url) => {
+    Linking.getInitialURL().then(async (url) => {
       if (url) {
         handleAuthRedirect(url).then((result) => {
           if (result === "recovery") router.replace("/reset-password");
         });
         // Cold launch via the deep link (app wasn't already running) —
-        // there's no in-flight openBrowserAsync() to race with here, so
-        // there's nothing to resume; just land on home like any other
+        // there's no in-flight openBrowserAsync() to race with here, but
+        // that also means the app process itself may have been killed
+        // while the payment browser was open (aggressively
+        // battery-optimized Android skins like MIUI do this readily),
+        // taking new-collection.tsx's selected photos and "resume this"
+        // state down with it. If it saved a draft to disk beforehand
+        // (see utils/pendingUploadNative.ts), route back there instead
+        // of home so its own resume effect can pick it up and finish the
+        // upload automatically — otherwise land on home like any other
         // fresh launch.
         if (url.includes("subscription-callback")) {
-          router.replace("/");
+          const hasPending = await hasNativePendingUpload();
+          router.replace(hasPending ? "/new-collection" : "/");
         }
       }
     });
