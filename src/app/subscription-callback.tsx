@@ -1,3 +1,4 @@
+import { hasPendingUploadHint } from "@/utils/pendingUpload";
 import { useLocalSearchParams } from "expo-router";
 import { useEffect } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
@@ -27,8 +28,18 @@ export default function SubscriptionCallback() {
         // Close the popup
         window.close();
       } else {
-        // Opened as a tab not a popup — redirect to home
-        window.location.href = "/";
+        // No opener means the popup was blocked and PaywallModal fell
+        // back to a same-tab redirect instead — this page load IS that
+        // original tab coming back, with all its previous React state
+        // (including any photos the user had picked) gone. If it saved a
+        // draft to IndexedDB before leaving (see utils/pendingUpload.ts),
+        // send it back to New Collection so it can pick that draft up
+        // and finish the upload automatically; otherwise home is still
+        // the right default (e.g. a purchase from the standalone
+        // Subscription page has nothing to resume).
+        window.location.href = hasPendingUploadHint()
+          ? "/new-collection"
+          : "/";
       }
     }
   }, []);

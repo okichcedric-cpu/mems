@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -585,6 +586,60 @@ export default function SubscriptionPage() {
             }
           }
         }, 1000);
+      } else {
+        // Native — open Pesapal in an in-app browser. The screen stays
+        // mounted for the whole flow (see the subscription-callback deep
+        // link fix in app/_layout.tsx, which dismisses this browser
+        // instead of forcing a navigation), so `status`/`purchasing`
+        // here are the same component instance throughout — no reload
+        // equivalent needed like the web branch above; just refetch and
+        // set status in place once payment is confirmed.
+        const { data, error } = await supabase.functions.invoke(
+          "create-subscription",
+          { body: { tier, callbackUrl } },
+        );
+
+        if (error) {
+          console.error("create-subscription error:", error.message);
+          throw new Error("Payment could not be started. Please try again.");
+        }
+
+        const { redirectUrl, merchantReference } = data;
+
+        await WebBrowser.openBrowserAsync(redirectUrl, {
+          presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
+          toolbarColor: "#111",
+          controlsColor: "#fff",
+        });
+
+        try {
+          const { data: sync } = await supabase.functions.invoke(
+            "sync-subscription",
+            { body: { merchantReference, tier } },
+          );
+          if (sync?.status === "active") {
+            const { data: updated } =
+              await supabase.functions.invoke("check-subscription");
+            setStatus({
+              tier: updated?.tier ?? "free",
+              isActive: updated?.isActive ?? false,
+              isLapsed: updated?.isLapsed ?? false,
+              periodEnd: updated?.periodEnd ?? null,
+              limits: updated?.limits ?? {
+                maxCollections: 3,
+                maxPhotosPerCollection: 10,
+              },
+            });
+            Alert.alert(
+              "You're all set!",
+              `Your ${TIERS[tier].label} album is now active.`,
+            );
+          }
+        } catch (syncErr: any) {
+          console.error("sync-subscription error:", syncErr.message);
+        } finally {
+          setPurchasing(null);
+        }
       }
     } catch (err: any) {
       console.error("handlePurchase error:", err.message);

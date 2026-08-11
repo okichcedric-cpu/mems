@@ -1,5 +1,6 @@
 import * as Linking from "expo-linking";
 import { Slot, useRouter, useSegments } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
 import { useEffect } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -110,8 +111,28 @@ function RootLayoutNav() {
       handleAuthRedirect(url).then((result) => {
         if (result === "recovery") router.replace("/reset-password");
       });
+      // ── Subscription payment callback (app already running) ──────
+      // Pesapal redirects back to mems://subscription-callback inside
+      // the in-app browser that PaywallModal opened via
+      // WebBrowser.openBrowserAsync(). The OS intercepts that custom
+      // scheme with its own "Open in Mems?" prompt and, on confirming,
+      // fires this very listener — while PaywallModal is STILL awaiting
+      // that openBrowserAsync() call to resolve.
+      //
+      // This used to force `router.replace("/")` here, which unmounts
+      // whatever screen opened the paywall (e.g. new-collection) right
+      // out from under PaywallModal's in-flight await — its
+      // continuation (sync-subscription + onSubscribed/onDismiss) would
+      // then run against a torn-down component, which is what crashed.
+      //
+      // Calling dismissBrowser() instead closes the in-app browser
+      // through the SAME mechanism PaywallModal is already waiting on,
+      // so openBrowserAsync() resolves cleanly and PaywallModal's own
+      // completion logic drives what happens next — no competing
+      // navigation, and the calling screen (with its selected photos
+      // still in memory) never unmounts.
       if (url.includes("subscription-callback")) {
-        router.replace("/");
+        WebBrowser.dismissBrowser();
       }
     });
 
@@ -120,6 +141,10 @@ function RootLayoutNav() {
         handleAuthRedirect(url).then((result) => {
           if (result === "recovery") router.replace("/reset-password");
         });
+        // Cold launch via the deep link (app wasn't already running) —
+        // there's no in-flight openBrowserAsync() to race with here, so
+        // there's nothing to resume; just land on home like any other
+        // fresh launch.
         if (url.includes("subscription-callback")) {
           router.replace("/");
         }

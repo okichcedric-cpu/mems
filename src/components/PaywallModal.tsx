@@ -79,6 +79,14 @@ type Props = {
   currentTier?: "free" | "small" | "medium" | "big";
   onSubscribed: (tier: Tier) => void;
   onDismiss: () => void;
+  // Fired right before payment is kicked off (before any popup/redirect),
+  // so a caller can persist whatever it can't afford to lose if the browser
+  // ends up navigating away entirely — e.g. new-collection.tsx saving the
+  // photos the user already picked to IndexedDB, since a same-tab redirect
+  // fallback (common when a mobile browser blocks the payment popup) wipes
+  // in-memory state before the user ever gets back. Awaited before
+  // continuing, so it's safe to do async work here.
+  onBeforePurchase?: () => void | Promise<void>;
 };
 
 export default function PaywallModal({
@@ -88,6 +96,7 @@ export default function PaywallModal({
   currentTier = "free",
   onSubscribed,
   onDismiss,
+  onBeforePurchase,
 }: Props) {
   const router = useRouter();
   const [purchasing, setPurchasing] = useState<Tier | null>(null);
@@ -163,12 +172,27 @@ export default function PaywallModal({
         : "mems://subscription-callback";
 
       if (IS_WEB) {
-        // Open popup immediately on user gesture before any await
+        // Open popup immediately on user gesture before any await — this
+        // has to stay the very first thing that happens, since browsers
+        // key their popup-gesture heuristics off how soon after the click
+        // window.open() runs. onBeforePurchase (below) can be slow (it
+        // may be converting several full-resolution photos to Blobs), so
+        // it deliberately runs AFTER this rather than before it.
         const popup = window.open(
           "",
           "pesapal",
           "width=620,height=720,left=200,top=80",
         );
+
+        // Give the caller a chance to persist anything it can't afford to
+        // lose before we risk a same-tab redirect below (mobile browsers
+        // block window.open() far more often than desktop ones, and that
+        // redirect is a real page navigation that wipes in-memory state).
+        try {
+          await onBeforePurchase?.();
+        } catch (persistErr: any) {
+          console.warn("onBeforePurchase failed:", persistErr?.message);
+        }
 
         if (!popup) {
           // Popup blocked — fall back to same-tab redirect
@@ -232,7 +256,17 @@ export default function PaywallModal({
           }
         }, 1000);
       } else {
-        // Native — open Pesapal in in-app browser
+        // Native — open Pesapal in in-app browser. Unlike web, the screen
+        // that opened this modal stays mounted for the whole flow (see
+        // the _layout.tsx deep-link fix), so there's nothing at risk of
+        // being lost here — onBeforePurchase is called anyway for
+        // callers that want it, but native ones typically won't need it.
+        try {
+          await onBeforePurchase?.();
+        } catch (persistErr: any) {
+          console.warn("onBeforePurchase failed:", persistErr?.message);
+        }
+
         const { data, error } = await supabase.functions.invoke(
           "create-subscription",
           { body: { tier, callbackUrl } },
