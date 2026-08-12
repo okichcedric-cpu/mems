@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/react-native";
 import * as Linking from "expo-linking";
 import { Slot, useRouter, useSegments } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
@@ -7,6 +8,32 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { AuthProvider, useAuth } from "../contexts/AuthContext";
 import { hasNativePendingUpload } from "../utils/pendingUploadNative";
 import { supabase } from "../utils/supabase";
+
+// ── Crash reporting ───────────────────────────────────────────
+// Initialized once, at module load, before anything else in the app
+// runs — this is what lets it catch crashes that happen very early
+// (including native-level ones on the payment/deep-link flows that
+// have been hard to diagnose from user reports alone).
+Sentry.init({
+  dsn: "https://62df84b446a4ee3f48fb812535397c30@o4511895075684352.ingest.de.sentry.io/4511895086235728",
+  // Off during local dev — otherwise every Metro fast-refresh, Expo Go
+  // hiccup, and local console.error while iterating gets reported
+  // alongside genuine user crashes, making the dashboard far less useful
+  // for actually triaging what real users hit.
+  enabled: !__DEV__,
+  environment: __DEV__ ? "development" : "production",
+  // Adds more context data to events (IP address, cookies, user, etc.)
+  // For more information, visit: https://docs.sentry.io/platforms/react-native/data-management/data-collected/
+  sendDefaultPii: true,
+  // Enable Logs
+  enableLogs: true,
+  // Configure Session Replay
+  replaysSessionSampleRate: 0.1,
+  replaysOnErrorSampleRate: 1,
+  integrations: [Sentry.mobileReplayIntegration()],
+  // uncomment the line below to enable Spotlight (https://spotlightjs.com)
+  // spotlight: __DEV__,
+});
 
 // ── OAuth redirect handling ──────────────────────────────────
 // Lives at the app root (not inside the login screen) so it survives
@@ -261,7 +288,7 @@ function RootLayoutNav() {
   return <Slot />;
 }
 
-export default function RootLayout() {
+function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AuthProvider>
@@ -270,3 +297,10 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   );
 }
+
+// Sentry.wrap adds the touch-event breadcrumbs, native crash tracking,
+// and (with mobileReplayIntegration above) session replay hookups on top
+// of the plain Sentry.init above — this is what the RN SDK expects
+// wrapping the true app root, so it stays here rather than deeper in the
+// tree where a screen-level error boundary would normally go.
+export default Sentry.wrap(RootLayout);

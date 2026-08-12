@@ -49,3 +49,4 @@ app-example
 .env .production
 
 CLAUDE.md
+.env.local
