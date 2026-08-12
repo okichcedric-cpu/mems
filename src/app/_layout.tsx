@@ -1,7 +1,7 @@
 import * as Linking from "expo-linking";
 import { Slot, useRouter, useSegments } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { AuthProvider, useAuth } from "../contexts/AuthContext";
@@ -103,10 +103,26 @@ function RootLayoutNav() {
   const { session, loading } = useAuth();
   const router = useRouter();
   const segments = useSegments();
+  // Deep-link handlers below run inside a mount-once effect ([] deps), so
+  // they'd otherwise close over whatever `segments` was at that very
+  // first render — a ref kept in sync on every render is what lets them
+  // see the CURRENT route instead of a stale snapshot from app launch.
+  const segmentsRef = useRef(segments);
+  useEffect(() => {
+    segmentsRef.current = segments;
+  }, [segments]);
 
   // ── Persistent deep link listener — app lifetime, not per-screen ──
   useEffect(() => {
     if (Platform.OS === "web") return;
+
+    // Some Android launch/Custom-Tab configurations can deliver the same
+    // subscription-callback link to both handlers below — the live "url"
+    // listener AND getInitialURL() — even on a genuine cold start where
+    // both fire for the one intent that launched the app. This flag lets
+    // whichever one sees it first "claim" it, so the other doesn't also
+    // act on the same event.
+    let claimedSubscriptionCallback = false;
 
     const subscription = Linking.addEventListener("url", ({ url }) => {
       handleAuthRedirect(url).then((result) => {
@@ -133,6 +149,7 @@ function RootLayoutNav() {
       // navigation, and the calling screen (with its selected photos
       // still in memory) never unmounts.
       if (url.includes("subscription-callback")) {
+        claimedSubscriptionCallback = true;
         WebBrowser.dismissBrowser();
       }
     });
@@ -142,20 +159,27 @@ function RootLayoutNav() {
         handleAuthRedirect(url).then((result) => {
           if (result === "recovery") router.replace("/reset-password");
         });
-        // Cold launch via the deep link (app wasn't already running) —
-        // there's no in-flight openBrowserAsync() to race with here, but
-        // that also means the app process itself may have been killed
-        // while the payment browser was open (aggressively
-        // battery-optimized Android skins like MIUI do this readily),
-        // taking new-collection.tsx's selected photos and "resume this"
-        // state down with it. If it saved a draft to disk beforehand
-        // (see utils/pendingUploadNative.ts), route back there instead
-        // of home so its own resume effect can pick it up and finish the
-        // upload automatically — otherwise land on home like any other
-        // fresh launch.
-        if (url.includes("subscription-callback")) {
-          const hasPending = await hasNativePendingUpload();
-          router.replace(hasPending ? "/new-collection" : "/");
+        if (url.includes("subscription-callback") && !claimedSubscriptionCallback) {
+          // If we're ALREADY sitting on new-collection, there's nothing
+          // to navigate to — this really was just the live listener
+          // above handling things (or about to), not a genuine cold
+          // start, and forcing a replace onto the exact screen that's
+          // mid-payment is exactly the "unmount out from under a pending
+          // continuation" bug this whole mechanism exists to avoid.
+          // Only navigate when we're somewhere else, which is the actual
+          // signal that this is a fresh launch (the app process was
+          // killed while the payment browser was open — aggressively
+          // battery-optimized Android skins do this readily, but even
+          // stock Android can under real memory pressure) rather than a
+          // duplicate delivery of an event the live listener already
+          // caught.
+          const alreadyOnNewCollection = segmentsRef.current
+            .join("/")
+            .includes("new-collection");
+          if (!alreadyOnNewCollection) {
+            const hasPending = await hasNativePendingUpload();
+            router.replace(hasPending ? "/new-collection" : "/");
+          }
         }
       }
     });

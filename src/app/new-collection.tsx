@@ -486,6 +486,16 @@ export default function NewCollectionPage() {
         console.warn("Save memory date error:", dateError.message);
       }
 
+      // If a draft was saved before payment (onBeforePurchase) but we
+      // got here through the normal flow rather than the resume path —
+      // e.g. the screen never actually lost its state — clear it so it
+      // can't linger and get mistaken for a genuine pending upload on
+      // some later, unrelated mount. Best-effort and native-only; no-ops
+      // harmlessly if there was never a draft.
+      if (Platform.OS !== "web") {
+        clearNativePendingUpload().catch(() => {});
+      }
+
       // Success — go back to the home screen, which refetches on focus
       goBack();
     } catch (error: any) {
