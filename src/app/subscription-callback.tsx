@@ -1,5 +1,5 @@
 import { hasPendingUploadHint } from "@/utils/pendingUpload";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect } from "react";
 import {
   ActivityIndicator,
@@ -11,22 +11,38 @@ import {
 
 export default function SubscriptionCallback() {
   const params = useLocalSearchParams();
+  const router = useRouter();
 
   useEffect(() => {
-    // Web only. This route can still end up mounted on native — app.json
-    // sets scheme: "mems", so expo-router's own built-in deep-link
-    // handling treats mems://subscription-callback as "navigate to this
-    // screen", on top of (separately) app/_layout.tsx's raw Linking
-    // listener also watching for the exact same URL. `typeof window !==
-    // "undefined"` doesn't guard against that — React Native provides a
-    // `window` global too, just without .location/.opener/.close() — so
-    // this used to fall through to `window.location.href = ...` on
-    // native and throw ("cannot set location.href"), crashing the app on
-    // every single native return from payment. _layout.tsx's listener is
-    // the real handler on native (dismisses the browser, decides where
-    // to route); this screen has nothing to do there, so it just stays
-    // inert and lets that own its job rather than racing it.
-    if (Platform.OS !== "web") return;
+    // Web only below this point. This route can still end up mounted on
+    // native — app.json sets scheme: "mems", so expo-router's own
+    // built-in deep-link handling treats mems://subscription-callback as
+    // "navigate to this screen", on top of (separately) app/_layout.tsx's
+    // raw Linking listener also watching for the exact same URL. That's
+    // not something controllable from _layout.tsx — expo-router pushes
+    // this route regardless of what that listener does.
+    //
+    // `typeof window !== "undefined"` doesn't guard against running on
+    // native at all — React Native provides a `window` global too, just
+    // without .location/.opener/.close() — so this used to fall through
+    // to `window.location.href = ...` and throw ("cannot set
+    // location.href"), crashing the app on every native return from
+    // payment.
+    //
+    // The real handling on native (dismissing the browser, deciding
+    // where to route, resuming an upload) already happens correctly on
+    // the screen this one got pushed on top of — via _layout.tsx's
+    // listener — so simply not touching any window API isn't enough on
+    // its own; this screen also needs to get out of the way, or the user
+    // is left staring at "Processing payment..." forever with nothing
+    // ever navigating past it. Popping back off the stack reveals that
+    // already-working screen again immediately, without disturbing its
+    // mount state the way a replace() to some other destination would.
+    if (Platform.OS !== "web") {
+      if (router.canGoBack()) router.back();
+      else router.replace("/");
+      return;
+    }
 
     // This page loads inside the Pesapal popup after payment
     // It signals the parent window and closes itself

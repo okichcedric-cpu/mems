@@ -2,6 +2,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as ImageManipulator from "expo-image-manipulator";
 import { Platform } from "react-native";
 import { deleteCollectionMetadata } from "./collections";
+import { evictPhotoFromCache } from "./imageCache";
 import { compressImage, generateThumbnail } from "./imageProcessing";
 import { deleteAllCollectionShares } from "./sharing";
 import { supabase } from "./supabase";
@@ -329,6 +330,13 @@ export async function deleteFromS3(key: string): Promise<void> {
     console.error("deleteFromS3 error:", error.message);
     throw new Error("Could not delete photo. Please try again.");
   }
+
+  // Only evict the local cache once the server-side delete is actually
+  // confirmed — best-effort and never allowed to affect the outcome
+  // above. deleteCollection() calls this once per photo in a loop, so
+  // wiring eviction in here (rather than separately at each call site)
+  // covers both single-photo delete and whole-collection delete for free.
+  evictPhotoFromCache(key).catch(() => {});
 }
 
 export async function deleteCollection(

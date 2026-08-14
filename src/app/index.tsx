@@ -4,7 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Session } from "@supabase/supabase-js";
 import { Image } from "expo-image";
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -19,6 +19,11 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  dropCollectionCache,
+  getCollectionsVersion,
+} from "../utils/collectionsCache";
+import { deriveThumbKey, evictPhotosFromCache } from "../utils/imageCache";
 import { deleteCollection } from "../utils/s3";
 import { getSharedCollections } from "../utils/sharing";
 import { checkSubscription, SubscriptionStatus } from "../utils/subscription";
@@ -27,9 +32,14 @@ import { supabase } from "../utils/supabase";
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const COLUMN_WIDTH = (SCREEN_WIDTH - 48) / 2;
 
+// url paired with the stable S3 key it corresponds to (whichever of
+// thumbUrl/url was actually chosen below) — expo-image needs that key,
+// not the presigned url itself, as its cacheKey. See utils/imageCache.ts.
+type PreviewPhoto = { url: string; key: string };
+
 type Collection = {
   name: string;
-  previewUrls: string[];
+  previewUrls: PreviewPhoto[];
   photoCount: number;
   ownerId: string;
   ownerEmail?: string;
@@ -61,8 +71,30 @@ export default function CollectionsPage() {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Last known set of shared-with-me collections, kept purely so the next
+  // fetch can tell which ones disappeared (owner revoked the share, or
+  // deleted the collection outright) and evict their cached preview
+  // thumbnails — see the diff in fetchCollections's Step 2 below. Not
+  // rendered anywhere itself.
+  const previousSharedCollectionsRef = useRef<Collection[]>([]);
   const [subscriptionStatus, setSubscriptionStatus] =
     useState<SubscriptionStatus | null>(null);
+  // Stamped only after a fetchCollections() call fully succeeds (see the
+  // end of that function). This is a plain ref, not persisted anywhere,
+  // so it's naturally scoped to the current tab/app session — a fresh
+  // tab or app launch always starts as null and does a real fetch on
+  // first focus, which is the "beat staleness on a new session" half of
+  // the freshness check. Within that same session, it stays valid
+  // indefinitely UNLESS: the signed-in user changes (`userId` mismatch),
+  // or something mutated collections data (`version` mismatch — see
+  // utils/collectionsCache.ts, bumped by every create/rename/delete/
+  // upload flow across the app). No time limit: this app is expected to
+  // be used single-tab, and mutations made from a second tab or another
+  // device won't bump this session's counter, so staying open a long
+  // time in one tab can't invalidate itself just by the clock.
+  const lastFetchRef = useRef<{ userId: string; version: number } | null>(
+    null,
+  );
 
   // ── Fetches data on focus — the ONLY place this screen fetches ──
   //
@@ -86,6 +118,25 @@ export default function CollectionsPage() {
       if (!session) {
         setLoading(false);
         setCollections([]);
+        lastFetchRef.current = null;
+        return;
+      }
+
+      // Refocusing (e.g. backing out of a collection you just opened)
+      // doesn't need a real refetch if nothing has changed since the
+      // last one — see the comment on lastFetchRef above for why this is
+      // safe without a time limit. Pull-to-refresh (onRefresh below)
+      // always bypasses this and calls fetchCollections directly, so
+      // it's unaffected.
+      const cached = lastFetchRef.current;
+      const isFresh =
+        cached !== null &&
+        cached.userId === userId &&
+        cached.version === getCollectionsVersion();
+
+      if (isFresh) {
+        setLoading(false);
+        checkSubscription().then(setSubscriptionStatus);
         return;
       }
 
@@ -150,10 +201,15 @@ export default function CollectionsPage() {
               (p: any) => p.Key && !p.Key.includes("/thumbs/"),
             );
 
-            const previewUrls: string[] = allPhotos
+            const previewUrls: PreviewPhoto[] = allPhotos
               .slice(0, 3)
-              .map((p: any) => p.thumbUrl ?? p.url)
-              .filter(Boolean);
+              .map((p: any) => {
+                const url = p.thumbUrl ?? p.url;
+                if (!url) return null;
+                const key = p.thumbUrl ? deriveThumbKey(p.Key) : p.Key;
+                return { url, key };
+              })
+              .filter((p: PreviewPhoto | null): p is PreviewPhoto => p !== null);
 
             return {
               name,
@@ -179,6 +235,11 @@ export default function CollectionsPage() {
 
       // ── Step 2: shared collections in parallel ──
       let sharedCollections: Collection[] = [];
+      // Only true once this fetch genuinely completes — kept separate from
+      // "sharedCollections is empty" so a network hiccup below (caught,
+      // swallowed) never gets mistaken for "every shared collection was
+      // just revoked" by the eviction diff further down.
+      let sharedFetchSucceeded = false;
       try {
         const userEmail = currentSession.user.email ?? "";
         const shared = await getSharedCollections(userEmail);
@@ -217,10 +278,15 @@ export default function CollectionsPage() {
                   throw new Error("empty");
                 }
 
-                const previewUrls: string[] = allPhotos
+                const previewUrls: PreviewPhoto[] = allPhotos
                   .slice(0, 3)
-                  .map((p: any) => p.thumbUrl ?? p.url)
-                  .filter(Boolean);
+                  .map((p: any) => {
+                    const url = p.thumbUrl ?? p.url;
+                    if (!url) return null;
+                    const key = p.thumbUrl ? deriveThumbKey(p.Key) : p.Key;
+                    return { url, key };
+                  })
+                  .filter((p: PreviewPhoto | null): p is PreviewPhoto => p !== null);
 
                 return {
                   name: collectionName,
@@ -241,12 +307,48 @@ export default function CollectionsPage() {
             )
             .map((r) => r.value);
         }
+        sharedFetchSucceeded = true;
       } catch {
         // Shared collections failing never blocks owned ones
       }
 
+      // ── Evict cache for shared collections that just disappeared ──
+      // Compares against what was shared last time this screen loaded —
+      // anything missing now was either unshared by the owner or deleted
+      // outright. This is necessarily a partial cleanup: it only knows
+      // about the handful of preview thumbnails shown on THIS screen, not
+      // every photo the user may have viewed inside the full collection
+      // view (that's handled separately — see the list-photos 403 handler
+      // in app/collection/[id].tsx, which has the complete photo list for
+      // whichever collection was actually open). Between the two, the
+      // collections someone is most likely to have fully cached (ones
+      // they actually opened) are covered; a collection only ever seen
+      // as a home-screen preview is limited to those 1-3 thumbnails
+      // anyway, so there's nothing more to evict for it.
+      if (sharedFetchSucceeded) {
+        const currentIds = new Set(
+          sharedCollections.map((c) => `${c.ownerId}::${c.name}`),
+        );
+        const revoked = previousSharedCollectionsRef.current.filter(
+          (c) => !currentIds.has(`${c.ownerId}::${c.name}`),
+        );
+        if (revoked.length > 0) {
+          const keysToEvict = revoked.flatMap((c) =>
+            c.previewUrls.map((p) => p.key),
+          );
+          evictPhotosFromCache(keysToEvict).catch(() => {});
+        }
+        previousSharedCollectionsRef.current = sharedCollections;
+      }
+
       // Append shared collections once loaded
       setCollections([...ownedCollections, ...sharedCollections]);
+
+      // Mark this fetch fresh — see the comment on lastFetchRef above.
+      lastFetchRef.current = {
+        userId: currentSession.user.id,
+        version: getCollectionsVersion(),
+      };
     } catch (error: any) {
       console.error("fetchCollections error:", error.message);
       Alert.alert(
@@ -277,6 +379,15 @@ export default function CollectionsPage() {
             if (!session) return;
             try {
               await deleteCollection(session.user.id, collection.name);
+              // Drops this collection's cached photos in
+              // app/collection/[id].tsx too (not just bumping the home
+              // screen's own counter) — otherwise a stray navigation back
+              // to its URL (browser back/forward, a bookmark) could
+              // hydrate stale cached photos for a collection that no
+              // longer exists, with no server round-trip to catch it.
+              // dropCollectionCache also bumps the home counter as a
+              // side effect, so this covers both.
+              dropCollectionCache(session.user.id, collection.name);
               await fetchCollections(session);
             } catch (error: any) {
               console.error("Delete collection error:", error.message);
@@ -296,24 +407,31 @@ export default function CollectionsPage() {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
   const CollectionCollage = ({
-    urls,
+    photos,
     name,
   }: {
-    urls: string[];
+    photos: PreviewPhoto[];
     name: string;
   }) => (
     <View style={StyleSheet.absoluteFill}>
       <View style={styles.collageContainer}>
         <View style={styles.collageLeft}>
-          {urls[0] ? (
+          {photos[0] ? (
             <View style={StyleSheet.absoluteFill}>
               <ShimmerPlaceholder />
               <Image
-                source={{ uri: urls[0] }}
+                source={{
+                  uri: photos[0].url,
+                  // Stable S3 key, not the presigned url — see
+                  // utils/imageCache.ts for why the url alone would defeat
+                  // the disk cache across sessions. Lives on the `source`
+                  // object itself, not as a top-level <Image> prop.
+                  cacheKey: photos[0].key,
+                }}
                 style={StyleSheet.absoluteFill}
                 contentFit="cover"
                 cachePolicy="memory-disk"
-                recyclingKey={urls[0]}
+                recyclingKey={photos[0].key}
                 transition={{ duration: 300, effect: "cross-dissolve" }}
                 pointerEvents="none"
               />
@@ -324,15 +442,15 @@ export default function CollectionsPage() {
         </View>
         <View style={styles.collageRight}>
           <View style={styles.collageRightTop}>
-            {urls[1] ? (
+            {photos[1] ? (
               <View style={StyleSheet.absoluteFill}>
                 <ShimmerPlaceholder />
                 <Image
-                  source={{ uri: urls[1] }}
+                  source={{ uri: photos[1].url, cacheKey: photos[1].key }}
                   style={StyleSheet.absoluteFill}
                   contentFit="cover"
                   cachePolicy="memory-disk"
-                  recyclingKey={urls[1]}
+                  recyclingKey={photos[1].key}
                   transition={{ duration: 300, effect: "cross-dissolve" }}
                   pointerEvents="none"
                 />
@@ -342,15 +460,15 @@ export default function CollectionsPage() {
             )}
           </View>
           <View style={styles.collageRightBottom}>
-            {urls[2] ? (
+            {photos[2] ? (
               <View style={StyleSheet.absoluteFill}>
                 <ShimmerPlaceholder />
                 <Image
-                  source={{ uri: urls[2] }}
+                  source={{ uri: photos[2].url, cacheKey: photos[2].key }}
                   style={StyleSheet.absoluteFill}
                   contentFit="cover"
                   cachePolicy="memory-disk"
-                  recyclingKey={urls[2]}
+                  recyclingKey={photos[2].key}
                   transition={{ duration: 300, effect: "cross-dissolve" }}
                   pointerEvents="none"
                 />
@@ -393,7 +511,7 @@ export default function CollectionsPage() {
         activeOpacity={0.85}
       >
         <CollectionCollage
-          urls={collection.previewUrls}
+          photos={collection.previewUrls}
           name={collection.name}
         />
 

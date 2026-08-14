@@ -27,9 +27,16 @@ import PaywallModal from "../../components/PaywallModal";
 import UploadProgressOverlay from "../../components/UploadProgressOverlay";
 import { useAuth } from "../../contexts/AuthContext";
 import {
+  bumpCollectionVersion,
+  dropCollectionCache,
+  getCachedCollectionPhotos,
+  setCachedCollectionPhotos,
+} from "../../utils/collectionsCache";
+import {
   getCollectionMemoryDate,
   setCollectionMemoryDate,
 } from "../../utils/collections";
+import { deriveThumbKey, evictPhotosFromCache } from "../../utils/imageCache";
 import {
   buildIsoDateFromParts,
   getMemoryDateInfo,
@@ -339,6 +346,31 @@ export default function CollectionPage() {
     }
     const owner = ownerIdParam ?? session.user.id;
     setEffectiveOwnerId(owner);
+
+    // Re-opening a collection is a fresh mount (a new push in
+    // expo-router, not a refocus of a kept-alive instance the way
+    // app/index.tsx works), so local state can't just "still be there"
+    // on its own — check the module-level cache from
+    // utils/collectionsCache.ts for the equivalent. A hit means nothing
+    // has mutated this specific collection since it was last fetched in
+    // this tab/session, so the photo grid can render immediately with
+    // the same URLs already sitting in the browser's HTTP cache instead
+    // of re-downloading every thumbnail.
+    const cachedPhotos = getCachedCollectionPhotos(owner, collectionName);
+    if (cachedPhotos) {
+      setPhotos(cachedPhotos as Photo[]);
+      preloadImages(cachedPhotos as Photo[]);
+      setLoading(false);
+      // Cheap metadata calls, not part of the "feels like a reload"
+      // problem (no images involved) — always kept current in the
+      // background rather than cached, so sharing/date/plan info never
+      // goes stale just because the photo list didn't change.
+      loadShares();
+      checkSubscription().then(setSubscriptionStatus);
+      getCollectionMemoryDate(owner, collectionName).then(setMemoryDate);
+      return;
+    }
+
     setLoading(true);
     Promise.all([
       fetchPhotos(session, owner),
@@ -458,6 +490,14 @@ export default function CollectionPage() {
           }),
         );
 
+        // Bump immediately once the uploads themselves succeed — not only
+        // if the list-photos refresh below also succeeds. Otherwise a
+        // network hiccup on just this refresh (uploads already landed
+        // server-side) would leave the cache's version un-bumped, so a
+        // LATER visit in this session could still hydrate the pre-upload
+        // cached photo list, silently missing what was just uploaded.
+        bumpCollectionVersion(currentOwner, collectionName);
+
         const { data, error } = await supabase.functions.invoke("list-photos", {
           body: { userId: currentOwner, collectionName, includeUrls: true },
         });
@@ -474,6 +514,7 @@ export default function CollectionPage() {
           }));
           setPhotos(mapped);
           preloadImages(mapped);
+          setCachedCollectionPhotos(currentOwner, collectionName, mapped);
         }
       } catch (error: any) {
         console.error("Web upload error:", error.message);
@@ -522,7 +563,40 @@ export default function CollectionPage() {
       const { data, error } = await supabase.functions.invoke("list-photos", {
         body: { userId: owner, collectionName: name, includeUrls: true },
       });
-      if (error) throw new Error(error.message);
+      if (error) {
+        // A 403 here specifically means access was revoked out from under
+        // an actively open (or deep-linked) shared collection — see
+        // unshareCollection in utils/sharing.ts, which just deletes the
+        // shared_collections row with no push notice to the viewer. This
+        // is the "reactively discover mid-session" path; the home screen
+        // handles the "revoked while not looking at it" path separately.
+        // Whatever's currently in `photos` state is no longer authorized
+        // to sit in this device's disk cache, so evict it before bouncing
+        // back — otherwise the bytes just linger indefinitely.
+        const status = (error as any)?.context?.status;
+        if (status === 403) {
+          const staleKeys = photos.map((p) => p.key);
+          if (staleKeys.length > 0) {
+            evictPhotosFromCache(staleKeys).catch(() => {});
+          }
+          // Force a real refetch on the home screen instead of letting
+          // it skip via its own freshness check — otherwise a revoked
+          // collection could still show there. Also drop this
+          // collection's own cached photos outright (not just bump the
+          // version) so a stray revisit — browser back/forward, a
+          // stale deep link — can't hydrate from cache without ever
+          // re-checking the server, which is the only way revocation
+          // actually gets detected here. See utils/collectionsCache.ts.
+          dropCollectionCache(owner, name);
+          Alert.alert(
+            "Access removed",
+            "The owner has stopped sharing this collection with you.",
+          );
+          router.replace("/");
+          return;
+        }
+        throw new Error(error.message);
+      }
 
       const photoList = (data?.photos || []).filter(
         (p: any) => p.Key && !p.Key.includes("/thumbs/"),
@@ -530,6 +604,7 @@ export default function CollectionPage() {
 
       if (photoList.length === 0) {
         setPhotos([]);
+        setCachedCollectionPhotos(owner, name, []);
         return;
       }
 
@@ -543,6 +618,7 @@ export default function CollectionPage() {
 
       setPhotos(mapped);
       preloadImages(mapped);
+      setCachedCollectionPhotos(owner, name, mapped);
     } catch (error: any) {
       console.error("fetchPhotos error:", error.message);
       Alert.alert("Error", "Could not load photos. Please try again.");
@@ -707,6 +783,7 @@ export default function CollectionPage() {
             }));
           }),
         );
+        bumpCollectionVersion(uploadOwnerId, collectionName);
         await fetchPhotos(session);
       } catch (error: any) {
         // Log full error internally, show generic message to user
@@ -748,6 +825,8 @@ export default function CollectionPage() {
       setSelectedPhotoIndex(null);
       setPhotos((prev) => prev.filter((p) => p.key !== photo.key));
       await deleteFromS3(photo.key);
+      const owner = effectiveOwnerId ?? session?.user.id;
+      if (owner) bumpCollectionVersion(owner, collectionName);
       if (session) await fetchPhotos(session);
     } catch (error: any) {
       console.error("Delete error:", error.message);
@@ -790,6 +869,9 @@ export default function CollectionPage() {
     try {
       setLoading(true);
       if (session) await deleteCollection(session.user.id, collectionName);
+      // The collection is gone outright, not just changed — drop its
+      // cache entry entirely rather than just bumping its version.
+      if (session) dropCollectionCache(session.user.id, collectionName);
       router.replace("/");
     } catch (error: any) {
       console.error("Delete collection error:", error.message);
@@ -819,6 +901,11 @@ export default function CollectionPage() {
     setRenaming(true);
     try {
       const finalName = await renameCollection(collectionName, trimmed);
+      // The OLD name no longer exists as a collection — drop its cache
+      // entry outright (the new name's entry gets written fresh below,
+      // by the explicit fetchPhotos call, same as it always did).
+      const renameOwner = effectiveOwnerId ?? session?.user.id;
+      if (renameOwner) dropCollectionCache(renameOwner, collectionName);
       setShowRenameModal(false);
 
       // Load photos from the new prefix explicitly — expo-router may
@@ -1039,7 +1126,20 @@ export default function CollectionPage() {
           >
             <View style={styles.photoPlaceholder} />
             <Image
-              source={{ uri: item.thumbUrl ?? item.url }}
+              source={{
+                uri: item.thumbUrl ?? item.url,
+                // Stable S3 key rather than the presigned URL — the URL's
+                // signature/expiry changes every list-photos call even when
+                // the photo hasn't, which would make the disk cache miss on
+                // every fresh screen load. Must match whichever of
+                // thumbUrl/url is actually being rendered above (thumb and
+                // full-res are different bytes at different S3 keys).
+                // Note: cacheKey lives on the `source` object itself, not
+                // as a top-level <Image> prop.
+                cacheKey: item.thumbUrl
+                  ? deriveThumbKey(item.key)
+                  : item.key,
+              }}
               style={StyleSheet.absoluteFill}
               contentFit="cover"
               cachePolicy="memory-disk"
@@ -1357,7 +1457,7 @@ export default function CollectionPage() {
                       ]}
                     >
                       <Image
-                        source={{ uri: item.url }}
+                        source={{ uri: item.url, cacheKey: item.key }}
                         style={styles.polaroidViewerImage}
                         contentFit="contain"
                         cachePolicy="memory-disk"
@@ -1397,7 +1497,10 @@ export default function CollectionPage() {
                     ]}
                   >
                     <Image
-                      source={{ uri: photos[selectedPhotoIndex].url }}
+                      source={{
+                        uri: photos[selectedPhotoIndex].url,
+                        cacheKey: photos[selectedPhotoIndex].key,
+                      }}
                       style={styles.polaroidViewerImage}
                       contentFit="contain"
                       cachePolicy="memory-disk"

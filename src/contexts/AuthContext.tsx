@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { clearAllCollectionCaches } from "../utils/collectionsCache";
 import { supabase } from "../utils/supabase";
 
 type AuthContextValue = {
@@ -71,6 +72,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         event,
         newSession ? "session present" : "no session",
       );
+      if (!newSession) {
+        // Covers sign-out and session expiry alike — see the comment on
+        // clearAllCollectionCaches() for why a shared-device account
+        // switch specifically needs this: app/collection/[id].tsx's
+        // photo cache (utils/collectionsCache.ts) is keyed by the
+        // collection's OWNER, not the viewer, so without this a second
+        // account signing in on the same device/tab could otherwise
+        // hydrate cached photos from the previous account's session
+        // without ever going through a real, authorization-checked
+        // fetch.
+        clearAllCollectionCaches();
+      }
       setSession(newSession);
       setLoading(false);
     });

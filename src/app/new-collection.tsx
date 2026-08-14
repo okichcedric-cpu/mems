@@ -1,6 +1,7 @@
 import PaywallModal from "@/components/PaywallModal";
 import UploadProgressOverlay from "@/components/UploadProgressOverlay";
 import { useAuth } from "@/contexts/AuthContext";
+import { bumpCollectionsVersion } from "@/utils/collectionsCache";
 import { setCollectionMemoryDate } from "@/utils/collections";
 import { buildIsoDateFromParts } from "@/utils/memoryDate";
 import {
@@ -243,6 +244,7 @@ export default function NewCollectionPage() {
       // something above throws, keeping it around means a reload can
       // retry rather than the user losing their photos outright.
       await clearPendingCollectionUpload();
+      bumpCollectionsVersion();
       goBack();
     } catch (error: any) {
       console.error("Resume pending upload error:", error.message);
@@ -307,6 +309,7 @@ export default function NewCollectionPage() {
       }
 
       await clearNativePendingUpload();
+      bumpCollectionsVersion();
       goBack();
     } catch (error: any) {
       console.error("Resume pending upload error:", error.message);
@@ -496,7 +499,11 @@ export default function NewCollectionPage() {
         clearNativePendingUpload().catch(() => {});
       }
 
-      // Success — go back to the home screen, which refetches on focus
+      // Success — go back to the home screen. It only refetches on focus
+      // if this bump actually changed anything since its last fetch (see
+      // utils/collectionsCache.ts) — otherwise a recent-enough visit
+      // would skip straight past the new collection.
+      bumpCollectionsVersion();
       goBack();
     } catch (error: any) {
       console.error("Create collection error:", error.message);
