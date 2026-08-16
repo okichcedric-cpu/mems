@@ -190,7 +190,9 @@ export default function CollectionsPage() {
                 const key = p.thumbUrl ? deriveThumbKey(p.Key) : p.Key;
                 return { url, key };
               })
-              .filter((p: PreviewPhoto | null): p is PreviewPhoto => p !== null);
+              .filter(
+                (p: PreviewPhoto | null): p is PreviewPhoto => p !== null,
+              );
 
             return {
               name,
@@ -267,7 +269,9 @@ export default function CollectionsPage() {
                     const key = p.thumbUrl ? deriveThumbKey(p.Key) : p.Key;
                     return { url, key };
                   })
-                  .filter((p: PreviewPhoto | null): p is PreviewPhoto => p !== null);
+                  .filter(
+                    (p: PreviewPhoto | null): p is PreviewPhoto => p !== null,
+                  );
 
                 return {
                   name: collectionName,
@@ -290,7 +294,7 @@ export default function CollectionsPage() {
         }
         sharedFetchSucceeded = true;
       } catch {
-        // Shared collections failing never blocks owned ones
+        // Shared collections failing never blocks owned ones.
       }
 
       // ── Evict cache for shared collections that just disappeared ──
@@ -645,9 +649,7 @@ export default function CollectionsPage() {
               }}
             >
               <Ionicons name="settings-outline" size={18} color="#333" />
-              <Text style={styles.profileMenuItemText}>
-                Account Management
-              </Text>
+              <Text style={styles.profileMenuItemText}>Account Management</Text>
             </TouchableOpacity>
 
             <View style={styles.profileMenuDivider} />
