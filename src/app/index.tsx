@@ -4,7 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Session } from "@supabase/supabase-js";
 import { Image } from "expo-image";
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -21,7 +21,10 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   dropCollectionCache,
-  getCollectionsVersion,
+  getCachedHomeCollections,
+  getPreviousSharedCollections,
+  setCachedHomeCollections,
+  setPreviousSharedCollections,
 } from "../utils/collectionsCache";
 import { deriveThumbKey, evictPhotosFromCache } from "../utils/imageCache";
 import { deleteCollection } from "../utils/s3";
@@ -71,30 +74,8 @@ export default function CollectionsPage() {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  // Last known set of shared-with-me collections, kept purely so the next
-  // fetch can tell which ones disappeared (owner revoked the share, or
-  // deleted the collection outright) and evict their cached preview
-  // thumbnails — see the diff in fetchCollections's Step 2 below. Not
-  // rendered anywhere itself.
-  const previousSharedCollectionsRef = useRef<Collection[]>([]);
   const [subscriptionStatus, setSubscriptionStatus] =
     useState<SubscriptionStatus | null>(null);
-  // Stamped only after a fetchCollections() call fully succeeds (see the
-  // end of that function). This is a plain ref, not persisted anywhere,
-  // so it's naturally scoped to the current tab/app session — a fresh
-  // tab or app launch always starts as null and does a real fetch on
-  // first focus, which is the "beat staleness on a new session" half of
-  // the freshness check. Within that same session, it stays valid
-  // indefinitely UNLESS: the signed-in user changes (`userId` mismatch),
-  // or something mutated collections data (`version` mismatch — see
-  // utils/collectionsCache.ts, bumped by every create/rename/delete/
-  // upload flow across the app). No time limit: this app is expected to
-  // be used single-tab, and mutations made from a second tab or another
-  // device won't bump this session's counter, so staying open a long
-  // time in one tab can't invalidate itself just by the clock.
-  const lastFetchRef = useRef<{ userId: string; version: number } | null>(
-    null,
-  );
 
   // ── Fetches data on focus — the ONLY place this screen fetches ──
   //
@@ -118,23 +99,23 @@ export default function CollectionsPage() {
       if (!session) {
         setLoading(false);
         setCollections([]);
-        lastFetchRef.current = null;
         return;
       }
 
       // Refocusing (e.g. backing out of a collection you just opened)
       // doesn't need a real refetch if nothing has changed since the
-      // last one — see the comment on lastFetchRef above for why this is
-      // safe without a time limit. Pull-to-refresh (onRefresh below)
-      // always bypasses this and calls fetchCollections directly, so
-      // it's unaffected.
-      const cached = lastFetchRef.current;
-      const isFresh =
-        cached !== null &&
-        cached.userId === userId &&
-        cached.version === getCollectionsVersion();
-
-      if (isFresh) {
+      // last one — see utils/collectionsCache.ts's getCachedHomeCollections
+      // for why this is safe with no time limit, AND why it has to be a
+      // module-level cache rather than a ref: router.replace("/") (used
+      // by more than one "go home" button in this app, including the
+      // collection screen's Home icon) unmounts and remounts this
+      // screen rather than merely refocusing the existing instance, so
+      // a ref would silently reset right when it matters most. Pull-to-
+      // refresh (onRefresh below) always bypasses this and calls
+      // fetchCollections directly, so it's unaffected.
+      const cached = getCachedHomeCollections(userId!);
+      if (cached) {
+        setCollections(cached);
         setLoading(false);
         checkSubscription().then(setSubscriptionStatus);
         return;
@@ -329,7 +310,7 @@ export default function CollectionsPage() {
         const currentIds = new Set(
           sharedCollections.map((c) => `${c.ownerId}::${c.name}`),
         );
-        const revoked = previousSharedCollectionsRef.current.filter(
+        const revoked = getPreviousSharedCollections().filter(
           (c) => !currentIds.has(`${c.ownerId}::${c.name}`),
         );
         if (revoked.length > 0) {
@@ -338,17 +319,16 @@ export default function CollectionsPage() {
           );
           evictPhotosFromCache(keysToEvict).catch(() => {});
         }
-        previousSharedCollectionsRef.current = sharedCollections;
+        setPreviousSharedCollections(sharedCollections);
       }
 
       // Append shared collections once loaded
-      setCollections([...ownedCollections, ...sharedCollections]);
+      const finalCollections = [...ownedCollections, ...sharedCollections];
+      setCollections(finalCollections);
 
-      // Mark this fetch fresh — see the comment on lastFetchRef above.
-      lastFetchRef.current = {
-        userId: currentSession.user.id,
-        version: getCollectionsVersion(),
-      };
+      // Mark this fetch fresh — see the comment on getCachedHomeCollections
+      // in utils/collectionsCache.ts.
+      setCachedHomeCollections(currentSession.user.id, finalCollections);
     } catch (error: any) {
       console.error("fetchCollections error:", error.message);
       Alert.alert(

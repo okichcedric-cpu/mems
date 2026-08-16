@@ -2,17 +2,24 @@
 //
 // app/index.tsx (the home screen) skips refetching its collections list
 // on refocus (e.g. pressing back/home from a collection) as long as
-// nothing has changed since its last fetch this session — see the
-// comment on lastFetchRef in index.tsx for why this is safe with no
-// time limit (browser HTTP cache + S3 presigned URL churn on web is
-// what made refetching-on-every-focus wasteful in the first place).
-// That optimization only holds as long as nothing actually mutated
-// while the user was away from the home screen. Anything that changes a
-// collection's data from elsewhere in the app — creating one, adding or
-// deleting a photo, renaming, deleting the whole collection — must call
-// bumpCollectionsVersion() so the home screen's freshness check fails
-// and it does a real refetch next time it's focused, instead of quietly
-// showing stale photoCount/previewUrls/collection names indefinitely.
+// nothing has changed since its last fetch this session — see
+// getCachedHomeCollections/setCachedHomeCollections below for the actual
+// cache this guards, and why it also has to live at module level rather
+// than a component-scoped ref (turns out `router.replace("/")` — used by
+// more than one "go home" button in this app — actually unmounts and
+// remounts the destination screen rather than reusing whatever instance
+// was already in the stack; see _layout.tsx's own comment about this
+// same behavior biting an earlier fix. A ref tied to the component
+// instance doesn't survive that remount, so the freshness check would
+// silently always miss whenever home was reached that way instead of via
+// router.back()). That optimization only holds as long as nothing
+// actually mutated while the user was away from the home screen.
+// Anything that changes a collection's data from elsewhere in the app —
+// creating one, adding or deleting a photo, renaming, deleting the whole
+// collection — must call bumpCollectionsVersion() so the home screen's
+// freshness check fails and it does a real refetch next time it's
+// focused, instead of quietly showing stale
+// photoCount/previewUrls/collection names indefinitely.
 //
 // Deliberately not React state / context: this only needs to be read
 // once per focus event on a single screen, and a plain module-level
@@ -145,4 +152,73 @@ export function dropCollectionCache(ownerId: string, name: string): void {
 export function clearAllCollectionCaches(): void {
   collectionPhotoCache.clear();
   collectionVersions.clear();
+  homeCache = null;
+  previousSharedCollections = [];
+}
+
+// ── Home screen's own collections list ────────────────────────────────
+// Same idea as the per-collection photo cache above, applied to
+// app/index.tsx's full grid (owned + shared collections, each with up to
+// 3 preview thumbnails). Only one of these ever exists at a time — home
+// isn't parameterized by anything, so a single slot (not a Map) is
+// enough. Keyed by userId so a different signed-in user never reads
+// another's cached list (belt-and-suspenders alongside
+// clearAllCollectionCaches() clearing this on sign-out too).
+type CachedHomeCollection = {
+  name: string;
+  previewUrls: { url: string; key: string }[];
+  photoCount: number;
+  ownerId: string;
+  ownerEmail?: string;
+  isShared?: boolean;
+};
+
+type HomeCacheEntry = {
+  userId: string;
+  collections: CachedHomeCollection[];
+  version: number;
+};
+
+let homeCache: HomeCacheEntry | null = null;
+
+// Same miss-or-stale contract as getCachedCollectionPhotos.
+export function getCachedHomeCollections(
+  userId: string,
+): CachedHomeCollection[] | undefined {
+  if (!homeCache) return undefined;
+  if (homeCache.userId !== userId) return undefined;
+  if (homeCache.version !== getCollectionsVersion()) return undefined;
+  return homeCache.collections;
+}
+
+export function setCachedHomeCollections(
+  userId: string,
+  collections: CachedHomeCollection[],
+): void {
+  homeCache = { userId, collections, version: getCollectionsVersion() };
+}
+
+// ── Previous shared-collections snapshot, for revocation diffing ───────
+// app/index.tsx compares each fresh fetch's shared-with-me collections
+// against whatever it saw last time, to catch ones that disappeared
+// (owner revoked the share or deleted the collection) and evict their
+// cached preview thumbnails. That comparison needs to survive the same
+// remounts as everything else above — a component-scoped ref would
+// silently reset to empty on a router.replace("/") remount, and an empty
+// "previous" snapshot means the diff always finds nothing missing, so
+// evictions would just quietly stop firing right after a remount.
+// Deliberately NOT version-gated like getCachedHomeCollections — this
+// needs to return whatever was last seen regardless of whether the
+// version has since moved on (that's exactly the situation where a real
+// fetch, and therefore this diff, is about to happen).
+let previousSharedCollections: CachedHomeCollection[] = [];
+
+export function getPreviousSharedCollections(): CachedHomeCollection[] {
+  return previousSharedCollections;
+}
+
+export function setPreviousSharedCollections(
+  collections: CachedHomeCollection[],
+): void {
+  previousSharedCollections = collections;
 }

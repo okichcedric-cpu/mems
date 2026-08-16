@@ -1181,7 +1181,22 @@ export default function CollectionPage() {
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.iconButton}
-            onPress={() => router.replace("/")}
+            onPress={() => {
+              // Prefer back() over replace("/") — this collection is
+              // always reached by pushing from home, so back() reveals
+              // the SAME still-mounted home instance (instant, cache
+              // intact) rather than replace()'s unmount-and-remount
+              // (see utils/collectionsCache.ts's getCachedHomeCollections
+              // comment for why that used to defeat the freshness cache
+              // entirely). Falls back to replace() only for the rare
+              // case this screen was reached with no history at all
+              // (e.g. a direct/deep link).
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace("/");
+              }
+            }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Ionicons name="home-outline" size={22} color="#111" />
