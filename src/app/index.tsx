@@ -49,6 +49,106 @@ type Collection = {
   isShared?: boolean;
 };
 
+// Module-level, NOT defined inside CollectionsPage — this used to be a
+// `const CollectionCollage = (...) => (...)` declared inside the
+// component's function body, which meant a brand new function (and
+// therefore a brand new component TYPE, as far as React's reconciler is
+// concerned) was created on every single render of CollectionsPage. Any
+// unrelated state update — e.g. checkSubscription() resolving and
+// calling setSubscriptionStatus() with a freshly constructed object,
+// which happens on every single focus, cache hit or not — triggered a
+// re-render that hoisted the CollectionCollage identity, so React tore
+// down and rebuilt every <Image> inside every visible collage. That
+// full unmount/remount is what produced the visible "double load": the
+// instant cache-hit paint, immediately followed by every thumbnail
+// flashing back to its shimmer placeholder and re-appearing a moment
+// later. Purely a React reconciliation issue — nothing to do with
+// network requests or the image disk/browser cache — which is exactly
+// why it showed up identically on native and web. Giving this component
+// a stable, module-level identity means the same underlying <Image>
+// instances persist across re-renders, so unrelated state changes
+// elsewhere on the screen no longer touch it at all.
+const CollectionCollage = ({
+  photos,
+  name,
+}: {
+  photos: PreviewPhoto[];
+  name: string;
+}) => (
+  <View style={StyleSheet.absoluteFill}>
+    <View style={styles.collageContainer}>
+      <View style={styles.collageLeft}>
+        {photos[0] ? (
+          <View style={StyleSheet.absoluteFill}>
+            <ShimmerPlaceholder />
+            <Image
+              source={{
+                uri: photos[0].url,
+                // Stable S3 key, not the presigned url — see
+                // utils/imageCache.ts for why the url alone would defeat
+                // the disk cache across sessions. Lives on the `source`
+                // object itself, not as a top-level <Image> prop.
+                cacheKey: photos[0].key,
+              }}
+              style={StyleSheet.absoluteFill}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              recyclingKey={photos[0].key}
+              transition={{ duration: 300, effect: "cross-dissolve" }}
+              pointerEvents="none"
+            />
+          </View>
+        ) : (
+          <ShimmerPlaceholder />
+        )}
+      </View>
+      <View style={styles.collageRight}>
+        <View style={styles.collageRightTop}>
+          {photos[1] ? (
+            <View style={StyleSheet.absoluteFill}>
+              <ShimmerPlaceholder />
+              <Image
+                source={{ uri: photos[1].url, cacheKey: photos[1].key }}
+                style={StyleSheet.absoluteFill}
+                contentFit="cover"
+                cachePolicy="memory-disk"
+                recyclingKey={photos[1].key}
+                transition={{ duration: 300, effect: "cross-dissolve" }}
+                pointerEvents="none"
+              />
+            </View>
+          ) : (
+            <ShimmerPlaceholder />
+          )}
+        </View>
+        <View style={styles.collageRightBottom}>
+          {photos[2] ? (
+            <View style={StyleSheet.absoluteFill}>
+              <ShimmerPlaceholder />
+              <Image
+                source={{ uri: photos[2].url, cacheKey: photos[2].key }}
+                style={StyleSheet.absoluteFill}
+                contentFit="cover"
+                cachePolicy="memory-disk"
+                recyclingKey={photos[2].key}
+                transition={{ duration: 300, effect: "cross-dissolve" }}
+                pointerEvents="none"
+              />
+            </View>
+          ) : (
+            <ShimmerPlaceholder />
+          )}
+        </View>
+      </View>
+    </View>
+    <View style={styles.collageOverlay}>
+      <Text style={styles.collageName} numberOfLines={1}>
+        {name}
+      </Text>
+    </View>
+  </View>
+);
+
 const LEFT_HEIGHTS = [1.35, 1.0, 1.2, 1.0, 1.35, 1.1];
 const RIGHT_HEIGHTS = [1.0, 1.35, 1.0, 1.2, 1.1, 1.35];
 
@@ -389,87 +489,6 @@ export default function CollectionsPage() {
   }
 
   const [showProfileMenu, setShowProfileMenu] = useState(false);
-
-  const CollectionCollage = ({
-    photos,
-    name,
-  }: {
-    photos: PreviewPhoto[];
-    name: string;
-  }) => (
-    <View style={StyleSheet.absoluteFill}>
-      <View style={styles.collageContainer}>
-        <View style={styles.collageLeft}>
-          {photos[0] ? (
-            <View style={StyleSheet.absoluteFill}>
-              <ShimmerPlaceholder />
-              <Image
-                source={{
-                  uri: photos[0].url,
-                  // Stable S3 key, not the presigned url — see
-                  // utils/imageCache.ts for why the url alone would defeat
-                  // the disk cache across sessions. Lives on the `source`
-                  // object itself, not as a top-level <Image> prop.
-                  cacheKey: photos[0].key,
-                }}
-                style={StyleSheet.absoluteFill}
-                contentFit="cover"
-                cachePolicy="memory-disk"
-                recyclingKey={photos[0].key}
-                transition={{ duration: 300, effect: "cross-dissolve" }}
-                pointerEvents="none"
-              />
-            </View>
-          ) : (
-            <ShimmerPlaceholder />
-          )}
-        </View>
-        <View style={styles.collageRight}>
-          <View style={styles.collageRightTop}>
-            {photos[1] ? (
-              <View style={StyleSheet.absoluteFill}>
-                <ShimmerPlaceholder />
-                <Image
-                  source={{ uri: photos[1].url, cacheKey: photos[1].key }}
-                  style={StyleSheet.absoluteFill}
-                  contentFit="cover"
-                  cachePolicy="memory-disk"
-                  recyclingKey={photos[1].key}
-                  transition={{ duration: 300, effect: "cross-dissolve" }}
-                  pointerEvents="none"
-                />
-              </View>
-            ) : (
-              <ShimmerPlaceholder />
-            )}
-          </View>
-          <View style={styles.collageRightBottom}>
-            {photos[2] ? (
-              <View style={StyleSheet.absoluteFill}>
-                <ShimmerPlaceholder />
-                <Image
-                  source={{ uri: photos[2].url, cacheKey: photos[2].key }}
-                  style={StyleSheet.absoluteFill}
-                  contentFit="cover"
-                  cachePolicy="memory-disk"
-                  recyclingKey={photos[2].key}
-                  transition={{ duration: 300, effect: "cross-dissolve" }}
-                  pointerEvents="none"
-                />
-              </View>
-            ) : (
-              <ShimmerPlaceholder />
-            )}
-          </View>
-        </View>
-      </View>
-      <View style={styles.collageOverlay}>
-        <Text style={styles.collageName} numberOfLines={1}>
-          {name}
-        </Text>
-      </View>
-    </View>
-  );
 
   const leftCollections = collections.filter((_, i) => i % 2 === 0);
   const rightCollections = collections.filter((_, i) => i % 2 !== 0);
