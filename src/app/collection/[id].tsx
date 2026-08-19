@@ -26,6 +26,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import PaywallModal from "../../components/PaywallModal";
 import UploadProgressOverlay from "../../components/UploadProgressOverlay";
 import { useAuth } from "../../contexts/AuthContext";
+import { showAlert } from "../../utils/alert";
 import {
   bumpCollectionVersion,
   dropCollectionCache,
@@ -588,7 +589,12 @@ export default function CollectionPage() {
           // re-checking the server, which is the only way revocation
           // actually gets detected here. See utils/collectionsCache.ts.
           dropCollectionCache(owner, name);
-          Alert.alert(
+          // Plain Alert.alert() here would be silently invisible on web
+          // (react-native-web's implementation is a no-op) — see
+          // utils/alert.ts. This 403 path runs on every platform (unlike
+          // the native-only upload alerts elsewhere in this file), so it
+          // needs the cross-platform version.
+          showAlert(
             "Access removed",
             "The owner has stopped sharing this collection with you.",
           );
@@ -621,7 +627,7 @@ export default function CollectionPage() {
       setCachedCollectionPhotos(owner, name, mapped);
     } catch (error: any) {
       console.error("fetchPhotos error:", error.message);
-      Alert.alert("Error", "Could not load photos. Please try again.");
+      showAlert("Error", "Could not load photos. Please try again.");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -1081,7 +1087,7 @@ export default function CollectionPage() {
       await loadShares();
     } catch (error: any) {
       console.error("Unshare error:", error.message);
-      Alert.alert("Error", "Could not remove access. Please try again.");
+      showAlert("Error", "Could not remove access. Please try again.");
     }
   }
 

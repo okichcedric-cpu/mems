@@ -18,6 +18,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { showAlert } from "../utils/alert";
 import { supabase } from "../utils/supabase";
 
 WebBrowser.maybeCompleteAuthSession();
@@ -372,20 +373,20 @@ export default function LoginScreen() {
 
   async function handleEmailAuth() {
     if (!email.trim()) {
-      Alert.alert("Error", "Please enter your email address.");
+      showAlert("Error", "Please enter your email address.");
       return;
     }
     if (!password) {
-      Alert.alert("Error", "Please enter your password.");
+      showAlert("Error", "Please enter your password.");
       return;
     }
     if (mode === "signup") {
       if (password.length < 8) {
-        Alert.alert("Weak password", "Password must be at least 8 characters.");
+        showAlert("Weak password", "Password must be at least 8 characters.");
         return;
       }
       if (password !== confirmPassword) {
-        Alert.alert("Error", "Passwords do not match.");
+        showAlert("Error", "Passwords do not match.");
         return;
       }
     }
@@ -434,7 +435,7 @@ export default function LoginScreen() {
 
   async function handleForgotPassword() {
     if (!email.trim()) {
-      Alert.alert("Enter your email", "Please enter your email address first.");
+      showAlert("Enter your email", "Please enter your email address first.");
       return;
     }
     setLoading(true);

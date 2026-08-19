@@ -7,7 +7,6 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Dimensions,
   Platform,
   RefreshControl,
@@ -19,6 +18,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { showAlert } from "../utils/alert";
 import {
   dropCollectionCache,
   getCachedHomeCollections,
@@ -435,7 +435,7 @@ export default function CollectionsPage() {
       setCachedHomeCollections(currentSession.user.id, finalCollections);
     } catch (error: any) {
       console.error("fetchCollections error:", error.message);
-      Alert.alert(
+      showAlert(
         "Error",
         "Could not load your collections. Please try again.",
       );
@@ -451,7 +451,7 @@ export default function CollectionsPage() {
   }, [session]);
 
   function confirmDeleteCollection(collection: Collection) {
-    Alert.alert(
+    showAlert(
       "Delete Collection",
       `Are you sure you want to delete "${collection.name}" and all its photos?`,
       [
@@ -475,7 +475,7 @@ export default function CollectionsPage() {
               await fetchCollections(session);
             } catch (error: any) {
               console.error("Delete collection error:", error.message);
-              Alert.alert("Error", "Something went wrong. Please try again.");
+              showAlert("Error", "Something went wrong. Please try again.");
             }
           },
         },

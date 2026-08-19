@@ -1,6 +1,7 @@
 import PaywallModal from "@/components/PaywallModal";
 import UploadProgressOverlay from "@/components/UploadProgressOverlay";
 import { useAuth } from "@/contexts/AuthContext";
+import { showAlert } from "@/utils/alert";
 import { bumpCollectionsVersion } from "@/utils/collectionsCache";
 import { setCollectionMemoryDate } from "@/utils/collections";
 import { buildIsoDateFromParts } from "@/utils/memoryDate";
@@ -26,7 +27,6 @@ import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Animated,
   Dimensions,
   Platform,
@@ -199,7 +199,7 @@ export default function NewCollectionPage() {
         // Leave the draft in IndexedDB untouched so reloading (or
         // reopening this screen) can pick it up and retry — don't lose
         // the photos over what's most likely just a slow webhook.
-        Alert.alert(
+        showAlert(
           "Still confirming your payment",
           "We're still waiting for your payment to be confirmed. Reopen New Collection in a moment and we'll finish creating it automatically.",
         );
@@ -248,7 +248,7 @@ export default function NewCollectionPage() {
       goBack();
     } catch (error: any) {
       console.error("Resume pending upload error:", error.message);
-      Alert.alert(
+      showAlert(
         "Payment succeeded, upload didn't finish",
         "Your payment went through, but something interrupted the upload. Your photos are still saved — reopen New Collection to try again.",
       );
@@ -273,7 +273,7 @@ export default function NewCollectionPage() {
         // Leave the draft on disk so reopening this screen can pick it
         // up and retry — don't lose the photos over what's most likely
         // just a slow webhook.
-        Alert.alert(
+        showAlert(
           "Still confirming your payment",
           "We're still waiting for your payment to be confirmed. Reopen New Collection in a moment and we'll finish creating it automatically.",
         );
@@ -313,7 +313,7 @@ export default function NewCollectionPage() {
       goBack();
     } catch (error: any) {
       console.error("Resume pending upload error:", error.message);
-      Alert.alert(
+      showAlert(
         "Payment succeeded, upload didn't finish",
         "Your payment went through, but something interrupted the upload. Your photos are still saved — reopen New Collection to try again.",
       );
@@ -332,7 +332,7 @@ export default function NewCollectionPage() {
   async function pickPhotos() {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
-      Alert.alert(
+      showAlert(
         "Permission needed",
         "Please allow access to your photo library.",
       );
@@ -366,11 +366,11 @@ export default function NewCollectionPage() {
 
   async function createCollection() {
     if (!collectionName.trim()) {
-      Alert.alert("Name required", "Please enter a name for the collection.");
+      showAlert("Name required", "Please enter a name for the collection.");
       return;
     }
     if (selectedAssets.length === 0) {
-      Alert.alert("Photos required", "Please select at least one photo.");
+      showAlert("Photos required", "Please select at least one photo.");
       return;
     }
     if (!session) {
@@ -379,7 +379,7 @@ export default function NewCollectionPage() {
       // killed the app mid-payment and just relaunched it), since the
       // session takes a moment to rehydrate from storage. Tell the user
       // something's happening instead of looking broken.
-      Alert.alert(
+      showAlert(
         "Just a moment",
         "Still signing you in — please try again in a second.",
       );
@@ -391,7 +391,7 @@ export default function NewCollectionPage() {
 
     if (existingCount >= maxCollections) {
       if (isActive) {
-        Alert.alert(
+        showAlert(
           "Collection limit reached",
           `Your ${subscriptionStatus?.limits?.label ?? "current"} plan allows up to ${maxCollections} collections. Delete one to make room or upgrade your plan.`,
           [
@@ -414,7 +414,7 @@ export default function NewCollectionPage() {
       // selection instead of opening a modal with no upgrade option.
       if (isActive && subscriptionStatus?.tier === "big") {
         const over = selectedAssets.length - maxPhotos;
-        Alert.alert(
+        showAlert(
           "Photo limit reached",
           `Your ${subscriptionStatus?.limits?.label ?? "Big Album"} plan allows up to ${maxPhotos} photos per collection — that's the highest available. Remove ${over} photo${over === 1 ? "" : "s"} to continue.`,
         );
@@ -431,7 +431,7 @@ export default function NewCollectionPage() {
         (n) => n.toLowerCase() === collectionName.trim().toLowerCase(),
       )
     ) {
-      Alert.alert("Name taken", "A collection with this name already exists.");
+      showAlert("Name taken", "A collection with this name already exists.");
       return;
     }
 
@@ -443,7 +443,7 @@ export default function NewCollectionPage() {
       memoryYear,
     );
     if (dateResult.status === "error") {
-      Alert.alert("Check the memory date", dateResult.message);
+      showAlert("Check the memory date", dateResult.message);
       return;
     }
 
@@ -507,7 +507,7 @@ export default function NewCollectionPage() {
       goBack();
     } catch (error: any) {
       console.error("Create collection error:", error.message);
-      Alert.alert("Error", "Something went wrong. Please try again.");
+      showAlert("Error", "Something went wrong. Please try again.");
     } finally {
       setCreating(false);
       setUploadProgress({ total: 0, completed: 0 });
