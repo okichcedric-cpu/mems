@@ -14,11 +14,24 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import AndroidBillingBridge, {
+  type AndroidBillingHandle,
+} from "../components/AndroidBillingBridge";
 import { supabase } from "../utils/supabase";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const IS_WEB = Platform.OS === "web";
+const IS_ANDROID = Platform.OS === "android";
 const IS_DESKTOP = IS_WEB && SCREEN_WIDTH >= 768;
+
+// Error messages that are safe to show the user exactly as thrown — these
+// come from AndroidBillingBridge and nothing internal leaks through them.
+// Anything else caught in handlePurchase falls back to a generic message.
+const PASSTHROUGH_ERROR_MESSAGES = new Set([
+  "Payment could not be started. Please try again.",
+  "Still connecting to Google Play. Please try again in a moment.",
+  "This plan isn't available yet. Please try again shortly.",
+]);
 
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState(IS_DESKTOP);
@@ -131,6 +144,18 @@ type SubStatus = {
     maxPhotosPerCollection: number;
     label?: string;
   };
+  // Which provider the CURRENT subscription (if any) is on — only
+  // meaningful when isActive/isLapsed. Used to block starting a purchase
+  // through the other provider while one is already active (see
+  // crossProviderBlocked below) — Google Play auto-renews silently, so
+  // letting a Pesapal purchase go through on top (or vice versa) risks a
+  // real double-charge, not just a confusing UI state.
+  paymentProvider: "pesapal" | "google_play" | null;
+  // Only present when paymentProvider is "google_play" — lets
+  // handlePurchase perform an in-place tier upgrade/downgrade (Google
+  // Play's subscription replacement flow) instead of starting a second,
+  // independent subscription when switching tiers.
+  googlePlayPurchaseToken: string | null;
 };
 
 function getTierConfig(tier: AllTier): TierConfig {
@@ -396,6 +421,7 @@ export default function SubscriptionPage() {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const cardFade = useRef(new Animated.Value(1)).current;
   const selectedTierRef = useRef<AllTier>("medium");
+  const androidBillingRef = useRef<AndroidBillingHandle>(null);
 
   const cardWidth = isDesktop
     ? Math.min(220, (Math.min(SCREEN_WIDTH, 960) - 100) / 4)
@@ -448,6 +474,8 @@ export default function SubscriptionPage() {
             maxCollections: 3,
             maxPhotosPerCollection: 10,
           },
+          paymentProvider: data?.paymentProvider ?? null,
+          googlePlayPurchaseToken: data?.googlePlayPurchaseToken ?? null,
         });
 
         // Smart initial card: lapsed users land on their old tier to renew easily
@@ -499,6 +527,45 @@ export default function SubscriptionPage() {
         useNativeDriver: true,
       }).start();
     });
+  }
+
+  // Android purchases resolve asynchronously through AndroidBillingBridge
+  // (its onPurchaseSuccess/onPurchaseError props), not synchronously inside
+  // handlePurchase below — mirrors the pattern in PaywallModal.tsx.
+  function handleAndroidPurchaseSuccess(tier: PaidTier) {
+    (async () => {
+      try {
+        const { data: updated } =
+          await supabase.functions.invoke("check-subscription");
+        setStatus({
+          tier: updated?.tier ?? "free",
+          isActive: updated?.isActive ?? false,
+          isLapsed: updated?.isLapsed ?? false,
+          periodEnd: updated?.periodEnd ?? null,
+          limits: updated?.limits ?? {
+            maxCollections: 3,
+            maxPhotosPerCollection: 10,
+          },
+          paymentProvider: updated?.paymentProvider ?? null,
+          googlePlayPurchaseToken: updated?.googlePlayPurchaseToken ?? null,
+        });
+        Alert.alert(
+          "You're all set!",
+          `Your ${TIERS[tier].label} album is now active.`,
+        );
+      } finally {
+        setPurchasing(null);
+      }
+    })();
+  }
+
+  function handleAndroidPurchaseError(message: string | null) {
+    setPurchasing(null);
+    // null means "silent" — e.g. the user cancelled the Play Store sheet,
+    // which isn't an error worth alerting about.
+    if (message) {
+      Alert.alert("Payment error", message);
+    }
   }
 
   async function handlePurchase(tier: PaidTier) {
@@ -586,14 +653,29 @@ export default function SubscriptionPage() {
             }
           }
         }, 1000);
+      } else if (IS_ANDROID) {
+        // Android — Google Play Billing via expo-iap, routed through
+        // AndroidBillingBridge (which owns the actual native calls; see
+        // that file for why it must be the only thing touching expo-iap).
+        // This only resolves once the purchase has been *initiated* —
+        // completion (including server-side verification) is delivered
+        // asynchronously via handleAndroidPurchaseSuccess/Error above, so
+        // `purchasing` is deliberately left set here rather than cleared
+        // in a `finally` below.
+        if (!androidBillingRef.current) {
+          throw new Error("Payment could not be started. Please try again.");
+        }
+        await androidBillingRef.current.purchase(tier);
       } else {
-        // Native — open Pesapal in an in-app browser. The screen stays
-        // mounted for the whole flow (see the subscription-callback deep
-        // link fix in app/_layout.tsx, which dismisses this browser
-        // instead of forcing a navigation), so `status`/`purchasing`
-        // here are the same component instance throughout — no reload
-        // equivalent needed like the web branch above; just refetch and
-        // set status in place once payment is confirmed.
+        // iOS — Pesapal in-app browser (unchanged). Google Play Billing
+        // has no iOS equivalent, so iOS keeps the same flow as web. The
+        // screen stays mounted for the whole flow (see the
+        // subscription-callback deep link fix in app/_layout.tsx, which
+        // dismisses this browser instead of forcing a navigation), so
+        // `status`/`purchasing` here are the same component instance
+        // throughout — no reload equivalent needed like the web branch
+        // above; just refetch and set status in place once payment is
+        // confirmed.
         const { data, error } = await supabase.functions.invoke(
           "create-subscription",
           { body: { tier, callbackUrl } },
@@ -629,6 +711,8 @@ export default function SubscriptionPage() {
                 maxCollections: 3,
                 maxPhotosPerCollection: 10,
               },
+              paymentProvider: updated?.paymentProvider ?? null,
+              googlePlayPurchaseToken: updated?.googlePlayPurchaseToken ?? null,
             });
             Alert.alert(
               "You're all set!",
@@ -643,7 +727,9 @@ export default function SubscriptionPage() {
       }
     } catch (err: any) {
       console.error("handlePurchase error:", err.message);
-      const userMessage = "Something went wrong. Please try again.";
+      const userMessage = PASSTHROUGH_ERROR_MESSAGES.has(err.message)
+        ? err.message
+        : "Something went wrong. Please try again.";
       IS_WEB ? window.alert(userMessage) : Alert.alert("Error", userMessage);
       setPurchasing(null);
     }
@@ -697,6 +783,8 @@ export default function SubscriptionPage() {
           maxCollections: 3,
           maxPhotosPerCollection: 10,
         },
+        paymentProvider: updated?.paymentProvider ?? null,
+        googlePlayPurchaseToken: updated?.googlePlayPurchaseToken ?? null,
       });
 
       const until = data?.accessUntil ? formatDate(data.accessUntil) : "";
@@ -711,6 +799,23 @@ export default function SubscriptionPage() {
   const activeTier = status?.isActive ? (status.tier as PaidTier) : null;
   const isActiveFree = !status?.isActive && !status?.isLapsed;
 
+  // Which provider a purchase started from THIS screen would use. If the
+  // user already has an active subscription through the OTHER provider,
+  // every tier button gets blocked (not just the current tier) — Google
+  // Play auto-renews silently in the background, so letting a Pesapal
+  // purchase go through on top (or vice versa) risks a real double-charge,
+  // not just a confusing UI state. Same-provider tier changes are still
+  // allowed (that's a legitimate upgrade/renewal, handled server-side).
+  const purchaseProvider: "pesapal" | "google_play" = IS_ANDROID
+    ? "google_play"
+    : "pesapal";
+  const crossProviderBlocked =
+    !!status?.isActive &&
+    !!status?.paymentProvider &&
+    status.paymentProvider !== purchaseProvider;
+  const otherProviderLabel =
+    status?.paymentProvider === "google_play" ? "Google Play" : "Pesapal";
+
   const pillLeft = toggleAnim.interpolate({
     inputRange: [0, 1, 2, 3],
     outputRange: ["0%", "25%", "50%", "75%"],
@@ -718,6 +823,7 @@ export default function SubscriptionPage() {
 
   function buyLabel(tier: PaidTier, isActive: boolean): string {
     if (isActive) return "✓ Active";
+    if (crossProviderBlocked) return `Manage on ${otherProviderLabel}`;
     if (status?.isLapsed && status.tier === tier) return "Renew plan";
     if (!session) return `Sign up to get ${TIERS[tier].label}`;
     return `Subscribe — $${TIERS[tier].priceUSD}/mo`;
@@ -725,6 +831,7 @@ export default function SubscriptionPage() {
 
   function mobileBuyLabel(tier: PaidTier, isActive: boolean): string {
     if (isActive) return "✓ Active plan";
+    if (crossProviderBlocked) return `Manage your plan on ${otherProviderLabel}`;
     if (status?.isLapsed && status.tier === tier)
       return `Renew ${TIERS[tier].label} — $${TIERS[tier].priceUSD}/mo`;
     if (!session)
@@ -734,11 +841,28 @@ export default function SubscriptionPage() {
 
   function mobileBuySub(isActive: boolean): string {
     if (isActive) return "";
+    if (crossProviderBlocked)
+      return `You're subscribed via ${otherProviderLabel} — manage it there to change plans.`;
     if (!session) return "Free to create an account";
     return "Billed monthly · Cancel anytime";
   }
 
   return (
+    <>
+      {IS_ANDROID && (
+        <AndroidBillingBridge
+          ref={androidBillingRef}
+          onPurchaseSuccess={handleAndroidPurchaseSuccess}
+          onPurchaseError={handleAndroidPurchaseError}
+          currentSubscription={
+            status?.paymentProvider === "google_play" &&
+            activeTier &&
+            status?.googlePlayPurchaseToken
+              ? { tier: activeTier, purchaseToken: status.googlePlayPurchaseToken }
+              : null
+          }
+        />
+      )}
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity
@@ -761,7 +885,8 @@ export default function SubscriptionPage() {
         <View style={styles.hero}>
           <Text style={styles.heroTitle}>Your life's best moments</Text>
           <Text style={styles.heroSub}>
-            Billed monthly · Cancel anytime · Secure via Pesapal
+            Billed monthly · Cancel anytime · Secure via{" "}
+            {IS_ANDROID ? "Google Play" : "Pesapal"}
           </Text>
         </View>
 
@@ -948,7 +1073,7 @@ export default function SubscriptionPage() {
                         isPurchasing && { opacity: 0.7 },
                       ]}
                       onPress={() => handlePurchase(tier)}
-                      disabled={!!purchasing || isActive}
+                      disabled={!!purchasing || isActive || crossProviderBlocked}
                       activeOpacity={0.8}
                     >
                       {isPurchasing ? (
@@ -1159,7 +1284,7 @@ export default function SubscriptionPage() {
                           isPurchasing && { opacity: 0.7 },
                         ]}
                         onPress={() => handlePurchase(displayTier)}
-                        disabled={!!purchasing || isActive}
+                        disabled={!!purchasing || isActive || crossProviderBlocked}
                         activeOpacity={0.8}
                       >
                         {isPurchasing ? (
@@ -1200,11 +1325,13 @@ export default function SubscriptionPage() {
         )}
 
         <Text style={styles.footer}>
-          Payments processed securely by Pesapal.{"\n"}
-          Supports M-Pesa, Visa and Mastercard.
+          {IS_ANDROID
+            ? "Payments processed securely via Google Play."
+            : "Payments processed securely by Pesapal.\nSupports M-Pesa, Visa and Mastercard."}
         </Text>
       </ScrollView>
     </View>
+    </>
   );
 }
 

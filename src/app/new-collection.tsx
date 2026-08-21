@@ -731,6 +731,10 @@ export default function NewCollectionPage() {
             ? (subscriptionStatus.tier as any)
             : "free"
         }
+        currentPaymentProvider={subscriptionStatus?.paymentProvider ?? null}
+        currentGooglePlayPurchaseToken={
+          subscriptionStatus?.googlePlayPurchaseToken ?? null
+        }
         onBeforePurchase={persistPendingUploadForPayment}
         onSubscribed={async (_tier) => {
           const status = await checkSubscription();

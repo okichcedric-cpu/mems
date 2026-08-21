@@ -15,12 +15,24 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import AndroidBillingBridge, {
+  type AndroidBillingHandle,
+} from "./AndroidBillingBridge";
+import type { Tier } from "../utils/googlePlayBilling";
 import { supabase } from "../utils/supabase";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const IS_WEB = Platform.OS === "web";
+const IS_ANDROID = Platform.OS === "android";
 
-type Tier = "small" | "medium" | "big";
+// Error messages that are safe to show the user exactly as thrown —
+// nothing internal/technical leaks through any of these. Anything else
+// caught in handlePurchase falls back to a generic message instead.
+const PASSTHROUGH_ERROR_MESSAGES = new Set([
+  "Payment could not be started. Please try again.",
+  "Still connecting to Google Play. Please try again in a moment.",
+  "This plan isn't available yet. Please try again shortly.",
+]);
 
 type TierConfig = {
   label: string;
@@ -81,6 +93,17 @@ type Props = {
   // allows 10") instead of only stating the plan's limit.
   selectedCount?: number;
   currentTier?: "free" | "small" | "medium" | "big";
+  // Which provider the current subscription (if any) is on — only
+  // meaningful when currentTier isn't "free". Used to block starting a
+  // purchase through the OTHER provider while one is already active, since
+  // Google Play auto-renews silently and a Pesapal purchase on top (or
+  // vice versa) risks a real double-charge, not just a confusing UI state.
+  currentPaymentProvider?: "pesapal" | "google_play" | null;
+  // Only meaningful when currentPaymentProvider is "google_play" — lets
+  // handlePurchase perform an in-place tier upgrade/downgrade (Google
+  // Play's subscription replacement flow) instead of starting a second,
+  // independent subscription when switching tiers.
+  currentGooglePlayPurchaseToken?: string | null;
   onSubscribed: (tier: Tier) => void;
   onDismiss: () => void;
   // Fired right before payment is kicked off (before any popup/redirect),
@@ -99,6 +122,8 @@ export default function PaywallModal({
   currentLimit,
   selectedCount,
   currentTier = "free",
+  currentPaymentProvider = null,
+  currentGooglePlayPurchaseToken = null,
   onSubscribed,
   onDismiss,
   onBeforePurchase,
@@ -108,6 +133,7 @@ export default function PaywallModal({
   const slideAnim = useRef(new Animated.Value(300)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const [mounted, setMounted] = useState(false);
+  const androidBillingRef = useRef<AndroidBillingHandle>(null);
 
   const limit = currentLimit ?? (reason === "collections" ? 3 : 10);
   // Only offer tiers that are a genuine upgrade. For a free user that's
@@ -120,6 +146,22 @@ export default function PaywallModal({
   const ALL_PAID_TIERS: Tier[] = TIER_ORDER.filter(
     (t) => TIER_ORDER.indexOf(t) > currentTierIndex,
   );
+
+  // Which provider a purchase started from THIS modal would use. If the
+  // user already has an active subscription through the OTHER provider,
+  // every tier button below gets blocked — same-provider upgrades are
+  // still fine (handled server-side), but switching provider mid-flight
+  // isn't something this modal can do safely (see currentPaymentProvider
+  // prop comment above).
+  const purchaseProvider: "pesapal" | "google_play" = IS_ANDROID
+    ? "google_play"
+    : "pesapal";
+  const crossProviderBlocked =
+    currentTier !== "free" &&
+    !!currentPaymentProvider &&
+    currentPaymentProvider !== purchaseProvider;
+  const otherProviderLabel =
+    currentPaymentProvider === "google_play" ? "Google Play" : "Pesapal";
 
   useEffect(() => {
     if (visible) {
@@ -175,6 +217,25 @@ export default function PaywallModal({
       : overSelection
         ? `Your ${tierLabel} plan allows ${limit} photos per collection. Pick a plan below that fits all ${selectedCount} photos, or continue and we'll upload the first ${limit}.`
         : `Your ${tierLabel} plan allows ${limit} photos per collection. Pick a plan below to keep adding moments.`;
+
+  // Android purchases resolve asynchronously through AndroidBillingBridge
+  // (its onPurchaseSuccess/onPurchaseError props), not synchronously
+  // inside handlePurchase below — these two functions are what actually
+  // clear `purchasing` and notify the caller once a Google Play purchase
+  // has been verified server-side (or has definitively failed).
+  function handleAndroidPurchaseSuccess(tier: Tier) {
+    setPurchasing(null);
+    onSubscribed(tier);
+  }
+
+  function handleAndroidPurchaseError(message: string | null) {
+    setPurchasing(null);
+    // null means "silent" — e.g. the user cancelled the Play Store sheet,
+    // which isn't an error worth alerting about.
+    if (message) {
+      Alert.alert("Payment error", message);
+    }
+  }
 
   async function handlePurchase(tier: Tier) {
     const {
@@ -277,12 +338,33 @@ export default function PaywallModal({
             }
           }
         }, 1000);
+      } else if (IS_ANDROID) {
+        // Android — Google Play Billing via expo-iap, routed through
+        // AndroidBillingBridge (which owns the actual native calls; see
+        // that file for why it must be the only thing touching expo-iap).
+        // onBeforePurchase still runs here for parity with the other two
+        // branches, even though native callers typically won't need it —
+        // the screen that opened this modal stays mounted for the whole
+        // flow (see the _layout.tsx deep-link fix).
+        try {
+          await onBeforePurchase?.();
+        } catch (persistErr: any) {
+          console.warn("onBeforePurchase failed:", persistErr?.message);
+        }
+
+        if (!androidBillingRef.current) {
+          throw new Error("Payment could not be started. Please try again.");
+        }
+
+        // This only resolves once the purchase has been *initiated* —
+        // completion (including server-side verification) is delivered
+        // asynchronously via handleAndroidPurchaseSuccess/Error above
+        // (AndroidBillingBridge's props), so `purchasing` is deliberately
+        // left set here rather than cleared in a `finally` below.
+        await androidBillingRef.current.purchase(tier);
       } else {
-        // Native — open Pesapal in in-app browser. Unlike web, the screen
-        // that opened this modal stays mounted for the whole flow (see
-        // the _layout.tsx deep-link fix), so there's nothing at risk of
-        // being lost here — onBeforePurchase is called anyway for
-        // callers that want it, but native ones typically won't need it.
+        // iOS — Pesapal in-app browser (unchanged). Google Play Billing
+        // has no iOS equivalent, so iOS keeps the same flow as web.
         try {
           await onBeforePurchase?.();
         } catch (persistErr: any) {
@@ -325,12 +407,13 @@ export default function PaywallModal({
         }
       }
     } catch (err: any) {
-      // Log internal error, show generic message to user
+      // Log internal error, show generic message to user — except for a
+      // small whitelist of messages that are already safe and helpful to
+      // show verbatim (nothing internal leaks through them).
       console.error("PaywallModal handlePurchase error:", err.message);
-      const userMessage =
-        err.message === "Payment could not be started. Please try again."
-          ? err.message
-          : "Something went wrong. Please try again.";
+      const userMessage = PASSTHROUGH_ERROR_MESSAGES.has(err.message)
+        ? err.message
+        : "Something went wrong. Please try again.";
       if (IS_WEB) {
         window.alert(userMessage);
       } else {
@@ -341,196 +424,231 @@ export default function PaywallModal({
   }
 
   return (
-    <Modal
-      visible={mounted}
-      transparent
-      animationType="none"
-      statusBarTranslucent
-      onRequestClose={onDismiss}
-    >
-      {/* Backdrop */}
-      <Animated.View style={[styles.backdrop, { opacity: fadeAnim }]}>
-        <TouchableOpacity
-          style={StyleSheet.absoluteFill}
-          onPress={onDismiss}
-          activeOpacity={1}
+    <>
+      {IS_ANDROID && (
+        <AndroidBillingBridge
+          ref={androidBillingRef}
+          onPurchaseSuccess={handleAndroidPurchaseSuccess}
+          onPurchaseError={handleAndroidPurchaseError}
+          currentSubscription={
+            currentPaymentProvider === "google_play" &&
+            currentTier !== "free" &&
+            currentGooglePlayPurchaseToken
+              ? {
+                  tier: currentTier as Tier,
+                  purchaseToken: currentGooglePlayPurchaseToken,
+                }
+              : null
+          }
         />
-      </Animated.View>
-
-      {/* Sheet */}
-      <Animated.View
-        style={[styles.sheet, { transform: [{ translateY: slideAnim }] }]}
+      )}
+      <Modal
+        visible={mounted}
+        transparent
+        animationType="none"
+        statusBarTranslucent
+        onRequestClose={onDismiss}
       >
-        <View style={styles.handle} />
+        {/* Backdrop */}
+        <Animated.View style={[styles.backdrop, { opacity: fadeAnim }]}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            onPress={onDismiss}
+            activeOpacity={1}
+          />
+        </Animated.View>
 
-        <TouchableOpacity
-          style={styles.closeButton}
-          onPress={onDismiss}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        {/* Sheet */}
+        <Animated.View
+          style={[styles.sheet, { transform: [{ translateY: slideAnim }] }]}
         >
-          <Ionicons name="close" size={20} color="#999" />
-        </TouchableOpacity>
+          <View style={styles.handle} />
 
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.content}
-        >
-          {/* Header */}
-          <Text style={styles.headerEmoji}>{emoji}</Text>
-          <Text style={styles.headerTitle}>{title}</Text>
-          <Text style={styles.headerSub}>{sub}</Text>
+          <TouchableOpacity
+            style={styles.closeButton}
+            onPress={onDismiss}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="close" size={20} color="#999" />
+          </TouchableOpacity>
 
-          {/* Limit banner — states what was hit, without steering toward
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.content}
+          >
+            {/* Header */}
+            <Text style={styles.headerEmoji}>{emoji}</Text>
+            <Text style={styles.headerTitle}>{title}</Text>
+            <Text style={styles.headerSub}>{sub}</Text>
+
+            {/* Limit banner — states what was hit, without steering toward
               any one specific plan; which plan solves it is left entirely
               to the person to decide from the cards below. */}
-          <View style={styles.limitBanner}>
-            <View style={styles.limitBannerLeft}>
-              <Text style={styles.limitBannerEmoji}>
-                {currentTier === "free"
-                  ? "📓"
-                  : (TIERS[currentTier as Tier]?.emoji ?? "📓")}
-              </Text>
-              <View>
-                <Text style={styles.limitBannerLabel}>
+            <View style={styles.limitBanner}>
+              <View style={styles.limitBannerLeft}>
+                <Text style={styles.limitBannerEmoji}>
                   {currentTier === "free"
-                    ? "Free"
-                    : (TIERS[currentTier as Tier]?.label ?? "Free")}{" "}
-                  plan limit
+                    ? "📓"
+                    : (TIERS[currentTier as Tier]?.emoji ?? "📓")}
                 </Text>
-                <Text style={styles.limitBannerValue}>
-                  {reason === "collections"
-                    ? `${limit} collection${limit === 1 ? "" : "s"} used`
-                    : `${limit} photos per collection`}
-                </Text>
+                <View>
+                  <Text style={styles.limitBannerLabel}>
+                    {currentTier === "free"
+                      ? "Free"
+                      : (TIERS[currentTier as Tier]?.label ?? "Free")}{" "}
+                    plan limit
+                  </Text>
+                  <Text style={styles.limitBannerValue}>
+                    {reason === "collections"
+                      ? `${limit} collection${limit === 1 ? "" : "s"} used`
+                      : `${limit} photos per collection`}
+                  </Text>
+                </View>
               </View>
             </View>
-          </View>
 
-          {/* Tier cards — every plan is fully selectable. Nothing here is
+            {/* Tier cards — every plan is fully selectable. Nothing here is
               greyed out or disabled based on current usage; "Most Popular"
               is a fixed marketing label (TIERS[...].featured), not a
               suggestion computed from what would fix the limit. */}
-          <Text style={styles.sectionTitle}>Choose your plan</Text>
+            <Text style={styles.sectionTitle}>Choose your plan</Text>
 
-          {ALL_PAID_TIERS.length === 0 && (
-            <Text style={styles.headerSub}>
-              You're already on our top plan — this can't be fixed with an
-              upgrade. Please free up room instead.
-            </Text>
-          )}
+            {ALL_PAID_TIERS.length === 0 && (
+              <Text style={styles.headerSub}>
+                You're already on our top plan — this can't be fixed with an
+                upgrade. Please free up room instead.
+              </Text>
+            )}
 
-          {ALL_PAID_TIERS.map((tier) => {
-            const config = TIERS[tier];
-            const isPurchasing = purchasing === tier;
-            const isFeatured = config.featured;
+            {crossProviderBlocked && (
+              <Text style={styles.headerSub}>
+                You're subscribed via {otherProviderLabel} — manage or cancel
+                it there before switching payment methods.
+              </Text>
+            )}
 
-            return (
-              <TouchableOpacity
-                key={tier}
-                style={[
-                  styles.tierCard,
-                  isFeatured && styles.tierCardRecommended,
-                  { borderColor: isFeatured ? config.accent : "#e0e0e0" },
-                  isPurchasing && { opacity: 0.7 },
-                ]}
-                onPress={() => handlePurchase(tier)}
-                disabled={!!purchasing}
-                activeOpacity={0.85}
-              >
-                {isFeatured && (
-                  <View
-                    style={[
-                      styles.popularBadge,
-                      { backgroundColor: config.accent },
-                    ]}
-                  >
-                    <Text style={styles.popularBadgeText}>
-                      ✦ Most Popular
-                    </Text>
-                  </View>
-                )}
+            {ALL_PAID_TIERS.map((tier) => {
+              const config = TIERS[tier];
+              const isPurchasing = purchasing === tier;
+              const isFeatured = config.featured;
 
-                <View style={styles.tierLeft}>
-                  <Text style={styles.tierEmoji}>{config.emoji}</Text>
-                  <View style={styles.tierInfo}>
-                    <Text style={styles.tierLabel}>{config.label} Album</Text>
-                    <Text style={styles.tierTagline}>{config.tagline}</Text>
-                    <View style={styles.tierStats}>
-                      <View
-                        style={[
-                          styles.tierStat,
-                          { backgroundColor: `${config.accent}18` },
-                        ]}
-                      >
-                        <Text
-                          style={[styles.tierStatText, { color: config.accent }]}
+              return (
+                <TouchableOpacity
+                  key={tier}
+                  style={[
+                    styles.tierCard,
+                    isFeatured && styles.tierCardRecommended,
+                    { borderColor: isFeatured ? config.accent : "#e0e0e0" },
+                    isPurchasing && { opacity: 0.7 },
+                  ]}
+                  onPress={() => handlePurchase(tier)}
+                  disabled={!!purchasing || crossProviderBlocked}
+                  activeOpacity={0.85}
+                >
+                  {isFeatured && (
+                    <View
+                      style={[
+                        styles.popularBadge,
+                        { backgroundColor: config.accent },
+                      ]}
+                    >
+                      <Text style={styles.popularBadgeText}>
+                        ✦ Most Popular
+                      </Text>
+                    </View>
+                  )}
+
+                  <View style={styles.tierLeft}>
+                    <Text style={styles.tierEmoji}>{config.emoji}</Text>
+                    <View style={styles.tierInfo}>
+                      <Text style={styles.tierLabel}>{config.label} Album</Text>
+                      <Text style={styles.tierTagline}>{config.tagline}</Text>
+                      <View style={styles.tierStats}>
+                        <View
+                          style={[
+                            styles.tierStat,
+                            { backgroundColor: `${config.accent}18` },
+                          ]}
                         >
-                          {config.maxCollections} collections
-                        </Text>
-                      </View>
-                      <View
-                        style={[
-                          styles.tierStat,
-                          { backgroundColor: `${config.accent}18` },
-                        ]}
-                      >
-                        <Text
-                          style={[styles.tierStatText, { color: config.accent }]}
+                          <Text
+                            style={[
+                              styles.tierStatText,
+                              { color: config.accent },
+                            ]}
+                          >
+                            {config.maxCollections} collections
+                          </Text>
+                        </View>
+                        <View
+                          style={[
+                            styles.tierStat,
+                            { backgroundColor: `${config.accent}18` },
+                          ]}
                         >
-                          {config.maxPhotosPerCollection} photos each
-                        </Text>
+                          <Text
+                            style={[
+                              styles.tierStatText,
+                              { color: config.accent },
+                            ]}
+                          >
+                            {config.maxPhotosPerCollection} photos each
+                          </Text>
+                        </View>
                       </View>
                     </View>
                   </View>
-                </View>
 
-                <View style={styles.tierRight}>
-                  {isPurchasing ? (
-                    <ActivityIndicator color={config.accent} size="small" />
-                  ) : (
-                    <>
-                      <Text
-                        style={[styles.tierPrice, { color: config.accent }]}
-                      >
-                        KES {config.price.toLocaleString()}
-                      </Text>
-                      <Text style={styles.tierOnce}>/mo</Text>
-                      <View
-                        style={[
-                          styles.tierButton,
-                          {
-                            backgroundColor: isFeatured
-                              ? config.accent
-                              : "#efefef",
-                          },
-                        ]}
-                      >
+                  <View style={styles.tierRight}>
+                    {isPurchasing ? (
+                      <ActivityIndicator color={config.accent} size="small" />
+                    ) : (
+                      <>
                         <Text
+                          style={[styles.tierPrice, { color: config.accent }]}
+                        >
+                          KES {config.price.toLocaleString()}
+                        </Text>
+                        <Text style={styles.tierOnce}>/mo</Text>
+                        <View
                           style={[
-                            styles.tierButtonText,
-                            !isFeatured && { color: "#666" },
+                            styles.tierButton,
+                            {
+                              backgroundColor: isFeatured
+                                ? config.accent
+                                : "#efefef",
+                            },
                           ]}
                         >
-                          Choose
-                        </Text>
-                      </View>
-                    </>
-                  )}
-                </View>
-              </TouchableOpacity>
-            );
-          })}
+                          <Text
+                            style={[
+                              styles.tierButtonText,
+                              !isFeatured && { color: "#666" },
+                            ]}
+                          >
+                            {crossProviderBlocked
+                              ? `On ${otherProviderLabel}`
+                              : "Choose"}
+                          </Text>
+                        </View>
+                      </>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
 
-          <TouchableOpacity style={styles.laterButton} onPress={onDismiss}>
-            <Text style={styles.laterText}>Maybe Later</Text>
-          </TouchableOpacity>
+            <TouchableOpacity style={styles.laterButton} onPress={onDismiss}>
+              <Text style={styles.laterText}>Maybe Later</Text>
+            </TouchableOpacity>
 
-          <Text style={styles.footer}>
-            Billed monthly · Cancel anytime · Secure via Pesapal
-          </Text>
-        </ScrollView>
-      </Animated.View>
-    </Modal>
+            <Text style={styles.footer}>
+              Billed monthly · Cancel anytime · Secure via{" "}
+              {IS_ANDROID ? "Google Play" : "Pesapal"}
+            </Text>
+          </ScrollView>
+        </Animated.View>
+      </Modal>
+    </>
   );
 }
 

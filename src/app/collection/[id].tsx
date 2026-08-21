@@ -2096,6 +2096,10 @@ export default function CollectionPage() {
             ? (subscriptionStatus.tier as any)
             : "free"
         }
+        currentPaymentProvider={subscriptionStatus?.paymentProvider ?? null}
+        currentGooglePlayPurchaseToken={
+          subscriptionStatus?.googlePlayPurchaseToken ?? null
+        }
         onSubscribed={async (_tier) => {
           const status = await checkSubscription();
           setSubscriptionStatus(status);

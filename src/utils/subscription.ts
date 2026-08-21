@@ -15,6 +15,17 @@ export type SubscriptionStatus = {
   limits: TierLimits;
   amount?: number;
   currency?: string;
+  // Which provider the current subscription (if any) is on — only
+  // meaningful when isActive is true. Lets PaywallModal block starting a
+  // purchase through the OTHER provider while one is already active, since
+  // Google Play auto-renews silently and a Pesapal purchase on top (or
+  // vice versa) would risk a real double-charge.
+  paymentProvider?: "pesapal" | "google_play" | null;
+  // Only present when paymentProvider is "google_play" — lets PaywallModal
+  // perform an in-place tier upgrade/downgrade (Google Play's subscription
+  // replacement flow) instead of starting a second, independent
+  // subscription when switching tiers.
+  googlePlayPurchaseToken?: string | null;
 };
 
 export const TIER_LIMITS: Record<Tier, TierLimits> = {
@@ -56,6 +67,8 @@ export async function checkSubscription(): Promise<SubscriptionStatus> {
       limits: data.limits ?? TIER_LIMITS.free,
       amount: data.amount,
       currency: data.currency,
+      paymentProvider: data.paymentProvider ?? null,
+      googlePlayPurchaseToken: data.googlePlayPurchaseToken ?? null,
     };
   } catch {
     return {

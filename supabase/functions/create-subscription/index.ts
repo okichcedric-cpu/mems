@@ -69,6 +69,41 @@ serve(async (req) => {
 
     const tierConfig = TIERS[tier as keyof typeof TIERS];
 
+    // ── Cross-provider guard ─────────────────────────────
+    // Block starting a Pesapal checkout at all if the user already has an
+    // active Google Play subscription. This has to happen BEFORE we ever
+    // call Pesapal — unlike Pesapal (which only charges again if the user
+    // manually completes a new checkout), Google Play auto-renews and
+    // auto-charges in the background with no action from the user, so
+    // letting a Pesapal payment go through on top would double-bill them
+    // for real money with no way to undo the Pesapal charge from here.
+    const supabaseGuard = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+    const { data: existingForGuard } = await supabaseGuard
+      .from("subscriptions")
+      .select("payment_provider, status, current_period_end")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    const hasActiveGooglePlay =
+      existingForGuard?.payment_provider === "google_play" &&
+      (existingForGuard.status === "active" ||
+        existingForGuard.status === "cancelled") &&
+      existingForGuard.current_period_end &&
+      new Date(existingForGuard.current_period_end) > new Date();
+
+    if (hasActiveGooglePlay) {
+      return new Response(
+        JSON.stringify({
+          error:
+            "You already have an active Google Play subscription. Manage or cancel it from the Play Store before switching payment methods.",
+        }),
+        { status: 409, headers: corsHeaders },
+      );
+    }
+
     // Merchant reference encodes tier + partial user ID for webhook fallback
     const merchantReference =
       `MEMS-${tier.toUpperCase()}-${user.id.replace(/-/g, "").slice(0, 8)}-${Date.now()}`;

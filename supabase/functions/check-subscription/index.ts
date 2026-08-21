@@ -42,6 +42,8 @@ const FREE_RESPONSE = {
   periodEnd: null,
   amount: 0,
   currency: "KES",
+  paymentProvider: null,
+  googlePlayPurchaseToken: null,
 };
 
 serve(async (req) => {
@@ -82,7 +84,7 @@ serve(async (req) => {
 
     const { data: subscription, error: dbError } = await supabase
       .from("subscriptions")
-      .select("status, tier, amount, currency, current_period_start, current_period_end, renewal_reminder_sent")
+      .select("status, tier, amount, currency, current_period_start, current_period_end, renewal_reminder_sent, payment_provider, google_play_purchase_token")
       .eq("user_id", user.id)
       .maybeSingle();
 
@@ -144,6 +146,16 @@ serve(async (req) => {
         periodEnd: subscription?.current_period_end ?? null,
         amount: subscription?.amount ?? 0,
         currency: subscription?.currency ?? "KES",
+        // Only meaningful when isActive/isLapsed — lets the client warn
+        // before starting a purchase through the OTHER provider (see
+        // subscription.tsx/PaywallModal.tsx's cross-provider guard).
+        paymentProvider: subscription?.payment_provider ?? null,
+        // Only present when paymentProvider is "google_play" — lets the
+        // client perform an in-place tier upgrade/downgrade (Google Play's
+        // subscription replacement flow) instead of starting a second,
+        // independent subscription when switching tiers (see
+        // AndroidBillingBridge's currentSubscription prop).
+        googlePlayPurchaseToken: subscription?.google_play_purchase_token ?? null,
       }),
       {
         status: 200,
