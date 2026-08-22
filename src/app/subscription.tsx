@@ -751,12 +751,12 @@ export default function SubscriptionPage() {
       : await new Promise<boolean>((resolve) => {
           Alert.alert("Cancel subscription", message, [
             {
-              text: "Keep subscription",
+              text: "No, keep subscription",
               style: "cancel",
               onPress: () => resolve(false),
             },
             {
-              text: "Cancel",
+              text: "Yes, I want to Cancel",
               style: "destructive",
               onPress: () => resolve(true),
             },

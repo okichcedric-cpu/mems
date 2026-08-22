@@ -12,6 +12,25 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// ── Path traversal sanitiser ──────────────────────────────
+// Same rules as generate-upload-url's sanitiser, kept in sync deliberately:
+// allows the alphanumeric/space/dot/dash/underscore/paren/slash charset
+// real keys use, strips only genuinely dangerous characters, and collapses
+// ".." so a key can't be rewritten to escape its own prefix.
+function sanitisePath(key: string): string {
+  return key
+    .replace(/\.{2,}/g, ".")
+    .replace(/^\/+/, "")
+    .replace(/\/+/g, "/")
+    .replace(/[<>:"\\|?*\x00-\x1f]/g, "");
+}
+
+// Reject rather than silently rewrite — if sanitising changed anything,
+// the original key had characters that don't belong in a real object key.
+function isPathSafe(original: string, sanitised: string): boolean {
+  return original === sanitised;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -45,15 +64,28 @@ serve(async (req) => {
 
     const { key } = await req.json();
 
-    if (!key) {
+    if (!key || typeof key !== "string") {
       return new Response(JSON.stringify({ error: "Missing key" }), {
         status: 400,
         headers: corsHeaders,
       });
     }
 
+    // ── Path traversal prevention ──────────────────────────
+    // Applied before the key is ever used for a DB lookup or an S3 call —
+    // consistent with generate-upload-url, which already validates keys
+    // on the write side.
+    const safeKey = sanitisePath(key);
+    if (!safeKey || !isPathSafe(key, safeKey)) {
+      console.warn(`Rejected — unsafe path: original="${key}" user=${user.id}`);
+      return new Response(JSON.stringify({ error: "Invalid key" }), {
+        status: 400,
+        headers: corsHeaders,
+      });
+    }
+
     // Extract owner ID and collection name from key: userId/collectionName/fileName
-    const keyParts = key.split("/");
+    const keyParts = safeKey.split("/");
     const ownerId = keyParts[0];
     const collectionName = keyParts[1];
 
@@ -71,12 +103,14 @@ serve(async (req) => {
       const userEmail = user.email ?? '';
       const userEmailLower = userEmail.toLowerCase();
 
+      // .in() binds each value as a parameter — unlike .or() with a
+      // template string, there's no filter syntax for a value to break out of.
       const { data: share } = await supabase
         .from('shared_collections')
         .select('id')
         .eq('owner_id', ownerId)
         .eq('collection_name', collectionName)
-        .or(`recipient_email.eq.${userEmail},recipient_email.eq.${userEmailLower}`)
+        .in('recipient_email', [userEmail, userEmailLower])
         .maybeSingle();
 
       hasAccess = !!share;
@@ -103,7 +137,7 @@ serve(async (req) => {
       const head = await s3.send(
         new HeadObjectCommand({
           Bucket: Deno.env.get("S3_BUCKET")!,
-          Key: key,
+          Key: safeKey,
         })
       );
       metadata = {
@@ -119,7 +153,7 @@ serve(async (req) => {
       s3,
       new GetObjectCommand({
         Bucket: Deno.env.get("S3_BUCKET")!,
-        Key: key,
+        Key: safeKey,
       }),
       { expiresIn: 86400 }
     );

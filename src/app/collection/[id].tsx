@@ -23,6 +23,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import MemoryDatePicker from "../../components/MemoryDatePicker";
 import PaywallModal from "../../components/PaywallModal";
 import UploadProgressOverlay from "../../components/UploadProgressOverlay";
 import { useAuth } from "../../contexts/AuthContext";
@@ -38,11 +39,7 @@ import {
   setCollectionMemoryDate,
 } from "../../utils/collections";
 import { deriveThumbKey, evictPhotosFromCache } from "../../utils/imageCache";
-import {
-  buildIsoDateFromParts,
-  getMemoryDateInfo,
-  splitIsoDateToParts,
-} from "../../utils/memoryDate";
+import { getMemoryDateInfo } from "../../utils/memoryDate";
 import {
   deleteCollection,
   deleteFromS3,
@@ -253,9 +250,7 @@ export default function CollectionPage() {
   const [renaming, setRenaming] = useState(false);
   const [memoryDate, setMemoryDate] = useState<string | null>(null);
   const [showDateModal, setShowDateModal] = useState(false);
-  const [dateDay, setDateDay] = useState("");
-  const [dateMonth, setDateMonth] = useState("");
-  const [dateYear, setDateYear] = useState("");
+  const [editingDateIso, setEditingDateIso] = useState<string | null>(null);
   const [savingDate, setSavingDate] = useState(false);
   const [effectiveOwnerId, setEffectiveOwnerId] = useState<string | null>(null);
   const [subscriptionStatus, setSubscriptionStatus] =
@@ -942,39 +937,21 @@ export default function CollectionPage() {
   }
 
   function openDateModal() {
-    if (memoryDate) {
-      const parts = splitIsoDateToParts(memoryDate);
-      setDateDay(parts.day);
-      setDateMonth(parts.month);
-      setDateYear(parts.year);
-    } else {
-      setDateDay("");
-      setDateMonth("");
-      setDateYear("");
-    }
+    setEditingDateIso(memoryDate ?? null);
     setShowDateModal(true);
   }
 
   async function handleSaveMemoryDate() {
     if (!session) return;
 
-    const result = buildIsoDateFromParts(dateDay, dateMonth, dateYear);
-    if (result.status === "error") {
-      Platform.OS === "web"
-        ? window.alert(result.message)
-        : Alert.alert("Check the date", result.message);
-      return;
-    }
-
-    const iso = result.status === "ok" ? result.iso : null;
     setSavingDate(true);
     try {
       await setCollectionMemoryDate(
         effectiveOwnerId ?? session.user.id,
         collectionName,
-        iso,
+        editingDateIso,
       );
-      setMemoryDate(iso);
+      setMemoryDate(editingDateIso);
       setShowDateModal(false);
     } catch (error: any) {
       console.error("Save memory date error:", error.message);
@@ -1899,35 +1876,10 @@ export default function CollectionPage() {
                 <Text style={styles.dateModalHint}>
                   When did these memories actually happen?
                 </Text>
-                <View style={styles.dateModalRow}>
-                  <TextInput
-                    style={[styles.dateModalInput, styles.dateModalInputSmall]}
-                    placeholder="DD"
-                    placeholderTextColor="#999"
-                    value={dateDay}
-                    onChangeText={(t) => setDateDay(t.replace(/[^0-9]/g, ""))}
-                    keyboardType="number-pad"
-                    maxLength={2}
-                  />
-                  <TextInput
-                    style={[styles.dateModalInput, styles.dateModalInputSmall]}
-                    placeholder="MM"
-                    placeholderTextColor="#999"
-                    value={dateMonth}
-                    onChangeText={(t) => setDateMonth(t.replace(/[^0-9]/g, ""))}
-                    keyboardType="number-pad"
-                    maxLength={2}
-                  />
-                  <TextInput
-                    style={[styles.dateModalInput, styles.dateModalInputLarge]}
-                    placeholder="YYYY"
-                    placeholderTextColor="#999"
-                    value={dateYear}
-                    onChangeText={(t) => setDateYear(t.replace(/[^0-9]/g, ""))}
-                    keyboardType="number-pad"
-                    maxLength={4}
-                  />
-                </View>
+                <MemoryDatePicker
+                  value={editingDateIso}
+                  onChange={setEditingDateIso}
+                />
                 <TouchableOpacity
                   style={[
                     styles.primaryModalButton,
@@ -1988,35 +1940,10 @@ export default function CollectionPage() {
                 <Text style={styles.dateModalHint}>
                   When did these memories actually happen?
                 </Text>
-                <View style={styles.dateModalRow}>
-                  <TextInput
-                    style={[styles.dateModalInput, styles.dateModalInputSmall]}
-                    placeholder="DD"
-                    placeholderTextColor="#999"
-                    value={dateDay}
-                    onChangeText={(t) => setDateDay(t.replace(/[^0-9]/g, ""))}
-                    keyboardType="number-pad"
-                    maxLength={2}
-                  />
-                  <TextInput
-                    style={[styles.dateModalInput, styles.dateModalInputSmall]}
-                    placeholder="MM"
-                    placeholderTextColor="#999"
-                    value={dateMonth}
-                    onChangeText={(t) => setDateMonth(t.replace(/[^0-9]/g, ""))}
-                    keyboardType="number-pad"
-                    maxLength={2}
-                  />
-                  <TextInput
-                    style={[styles.dateModalInput, styles.dateModalInputLarge]}
-                    placeholder="YYYY"
-                    placeholderTextColor="#999"
-                    value={dateYear}
-                    onChangeText={(t) => setDateYear(t.replace(/[^0-9]/g, ""))}
-                    keyboardType="number-pad"
-                    maxLength={4}
-                  />
-                </View>
+                <MemoryDatePicker
+                  value={editingDateIso}
+                  onChange={setEditingDateIso}
+                />
                 <TouchableOpacity
                   style={[
                     styles.primaryModalButton,

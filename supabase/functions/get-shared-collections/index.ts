@@ -46,13 +46,27 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    // Query matching both exact and lowercase email variants
-    const { data, error } = await supabase
-      .from('shared_collections')
-      .select('owner_id, collection_name, owner_email, recipient_email')
-      .or(`recipient_email.eq.${userEmail},recipient_email.eq.${userEmailLower},recipient_id.eq.${user.id}`);
+    // Two parameterized queries run in parallel instead of one .or() that
+    // spanned two different columns (recipient_email / recipient_id).
+    // .in()/.eq() bind values directly rather than interpolating them into
+    // a filter string, so a value can never alter the filter's structure —
+    // same reasoning generate-upload-url already applies to this exact
+    // lookup. Results are unioned below, then de-duplicated same as before.
+    const [byEmailResult, byUserIdResult] = await Promise.all([
+      supabase
+        .from('shared_collections')
+        .select('owner_id, collection_name, owner_email, recipient_email')
+        .in('recipient_email', [userEmail, userEmailLower]),
+      supabase
+        .from('shared_collections')
+        .select('owner_id, collection_name, owner_email, recipient_email')
+        .eq('recipient_id', user.id),
+    ]);
 
-    if (error) throw new Error(error.message);
+    if (byEmailResult.error) throw new Error(byEmailResult.error.message);
+    if (byUserIdResult.error) throw new Error(byUserIdResult.error.message);
+
+    const data = [...(byEmailResult.data ?? []), ...(byUserIdResult.data ?? [])];
 
     const collections = (data || []).map((row: any) => ({
       ownerId: row.owner_id,
@@ -74,7 +88,7 @@ serve(async (req) => {
       await supabase
         .from('shared_collections')
         .update({ recipient_id: user.id })
-        .or(`recipient_email.eq.${userEmail},recipient_email.eq.${userEmailLower}`)
+        .in('recipient_email', [userEmail, userEmailLower])
         .is('recipient_id', null);
     }
 

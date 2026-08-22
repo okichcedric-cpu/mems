@@ -51,12 +51,14 @@ serve(async (req) => {
 
     if (!isOwner) {
       const userEmail = user.email ?? '';
+      const userEmailLower = userEmail.toLowerCase();
+      // .in() binds each value as a parameter, unlike interpolating into .or().
       const { data: share } = await supabase
         .from('shared_collections')
         .select('id')
         .eq('owner_id', userId)
         .eq('collection_name', collectionName)
-        .or(`recipient_email.eq.${userEmail},recipient_email.eq.${userEmail.toLowerCase()}`)
+        .in('recipient_email', [userEmail, userEmailLower])
         .maybeSingle();
       hasAccess = !!share;
     }

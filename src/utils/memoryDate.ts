@@ -30,6 +30,27 @@ function parseIsoDate(iso: string): Date | null {
   return isNaN(date.getTime()) ? null : date;
 }
 
+// Exported version of the above, for MemoryDatePicker.tsx to seed the
+// native date-picker widget's `value` prop from a stored ISO string —
+// same UTC-offset-safe construction as everywhere else in this file.
+export function isoDateToJsDate(iso: string): Date | null {
+  return parseIsoDate(iso);
+}
+
+// Reverse direction — turns a JS Date (as returned by the native/web date
+// picker) back into the plain "YYYY-MM-DD" shape stored in the database.
+// Uses local Y/M/D getters (not toISOString, which converts to UTC first
+// and can shift the date by a day) for the same reason parseIsoDate above
+// avoids handing raw strings to `new Date()`.
+export function jsDateToIsoDate(date: Date): string {
+  const y = date.getFullYear();
+  const m = date.getMonth() + 1;
+  const d = date.getDate();
+  return `${y.toString().padStart(4, "0")}-${m.toString().padStart(2, "0")}-${d
+    .toString()
+    .padStart(2, "0")}`;
+}
+
 export function getMemoryDateInfo(
   memoryDate: string | null | undefined,
 ): MemoryDateInfo | null {

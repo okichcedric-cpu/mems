@@ -4,7 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { showAlert } from "@/utils/alert";
 import { bumpCollectionsVersion } from "@/utils/collectionsCache";
 import { setCollectionMemoryDate } from "@/utils/collections";
-import { buildIsoDateFromParts } from "@/utils/memoryDate";
+import MemoryDatePicker from "@/components/MemoryDatePicker";
 import {
   clearPendingCollectionUpload,
   clearPendingUploadHint,
@@ -91,9 +91,7 @@ export default function NewCollectionPage() {
   const [collectionName, setCollectionName] = useState("");
   // Memory date — optional, so these are plain strings rather than a Date;
   // an empty set of fields is a valid "no date" state, not a partial one.
-  const [memoryDay, setMemoryDay] = useState("");
-  const [memoryMonth, setMemoryMonth] = useState("");
-  const [memoryYear, setMemoryYear] = useState("");
+  const [memoryDateIso, setMemoryDateIso] = useState<string | null>(null);
   const [selectedAssets, setSelectedAssets] = useState<
     ImagePicker.ImagePickerAsset[]
   >([]);
@@ -357,11 +355,31 @@ export default function NewCollectionPage() {
       });
 
       if (!result.canceled) {
-        setSelectedAssets(result.assets);
+        // Merge into whatever's already selected rather than replacing it —
+        // the native picker (PHPicker on iOS, the Android Photo Picker) has
+        // no way to be told "these are already selected" and always opens
+        // blank, so if we just took its result at face value here, tapping
+        // "Select Photos" again to add more would silently wipe everything
+        // picked so far. De-dupe by assetId (falling back to uri, which is
+        // always present) so re-selecting an already-picked photo in a
+        // later session doesn't add it twice.
+        setSelectedAssets((prev) => {
+          const alreadyPicked = new Set(
+            prev.map((a) => a.assetId ?? a.uri),
+          );
+          const newOnes = result.assets.filter(
+            (a) => !alreadyPicked.has(a.assetId ?? a.uri),
+          );
+          return [...prev, ...newOnes];
+        });
       }
     } finally {
       setPickingPhotos(false);
     }
+  }
+
+  function removeSelectedAsset(index: number) {
+    setSelectedAssets((prev) => prev.filter((_, i) => i !== index));
   }
 
   async function createCollection() {
@@ -435,18 +453,6 @@ export default function NewCollectionPage() {
       return;
     }
 
-    // Validate the memory date fields before uploading anything — cheaper
-    // to fail fast here than after photos are already on their way up.
-    const dateResult = buildIsoDateFromParts(
-      memoryDay,
-      memoryMonth,
-      memoryYear,
-    );
-    if (dateResult.status === "error") {
-      showAlert("Check the memory date", dateResult.message);
-      return;
-    }
-
     setCreating(true);
     setUploadProgress({ total: selectedAssets.length, completed: 0 });
     try {
@@ -483,7 +489,7 @@ export default function NewCollectionPage() {
         await setCollectionMemoryDate(
           session.user.id,
           collectionName.trim(),
-          dateResult.status === "ok" ? dateResult.iso : null,
+          memoryDateIso,
         );
       } catch (dateError: any) {
         console.warn("Save memory date error:", dateError.message);
@@ -529,13 +535,6 @@ export default function NewCollectionPage() {
   // app outright while the payment browser is open.
   async function persistPendingUploadForPayment() {
     if (!session || selectedAssets.length === 0) return;
-
-    const dateResult = buildIsoDateFromParts(
-      memoryDay,
-      memoryMonth,
-      memoryYear,
-    );
-    const memoryDateIso = dateResult.status === "ok" ? dateResult.iso : null;
 
     try {
       if (Platform.OS === "web") {
@@ -627,35 +626,7 @@ export default function NewCollectionPage() {
           When did these memories actually happen? Leave blank if you'd rather
           not say.
         </Text>
-        <View style={styles.dateRow}>
-          <TextInput
-            style={[styles.input, styles.dateInputSmall]}
-            placeholder="DD"
-            placeholderTextColor="#999"
-            value={memoryDay}
-            onChangeText={(t) => setMemoryDay(t.replace(/[^0-9]/g, ""))}
-            keyboardType="number-pad"
-            maxLength={2}
-          />
-          <TextInput
-            style={[styles.input, styles.dateInputSmall]}
-            placeholder="MM"
-            placeholderTextColor="#999"
-            value={memoryMonth}
-            onChangeText={(t) => setMemoryMonth(t.replace(/[^0-9]/g, ""))}
-            keyboardType="number-pad"
-            maxLength={2}
-          />
-          <TextInput
-            style={[styles.input, styles.dateInputLarge]}
-            placeholder="YYYY"
-            placeholderTextColor="#999"
-            value={memoryYear}
-            onChangeText={(t) => setMemoryYear(t.replace(/[^0-9]/g, ""))}
-            keyboardType="number-pad"
-            maxLength={4}
-          />
-        </View>
+        <MemoryDatePicker value={memoryDateIso} onChange={setMemoryDateIso} />
 
         <Text style={styles.label}>Photos</Text>
         <TouchableOpacity
@@ -687,12 +658,20 @@ export default function NewCollectionPage() {
             style={styles.previewStrip}
           >
             {selectedAssets.map((asset, i) => (
-              <Image
-                key={i}
-                source={{ uri: asset.uri }}
-                style={styles.previewThumb}
-                contentFit="cover"
-              />
+              <View key={asset.assetId ?? asset.uri} style={styles.previewThumbWrap}>
+                <Image
+                  source={{ uri: asset.uri }}
+                  style={styles.previewThumb}
+                  contentFit="cover"
+                />
+                <TouchableOpacity
+                  style={styles.previewRemoveButton}
+                  onPress={() => removeSelectedAsset(i)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="close" size={13} color="#fff" />
+                </TouchableOpacity>
+              </View>
             ))}
           </ScrollView>
         )}
@@ -863,12 +842,27 @@ const styles = StyleSheet.create({
   },
 
   previewStrip: { marginTop: 14 },
+  previewThumbWrap: {
+    width: 80,
+    height: 80,
+    marginRight: 8,
+  },
   previewThumb: {
     width: 80,
     height: 80,
     borderRadius: 10,
-    marginRight: 8,
     backgroundColor: "#eee",
+  },
+  previewRemoveButton: {
+    position: "absolute",
+    top: -6,
+    right: -6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   actions: { flexDirection: "row", gap: 12, marginTop: 32 },

@@ -102,13 +102,27 @@ serve(async (req) => {
     }
 
     // ── Step 3 — Remove collections shared TO this user by others ──
-    const { error: sharedInError } = await supabase
+    // Two parameterized deletes instead of one .or() spanning two columns —
+    // same reasoning as the other .or() fixes in this pass: .eq() binds the
+    // value directly, so it can't alter the filter's structure.
+    const { error: sharedInByIdError } = await supabase
       .from("shared_collections")
       .delete()
-      .or(`recipient_id.eq.${userId}${userEmail ? `,recipient_email.eq.${userEmail}` : ""}`);
+      .eq("recipient_id", userId);
 
-    if (sharedInError) {
-      console.error("Error removing received shares:", sharedInError.message);
+    if (sharedInByIdError) {
+      console.error("Error removing received shares (by id):", sharedInByIdError.message);
+    }
+
+    if (userEmail) {
+      const { error: sharedInByEmailError } = await supabase
+        .from("shared_collections")
+        .delete()
+        .eq("recipient_email", userEmail);
+
+      if (sharedInByEmailError) {
+        console.error("Error removing received shares (by email):", sharedInByEmailError.message);
+      }
     }
 
     // ── Step 3b — Delete this user's collection metadata (memory dates) ──

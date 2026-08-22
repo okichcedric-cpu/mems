@@ -7,6 +7,16 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// ── Path traversal sanitiser ──────────────────────────────
+// Kept in sync with generate-upload-url/generate-read-url's version.
+function sanitisePath(key: string): string {
+  return key
+    .replace(/\.{2,}/g, ".")
+    .replace(/^\/+/, "")
+    .replace(/\/+/g, "/")
+    .replace(/[<>:"\\|?*\x00-\x1f]/g, "");
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -39,8 +49,27 @@ serve(async (req) => {
 
     const { key } = await req.json();
 
+    if (!key || typeof key !== "string") {
+      return new Response(
+        JSON.stringify({ error: "Missing key" }),
+        { status: 400, headers: corsHeaders }
+      );
+    }
+
+    // ── Path traversal prevention ──────────────────────────
+    // Reject outright (rather than silently rewrite) so a key containing
+    // ".." or other unexpected characters never reaches DeleteObject.
+    const safeKey = sanitisePath(key);
+    if (!safeKey || safeKey !== key) {
+      console.warn(`Rejected — unsafe path: original="${key}" user=${user.id}`);
+      return new Response(
+        JSON.stringify({ error: "Invalid key" }),
+        { status: 400, headers: corsHeaders }
+      );
+    }
+
     // Security — user can only delete from their own folder
-    if (!key.startsWith(`${user.id}/`)) {
+    if (!safeKey.startsWith(`${user.id}/`)) {
       return new Response(
         JSON.stringify({ error: "Forbidden" }),
         { status: 403, headers: corsHeaders }
@@ -58,12 +87,12 @@ serve(async (req) => {
     // Delete full image
     await s3.send(new DeleteObjectCommand({
       Bucket: Deno.env.get("S3_BUCKET")!,
-      Key: key,
+      Key: safeKey,
     }));
 
     // Delete thumbnail if it exists
-    if (!key.includes("/thumbs/")) {
-      const parts = key.split("/");
+    if (!safeKey.includes("/thumbs/")) {
+      const parts = safeKey.split("/");
       const fileName = parts.pop()!;
       const thumbKey = [...parts, "thumbs", fileName].join("/");
       try {

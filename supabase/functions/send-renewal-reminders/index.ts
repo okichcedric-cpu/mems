@@ -37,6 +37,23 @@ function formatDate(iso: string): string {
   });
 }
 
+// Escape values before they're interpolated into the HTML email body.
+// Everything currently passed through this comes from server-controlled
+// sources (the hardcoded TIERS map, a formatted Date, Pesapal's own
+// redirect_url) rather than free-text user input, so this is defensive
+// hardening rather than a fix for a live injection today — but it's what
+// send-share-email already does for its own user-facing email, and it
+// costs nothing to apply here too, especially if a free-text field is
+// ever added to this template later.
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -138,6 +155,14 @@ serve(async (req) => {
           continue;
         }
 
+        // Escaped versions for the HTML email body only — the plain-text
+        // version below uses the raw values, since HTML-escaping would show
+        // up literally (e.g. "&amp;") in a plain-text client.
+        const safeLabel = escapeHtml(tierConfig.label);
+        const safeAmount = escapeHtml(String(tierConfig.amount));
+        const safeExpiry = escapeHtml(formatDate(sub.current_period_end));
+        const safeRedirectUrl = escapeHtml(orderData.redirect_url);
+
         // Update DB with new merchant reference for this renewal
         await supabase
           .from("subscriptions")
@@ -194,19 +219,19 @@ If you choose not to renew, your account will move to the free plan (3 collectio
           <td style="padding:32px;">
             <p style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111;">⏰ Time to renew</p>
             <p style="margin:0 0 24px;font-size:15px;color:#555;line-height:24px;">
-              Your <strong>${tierConfig.label} Album</strong> subscription expires on <strong>${formatDate(sub.current_period_end)}</strong>.<br/>
+              Your <strong>${safeLabel} Album</strong> subscription expires on <strong>${safeExpiry}</strong>.<br/>
               Renew now to keep all your collections and photos safe.
             </p>
             <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9f9f9;border:1px solid #eee;border-radius:12px;margin-bottom:24px;">
               <tr><td style="padding:20px;">
                 <p style="margin:0 0 4px;font-size:11px;font-weight:600;color:#999;text-transform:uppercase;letter-spacing:0.5px;">Your plan</p>
-                <p style="margin:0;font-size:20px;font-weight:800;color:#111;">${tierConfig.label} Album — KES ${tierConfig.amount}/month</p>
+                <p style="margin:0;font-size:20px;font-weight:800;color:#111;">${safeLabel} Album — KES ${safeAmount}/month</p>
               </td></tr>
             </table>
             <table cellpadding="0" cellspacing="0">
               <tr>
                 <td style="background:#111;border-radius:12px;">
-                  <a href="${orderData.redirect_url}" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:600;color:#fff;text-decoration:none;">
+                  <a href="${safeRedirectUrl}" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:600;color:#fff;text-decoration:none;">
                     Renew my subscription →
                   </a>
                 </td>
