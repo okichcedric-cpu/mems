@@ -71,9 +71,11 @@ type Collection = {
 const CollectionCollage = ({
   photos,
   name,
+  meta,
 }: {
   photos: PreviewPhoto[];
   name: string;
+  meta: string;
 }) => (
   <View style={StyleSheet.absoluteFill}>
     <View style={styles.collageContainer}>
@@ -144,6 +146,9 @@ const CollectionCollage = ({
     <View style={styles.collageOverlay}>
       <Text style={styles.collageName} numberOfLines={1}>
         {name}
+      </Text>
+      <Text style={styles.collageMeta} numberOfLines={1}>
+        {meta}
       </Text>
     </View>
   </View>
@@ -499,6 +504,12 @@ export default function CollectionsPage() {
     heightRatios: number[],
   ) => {
     const cardHeight = COLUMN_WIDTH * heightRatios[index % heightRatios.length];
+    const photoLabel = `${collection.photoCount} photo${
+      collection.photoCount !== 1 ? "s" : ""
+    }`;
+    const meta = collection.isShared
+      ? `${photoLabel} · ${collection.ownerEmail}`
+      : photoLabel;
     return (
       <TouchableOpacity
         key={`${collection.ownerId}-${collection.name}`}
@@ -516,6 +527,7 @@ export default function CollectionsPage() {
         <CollectionCollage
           photos={collection.previewUrls}
           name={collection.name}
+          meta={meta}
         />
 
         {collection.isShared && (
@@ -536,14 +548,6 @@ export default function CollectionsPage() {
             <Text style={styles.deleteCardButtonText}>✕</Text>
           </TouchableOpacity>
         )}
-
-        <View style={styles.collectionMeta}>
-          <Text style={styles.photoCount}>
-            {collection.photoCount} photo
-            {collection.photoCount !== 1 ? "s" : ""}
-            {collection.isShared ? ` · ${collection.ownerEmail}` : ""}
-          </Text>
-        </View>
       </TouchableOpacity>
     );
   };
@@ -848,13 +852,6 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 5,
   },
-  collectionMeta: { position: "absolute", bottom: 0, left: 0, right: 0 },
-  photoCount: {
-    fontSize: 11,
-    color: "rgba(255,255,255,0.8)",
-    paddingHorizontal: 8,
-    paddingBottom: 6,
-  },
   deleteCardButton: {
     position: "absolute",
     top: 8,
@@ -889,18 +886,37 @@ const styles = StyleSheet.create({
   collageRightTop: { flex: 1.2, position: "relative" },
   collageRightBottom: { flex: 0.8, position: "relative" },
   collageOverlay: {
+    // Both the collection name and the photo-count/owner meta line render
+    // inside this single box, stacked in normal flow (one Text after the
+    // other) rather than as two independently bottom-anchored absolute
+    // views. Previously the name (its own absolutely-positioned box) and
+    // the meta line (a second, separate absolutely-positioned box also
+    // anchored to bottom:0) occupied overlapping vertical ranges — most
+    // visibly on shared collections, where the meta line is longer
+    // ("N photos · owner@email.com") and would wrap or sit directly under
+    // the name on narrow mobile card widths. Flow layout makes that
+    // impossible: the box's height simply grows to fit both lines.
     position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
     paddingHorizontal: 8,
-    paddingVertical: 20,
+    paddingTop: 10,
+    paddingBottom: 8,
     backgroundColor: "rgba(0,0,0,0.35)",
   },
   collageName: {
     color: "#fff",
     fontWeight: "700",
     fontSize: 13,
+    textShadowColor: "rgba(0,0,0,0.5)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  collageMeta: {
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 11,
+    marginTop: 2,
     textShadowColor: "rgba(0,0,0,0.5)",
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
