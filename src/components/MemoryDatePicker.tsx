@@ -132,6 +132,16 @@ const styles = StyleSheet.create({
 // Browsers render their own chrome for <input type="date"> (including the
 // calendar-icon affordance), so this only needs to get the box itself
 // looking consistent with the rest of the app's form fields.
+//
+// `width: "100%"` alone isn't enough on mobile browsers: a native
+// <input type="date"> has its own intrinsic minimum content width (the
+// day/month/year segments plus the calendar-icon affordance), and as a
+// flex item its default `min-width` is `auto` — meaning the browser lets
+// it keep that intrinsic width rather than shrink to fit, which is
+// exactly what made it spill past the edge of the screen on narrow
+// mobile viewports even though its parent was already full-width.
+// `minWidth: 0` overrides that default so it actually respects `width`,
+// and `maxWidth: "100%"` is a hard ceiling as a second line of defence.
 const webInputStyle: any = {
   border: "1px solid #ddd",
   borderRadius: 12,
@@ -140,5 +150,8 @@ const webInputStyle: any = {
   color: "#111",
   fontFamily: "inherit",
   width: "100%",
+  minWidth: 0,
+  maxWidth: "100%",
   boxSizing: "border-box",
+  display: "block",
 };
