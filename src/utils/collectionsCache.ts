@@ -171,6 +171,7 @@ type CachedHomeCollection = {
   ownerId: string;
   ownerEmail?: string;
   isShared?: boolean;
+  memoryDate?: string | null;
 };
 
 type HomeCacheEntry = {

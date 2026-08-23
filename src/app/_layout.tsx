@@ -1,3 +1,4 @@
+import { Caveat_700Bold, useFonts } from "@expo-google-fonts/caveat";
 import * as Sentry from "@sentry/react-native";
 import * as Linking from "expo-linking";
 import { Slot, useRouter, useSegments } from "expo-router";
@@ -128,6 +129,11 @@ async function handleAuthRedirect(
 // only be READ below the level of the Provider that supplies it.
 function RootLayoutNav() {
   const { session, loading } = useAuth();
+  // Handwritten-look font used for collection names on the home screen
+  // (see app/index.tsx's polaroidCard) — loaded once, here at the root,
+  // so every screen can already rely on it being available rather than
+  // each screen re-loading (and re-flashing a fallback font) on its own.
+  const [fontsLoaded] = useFonts({ Caveat_700Bold });
   const router = useRouter();
   const segments = useSegments();
   // Deep-link handlers below run inside a mount-once effect ([] deps), so
@@ -270,7 +276,7 @@ function RootLayoutNav() {
     }
   }, [session, segments, loading]);
 
-  if (loading) {
+  if (loading || !fontsLoaded) {
     return (
       <View
         style={{

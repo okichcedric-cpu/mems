@@ -26,7 +26,9 @@ import {
   setCachedHomeCollections,
   setPreviousSharedCollections,
 } from "../utils/collectionsCache";
+import { getCollectionMemoryDate } from "../utils/collections";
 import { deriveThumbKey, evictPhotosFromCache } from "../utils/imageCache";
+import { getMemoryDateInfo } from "../utils/memoryDate";
 import { deleteCollection } from "../utils/s3";
 import { getSharedCollections } from "../utils/sharing";
 import { checkSubscription, SubscriptionStatus } from "../utils/subscription";
@@ -47,6 +49,10 @@ type Collection = {
   ownerId: string;
   ownerEmail?: string;
   isShared?: boolean;
+  // "When did these memories actually happen" — set optionally at creation
+  // time (or later) via MemoryDatePicker. Null/undefined means unset, in
+  // which case the polaroid caption below just shows the name.
+  memoryDate?: string | null;
 };
 
 // Module-level, NOT defined inside CollectionsPage — this used to be a
@@ -68,15 +74,7 @@ type Collection = {
 // a stable, module-level identity means the same underlying <Image>
 // instances persist across re-renders, so unrelated state changes
 // elsewhere on the screen no longer touch it at all.
-const CollectionCollage = ({
-  photos,
-  name,
-  meta,
-}: {
-  photos: PreviewPhoto[];
-  name: string;
-  meta: string;
-}) => (
+const CollectionCollage = ({ photos }: { photos: PreviewPhoto[] }) => (
   <View style={StyleSheet.absoluteFill}>
     <View style={styles.collageContainer}>
       <View style={styles.collageLeft}>
@@ -142,14 +140,6 @@ const CollectionCollage = ({
           )}
         </View>
       </View>
-    </View>
-    <View style={styles.collageOverlay}>
-      <Text style={styles.collageName} numberOfLines={1}>
-        {name}
-      </Text>
-      <Text style={styles.collageMeta} numberOfLines={1}>
-        {meta}
-      </Text>
     </View>
   </View>
 );
@@ -271,16 +261,19 @@ export default function CollectionsPage() {
         // Fetch all owned collections in parallel — one call per collection
         const ownedData = await Promise.allSettled(
           names.map(async (name: string): Promise<Collection> => {
-            const { data, error } = await supabase.functions.invoke(
-              "list-photos",
-              {
+            // Fetched alongside list-photos, not after it — this is a
+            // separate lightweight table read (see utils/collections.ts),
+            // so there's no reason to serialize it behind the S3 listing.
+            const [{ data, error }, memoryDate] = await Promise.all([
+              supabase.functions.invoke("list-photos", {
                 body: {
                   userId: currentSession.user.id,
                   collectionName: name,
                   includeUrls: true,
                 },
-              },
-            );
+              }),
+              getCollectionMemoryDate(currentSession.user.id, name),
+            ]);
             if (error) throw new Error(error.message);
 
             const allPhotos = (data?.photos || []).filter(
@@ -305,6 +298,7 @@ export default function CollectionsPage() {
               photoCount: allPhotos.length,
               ownerId: currentSession.user.id,
               isShared: false,
+              memoryDate,
             };
           }),
         );
@@ -340,16 +334,16 @@ export default function CollectionsPage() {
                 ownerEmail,
                 collectionName,
               }): Promise<Collection> => {
-                const { data, error } = await supabase.functions.invoke(
-                  "list-photos",
-                  {
+                const [{ data, error }, memoryDate] = await Promise.all([
+                  supabase.functions.invoke("list-photos", {
                     body: {
                       userId: ownerId,
                       collectionName,
                       includeUrls: true,
                     },
-                  },
-                );
+                  }),
+                  getCollectionMemoryDate(ownerId, collectionName),
+                ]);
                 if (error) throw new Error(error.message);
 
                 const allPhotos = (data?.photos || []).filter(
@@ -385,6 +379,7 @@ export default function CollectionsPage() {
                   ownerId,
                   ownerEmail,
                   isShared: true,
+                  memoryDate,
                 };
               },
             ),
@@ -503,17 +498,19 @@ export default function CollectionsPage() {
     index: number,
     heightRatios: number[],
   ) => {
-    const cardHeight = COLUMN_WIDTH * heightRatios[index % heightRatios.length];
-    const photoLabel = `${collection.photoCount} photo${
-      collection.photoCount !== 1 ? "s" : ""
-    }`;
-    const meta = collection.isShared
-      ? `${photoLabel} · ${collection.ownerEmail}`
-      : photoLabel;
+    const photoAreaHeight =
+      COLUMN_WIDTH * heightRatios[index % heightRatios.length];
+    // Only ever set if the user actually picked a date when creating (or
+    // later editing) the collection — getMemoryDateInfo returns null for
+    // both "never set" (undefined/null) and any unparseable value, so the
+    // caption below simply omits the date line rather than showing
+    // anything blank or malformed.
+    const memoryDateInfo = getMemoryDateInfo(collection.memoryDate);
+
     return (
       <TouchableOpacity
         key={`${collection.ownerId}-${collection.name}`}
-        style={[styles.collectionCard, { height: cardHeight }]}
+        style={styles.polaroidWrapper}
         onPress={() =>
           router.push(
             `/collection/${encodeURIComponent(collection.name)}?ownerId=${collection.ownerId}`,
@@ -522,32 +519,51 @@ export default function CollectionsPage() {
         onLongPress={() =>
           !collection.isShared && confirmDeleteCollection(collection)
         }
-        activeOpacity={0.85}
+        activeOpacity={0.9}
       >
-        <CollectionCollage
-          photos={collection.previewUrls}
-          name={collection.name}
-          meta={meta}
-        />
+        {/* White polaroid card — same border treatment as individual
+            photos inside a collection (see collection/[id].tsx's
+            polaroidCard), so a collection reads as "a photo of photos"
+            rather than a differently-styled UI element. */}
+        <View style={styles.polaroidCard}>
+          <View style={[styles.photoArea, { height: photoAreaHeight }]}>
+            <CollectionCollage photos={collection.previewUrls} />
 
-        {collection.isShared && (
-          <View style={styles.sharedBadge}>
-            <Text style={styles.sharedBadgeText}>Shared with you</Text>
+            {collection.isShared && (
+              <View style={styles.sharedBadge}>
+                <Text style={styles.sharedBadgeText}>Shared with you</Text>
+              </View>
+            )}
+
+            {!collection.isShared && (
+              <TouchableOpacity
+                style={styles.deleteCardButton}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  confirmDeleteCollection(collection);
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={styles.deleteCardButtonText}>✕</Text>
+              </TouchableOpacity>
+            )}
           </View>
-        )}
 
-        {!collection.isShared && (
-          <TouchableOpacity
-            style={styles.deleteCardButton}
-            onPress={(e) => {
-              e.stopPropagation();
-              confirmDeleteCollection(collection);
-            }}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Text style={styles.deleteCardButtonText}>✕</Text>
-          </TouchableOpacity>
-        )}
+          {/* Caption strip — just the name (handwritten) and, only if
+              one was actually set, the memory date. No photo count, no
+              owner email — this is meant to read like something you'd
+              actually write under a printed photo, not a UI data label. */}
+          <View style={styles.polaroidCaption}>
+            <Text style={styles.collectionNameText} numberOfLines={1}>
+              {collection.name}
+            </Text>
+            {memoryDateInfo && (
+              <Text style={styles.collectionDateText} numberOfLines={1}>
+                {memoryDateInfo.full}
+              </Text>
+            )}
+          </View>
+        </View>
       </TouchableOpacity>
     );
   };
@@ -838,19 +854,34 @@ const styles = StyleSheet.create({
   columns: { flexDirection: "row", gap: 16 },
   column: { flex: 1, gap: 16 },
 
-  // ── Collection card ───────────────────────────────────────
-  collectionCard: {
+  // ── Collection card — styled as a polaroid, matching the individual
+  // photo cards inside a collection (see collection/[id].tsx's
+  // polaroidWrapper/polaroidCard) so a collection on the home screen reads
+  // as "a photo of photos" rather than a differently-styled tile. ──────
+  polaroidWrapper: {
     width: "100%",
-    borderRadius: 14,
-    overflow: "hidden",
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.16,
+        shadowRadius: 8,
+      },
+      android: { elevation: 5 },
+      web: { filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.16))" } as any,
+    }),
+  },
+  polaroidCard: {
     backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#e0e0e0",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-    elevation: 5,
+    padding: 8,
+    paddingBottom: 0,
+    borderRadius: 2,
+  },
+  photoArea: {
+    position: "relative",
+    width: "100%",
+    overflow: "hidden",
+    backgroundColor: "#e8e8e8",
   },
   deleteCardButton: {
     position: "absolute",
@@ -885,41 +916,29 @@ const styles = StyleSheet.create({
   collageRight: { flex: 0.9, gap: 3 },
   collageRightTop: { flex: 1.2, position: "relative" },
   collageRightBottom: { flex: 0.8, position: "relative" },
-  collageOverlay: {
-    // Both the collection name and the photo-count/owner meta line render
-    // inside this single box, stacked in normal flow (one Text after the
-    // other) rather than as two independently bottom-anchored absolute
-    // views. Previously the name (its own absolutely-positioned box) and
-    // the meta line (a second, separate absolutely-positioned box also
-    // anchored to bottom:0) occupied overlapping vertical ranges — most
-    // visibly on shared collections, where the meta line is longer
-    // ("N photos · owner@email.com") and would wrap or sit directly under
-    // the name on narrow mobile card widths. Flow layout makes that
-    // impossible: the box's height simply grows to fit both lines.
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    paddingHorizontal: 8,
-    paddingTop: 10,
-    paddingBottom: 8,
-    backgroundColor: "rgba(0,0,0,0.35)",
+  // ── Caption strip — the white space below the photo, in normal flow
+  // (not overlaid on the image), same idea as collection/[id].tsx's
+  // polaroidCaption. Holds only the name and, if set, the memory date —
+  // no photo count, no owner email.
+  polaroidCaption: {
+    backgroundColor: "#fff",
+    paddingHorizontal: 6,
+    paddingTop: 6,
+    paddingBottom: 10,
   },
-  collageName: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 13,
-    textShadowColor: "rgba(0,0,0,0.5)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+  // Handwritten look via the Caveat font loaded in app/_layout.tsx.
+  // Sized up from a normal UI label (13-15px) since script fonts render
+  // visually smaller/lighter than sans-serif at the same point size.
+  collectionNameText: {
+    fontFamily: "Caveat_700Bold",
+    color: "#222",
+    fontSize: 22,
+    lineHeight: 24,
   },
-  collageMeta: {
-    color: "rgba(255,255,255,0.85)",
+  collectionDateText: {
     fontSize: 11,
-    marginTop: 2,
-    textShadowColor: "rgba(0,0,0,0.5)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+    color: "#999",
+    marginTop: 1,
   },
   sharedBadge: {
     position: "absolute",
