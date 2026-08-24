@@ -76,22 +76,23 @@ const VIEWER_CARD_MAX_WIDTH = IS_DESKTOP_WEB
 // big.
 //
 // The card is centered, but it doesn't need to be centered in the WHOLE
-// page — only in the safe zone between the top overlay (close button/
-// counter) and the bottom overlay (delete button; the swipe hint sits
-// between them and is translucent decorative text, so a little visual
-// overlap with it is fine). fullScreenPage/webImageDragLayer below give
-// the card exactly that padded safe zone to center within
-// (paddingTop/paddingBottom = the chrome constants), so the reserved
-// space is spent once each, not doubled on both sides the way a single
-// symmetric clearance value would.
+// page — only in the safe zone below the top overlay (close button,
+// counter, and the delete button — all three now live in that one fixed
+// top strip, rather than delete floating separately near the bottom where
+// its distance-from-edge positioning could land it on top of the photo for
+// some aspect ratios/screen sizes). fullScreenPage/webImageDragLayer below
+// give the card exactly that padded safe zone to center within
+// (paddingTop/paddingBottom = the chrome constants), so the reserved space
+// is spent once each, not doubled on both sides the way a single symmetric
+// clearance value would. Bottom just needs a small margin now that nothing
+// else lives down there.
 //
-// The two overlays sit at different distances from their respective
-// edges, AND mobile web's viewport is shorter than native's to begin
-// with (window.innerHeight excludes the browser's address bar/toolbar
-// chrome, unlike a native app which owns the full device screen) — so
-// web gets its own, tighter top clearance rather than reusing native's.
+// Mobile web's viewport is shorter than native's to begin with
+// (window.innerHeight excludes the browser's address bar/toolbar chrome,
+// unlike a native app which owns the full device screen) — so web gets
+// its own, tighter top clearance rather than reusing native's.
 const VIEWER_TOP_CHROME = Platform.OS === "web" ? 72 : 104;
-const VIEWER_BOTTOM_CHROME = 94;
+const VIEWER_BOTTOM_CHROME = 28;
 const VIEWER_CARD_MAX_HEIGHT = IS_DESKTOP_WEB
   ? SCREEN_HEIGHT * 0.86
   : Math.min(
@@ -1548,19 +1549,24 @@ export default function CollectionPage() {
               </View>
             )}
 
-            {photos.length > 1 && (
-              <Text style={styles.swipeHint}>← swipe to navigate →</Text>
-            )}
-
+            {/* Small icon button in the same fixed top strip as close —
+                deliberately NOT a floating overlay near the bottom of the
+                image anymore. That used to be a wide red pill positioned by
+                a flat distance from the screen edge, which put it on top of
+                the actual photo for some aspect ratios/screen sizes (the
+                polaroid card's height varies per photo, but the button's
+                position didn't). The top strip is a fixed safe zone that
+                never overlaps the image regardless of its size. */}
             {isOwner && selectedPhotoIndex !== null && (
               <TouchableOpacity
-                style={styles.deleteButton}
+                style={styles.fullScreenDelete}
                 onPress={() => {
                   const photo = photos[selectedPhotoIndex];
                   if (photo) deletePhoto(photo);
                 }}
+                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
               >
-                <Text style={styles.deleteButtonText}>🗑 Delete Photo</Text>
+                <Ionicons name="trash-outline" size={20} color="#fff" />
               </TouchableOpacity>
             )}
           </View>
@@ -2279,10 +2285,13 @@ const styles = StyleSheet.create({
   // ── Grid ─────────────────────────────────────────────────
   // Warm off-white background makes polaroids feel like they're
   // scattered on a table or pinned to a corkboard
+  // No backgroundColor here — this content container used to paint a flat
+  // color over the ENTIRE scroll area, which sat on top of AlbumBackground
+  // and hid the texture completely across this whole screen. Transparent
+  // now lets it show through.
   grid: {
     padding: 16,
     paddingTop: 24,
-    backgroundColor: "#f0ece4",
   },
   columns: { flexDirection: "row", gap: 0 },
   column: { flex: 1, alignItems: "center", gap: 20, paddingTop: 8 },
@@ -2460,28 +2469,20 @@ const styles = StyleSheet.create({
   },
   webArrowFloatingLeft: { left: 12 },
   webArrowFloatingRight: { right: 12 },
-  swipeHint: {
+  // Top-left twin of fullScreenClose (which sits top-right) — same fixed,
+  // always-safe strip, so it never lands on top of the photo the way a
+  // bottom-floating button could for some aspect ratios.
+  fullScreenDelete: {
     position: "absolute",
-    bottom: 100,
-    left: 0,
-    right: 0,
-    textAlign: "center",
-    color: "rgba(0,0,0,0.3)",
-    fontSize: 12,
-  },
-  deleteButton: {
-    position: "absolute",
-    bottom: 40,
-    alignSelf: "center",
-    paddingHorizontal: 28,
-    paddingVertical: 14,
-    backgroundColor: "rgba(255,60,60,0.85)",
-    borderRadius: 24,
+    top: Platform.OS === "web" ? 20 : 52,
+    left: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,60,60,0.75)",
     alignItems: "center",
-    minWidth: 160,
-    zIndex: 50,
+    justifyContent: "center",
   },
-  deleteButtonText: { color: "#fff", fontWeight: "600", fontSize: 15 },
 
   // Legacy viewer styles — kept for safety
   modalBackdrop: {
