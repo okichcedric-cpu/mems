@@ -1,4 +1,3 @@
-import AlbumBackground from "@/components/AlbumBackground";
 import ShimmerPlaceholder from "@/components/ShimmerPlaceholder";
 import { useAuth } from "@/contexts/AuthContext";
 import { Ionicons } from "@expo/vector-icons";
@@ -570,7 +569,7 @@ export default function CollectionsPage() {
   };
 
   return (
-    <AlbumBackground style={styles.container}>
+    <View style={styles.container}>
       {/* Header */}
       <View
         style={[
@@ -739,14 +738,15 @@ export default function CollectionsPage() {
           </View>
         </ScrollView>
       )}
-    </AlbumBackground>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  // Texture itself supplies the background now (see AlbumBackground) —
-  // this just needs to size the screen.
-  container: { flex: 1 },
+  // Plain flat background here, deliberately — the aged-paper texture
+  // (see AlbumBackground) stays on the collection grid and single-photo
+  // viewer, but the landing/home screen keeps its original clean white.
+  container: { flex: 1, backgroundColor: "#fff" },
 
   // ── Header ────────────────────────────────────────────────
   header: {
