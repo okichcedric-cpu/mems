@@ -67,9 +67,17 @@ const IS_DESKTOP_WEB = Platform.OS === "web" && SCREEN_WIDTH >= 768;
 // The outer box a photo's polaroid card is allowed to occupy — the actual
 // card then shrinks to fit its content (see getPolaroidViewerFrame below),
 // so these are ceilings, not fixed dimensions.
+//
+// Desktop web's cap used to be a conservative 72% of screen width, leaving
+// room on both sides for floating prev/next arrows. Those arrows are gone
+// now (position is shown by the dots below the image instead), so there's
+// nothing left to reserve that space for — widened accordingly. Mobile's
+// margin shrinks too: its arrows (mobile web only) floated OVER the image
+// edge rather than pushing width in, but now that nothing floats over the
+// photo at all, it can afford to sit almost edge-to-edge.
 const VIEWER_CARD_MAX_WIDTH = IS_DESKTOP_WEB
-  ? Math.min(900, SCREEN_WIDTH * 0.72)
-  : SCREEN_WIDTH - 32;
+  ? Math.min(1100, SCREEN_WIDTH * 0.88)
+  : SCREEN_WIDTH - 16;
 // Mobile's height ceiling used to be a flat 68% of screen height on every
 // device — width already fills the screen edge-to-edge, so that flat cap
 // was the only thing keeping portrait photos from reading as genuinely
@@ -104,6 +112,20 @@ const VIEWER_CARD_MAX_HEIGHT = IS_DESKTOP_WEB
 const VIEWER_POLAROID_TOP = 10;
 const VIEWER_POLAROID_SIDE = 10;
 const VIEWER_POLAROID_BOTTOM = 36;
+// Pagination dots — approximate center-to-center spacing (dot width + gap,
+// from the pageDot/pageDotsContent styles below), used only to estimate a
+// scroll offset that centers the active dot. Doesn't need to be exact —
+// scrolling within a few pixels of true center reads as "centered" fine.
+const DOT_STRIDE = 15;
+// The dots strip only ever shows a small window onto the full row — for a
+// collection of, say, 80 photos, all 80 dots existing in a scrollable line
+// is still the right data model, but a window this many dots wide is what
+// keeps the strip a fixed, glanceable size instead of stretching edge to
+// edge. The window itself is centered on screen; scrolling inside it keeps
+// the ACTIVE dot centered within that window (see pageDots/pageDotsContent
+// below, and the auto-centering effect near selectedPhotoIndex).
+const DOTS_VISIBLE = 5;
+const DOTS_WINDOW_WIDTH = DOTS_VISIBLE * DOT_STRIDE;
 
 type Photo = {
   key: string;
@@ -261,6 +283,21 @@ export default function CollectionPage() {
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(
     null,
   );
+  // Pagination dots (below the single-photo viewer) live in their own
+  // horizontally scrollable strip rather than wrapping onto multiple
+  // lines — this keeps the active dot centered even for very large
+  // collections. See the effect below, which drives that centering.
+  const dotsScrollRef = useRef<ScrollView>(null);
+
+  // Re-centers the active dot every time the selected photo changes —
+  // pageDotsContent's own horizontal padding (SCREEN_WIDTH / 2 on each
+  // side) is what makes centering possible even for the very first/last
+  // dot, which otherwise couldn't scroll far enough to reach the middle.
+  useEffect(() => {
+    if (selectedPhotoIndex === null) return;
+    const x = selectedPhotoIndex * DOT_STRIDE + DOT_STRIDE / 2;
+    dotsScrollRef.current?.scrollTo({ x, animated: true });
+  }, [selectedPhotoIndex]);
 
   // Toast system
   const [toast, setToast] = useState<{
@@ -1472,9 +1509,10 @@ export default function CollectionPage() {
 
           {/* Web (including mobile web browsers) — polaroid-framed image
               over the same warm background as the collection grid, with
-              floating nav arrows overlaid on top and drag-to-swipe via the
-              panResponder declared above. Arrows and swiping both call the
-              same goToNext/goToPrev, so they always stay in sync. */}
+              drag-to-swipe via the panResponder declared above. Position
+              among the other photos is shown by the dots below the image
+              (see pageDots) rather than floating arrows — no controls
+              overlaid on the photo itself. */}
           {selectedPhotoIndex !== null && Platform.OS === "web" && (
             <View style={styles.webViewerWrapper}>
               <Animated.View
@@ -1506,28 +1544,6 @@ export default function CollectionPage() {
                   </View>
                 </View>
               </Animated.View>
-
-              {selectedPhotoIndex > 0 && (
-                <TouchableOpacity
-                  onPress={goToPrev}
-                  style={[styles.webArrowFloating, styles.webArrowFloatingLeft]}
-                  hitSlop={{ top: 24, bottom: 24, left: 12, right: 12 }}
-                >
-                  <Ionicons name="chevron-back" size={26} color="#fff" />
-                </TouchableOpacity>
-              )}
-              {selectedPhotoIndex < photos.length - 1 && (
-                <TouchableOpacity
-                  onPress={goToNext}
-                  style={[
-                    styles.webArrowFloating,
-                    styles.webArrowFloatingRight,
-                  ]}
-                  hitSlop={{ top: 24, bottom: 24, left: 12, right: 12 }}
-                >
-                  <Ionicons name="chevron-forward" size={26} color="#fff" />
-                </TouchableOpacity>
-              )}
             </View>
           )}
 
@@ -1568,6 +1584,33 @@ export default function CollectionPage() {
               >
                 <Ionicons name="trash-outline" size={20} color="#fff" />
               </TouchableOpacity>
+            )}
+
+            {/* Pagination dots — the position indicator now that there are
+                no floating arrows. One dot per photo regardless of
+                collection size, kept to a single scrollable line (rather
+                than wrapping onto several) so a large collection can't
+                grow tall enough to climb up over the photo — the effect
+                above keeps the active dot auto-centered as you swipe. */}
+            {selectedPhotoIndex !== null && photos.length > 1 && (
+              <ScrollView
+                ref={dotsScrollRef}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.pageDots}
+                contentContainerStyle={styles.pageDotsContent}
+              >
+                {photos.map((photo, i) => (
+                  <View
+                    key={photo.key}
+                    style={
+                      i === selectedPhotoIndex
+                        ? styles.pageDotActive
+                        : styles.pageDot
+                    }
+                  />
+                ))}
+              </ScrollView>
             )}
           </View>
         </AlbumBackground>
@@ -2452,23 +2495,60 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
   polaroidViewerImage: { width: "100%", height: "100%" },
-  // Floating nav arrows — hover directly over the image edges rather than
-  // pushing it inward, mirroring the close button's overlay treatment.
-  webArrowFloating: {
+  // Pagination dots — a fixed strip along the very bottom of the screen
+  // (not attached to the polaroid card itself), so it never shifts with
+  // each photo's own aspect ratio the way something anchored to the card
+  // would. Dark, low-opacity dots read fine against the light album
+  // texture background, mirroring fullScreenCounterText's same treatment.
+  //
+  // A single horizontally scrollable line rather than a wrapping row —
+  // for a large collection, wrapping would grow the strip's height and
+  // climb up over the photo; scrolling keeps it a constant, small height
+  // regardless of how many photos there are.
+  //
+  // Fixed to DOTS_WINDOW_WIDTH (a handful of dots) and centered on screen
+  // via `left`, rather than spanning the full width — a strip that only
+  // ever shows ~5 dots reads as one small, centered indicator no matter
+  // how many photos are in the collection, instead of thinning out across
+  // the whole screen for a small collection or overflowing for a big one.
+  pageDots: {
     position: "absolute",
-    top: "50%",
-    marginTop: -22,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 60,
-    ...Platform.select({ web: { cursor: "pointer" } as any, default: {} }),
+    bottom: 10,
+    left: (SCREEN_WIDTH - DOTS_WINDOW_WIDTH) / 2,
+    width: DOTS_WINDOW_WIDTH,
+    // Explicit height rather than relying on content to size an
+    // absolutely-positioned box with only `bottom` set (no `top`) — some
+    // react-native-web versions compute that as zero-height until content
+    // has painted at least once, which reads as "invisible" rather than
+    // "empty".
+    height: 18,
+    zIndex: 10,
   },
-  webArrowFloatingLeft: { left: 12 },
-  webArrowFloatingRight: { right: 12 },
+  pageDotsContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    // Half the WINDOW's width as padding on each side (not half the
+    // screen) — without this, the ScrollView can't scroll far enough to
+    // actually center the FIRST or LAST dot within the visible window
+    // (there'd be nowhere further to scroll to once that dot reaches the
+    // window's edge). See the auto-centering effect near
+    // selectedPhotoIndex's declaration — its scroll-offset math assumes
+    // this padding equals half of pageDots' own width.
+    paddingHorizontal: DOTS_WINDOW_WIDTH / 2,
+  },
+  pageDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: "rgba(0,0,0,0.28)",
+  },
+  pageDotActive: {
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: "rgba(0,0,0,0.7)",
+  },
   // Top-left twin of fullScreenClose (which sits top-right) — same fixed,
   // always-safe strip, so it never lands on top of the photo the way a
   // bottom-floating button could for some aspect ratios.
