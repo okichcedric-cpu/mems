@@ -1,3 +1,4 @@
+import AlbumBackground from "@/components/AlbumBackground";
 import ShimmerPlaceholder from "@/components/ShimmerPlaceholder";
 import { useAuth } from "@/contexts/AuthContext";
 import { Ionicons } from "@expo/vector-icons";
@@ -569,7 +570,7 @@ export default function CollectionsPage() {
   };
 
   return (
-    <View style={styles.container}>
+    <AlbumBackground style={styles.container}>
       {/* Header */}
       <View
         style={[
@@ -738,12 +739,14 @@ export default function CollectionsPage() {
           </View>
         </ScrollView>
       )}
-    </View>
+    </AlbumBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f5f5f5" },
+  // Texture itself supplies the background now (see AlbumBackground) —
+  // this just needs to size the screen.
+  container: { flex: 1 },
 
   // ── Header ────────────────────────────────────────────────
   header: {

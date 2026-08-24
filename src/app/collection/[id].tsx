@@ -23,6 +23,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import AlbumBackground from "../../components/AlbumBackground";
 import MemoryDatePicker from "../../components/MemoryDatePicker";
 import PaywallModal from "../../components/PaywallModal";
 import UploadProgressOverlay from "../../components/UploadProgressOverlay";
@@ -61,10 +62,6 @@ const SCREEN_WIDTH = Dimensions.get("window").width;
 const SCREEN_HEIGHT = Dimensions.get("window").height;
 const COLUMN_WIDTH = (SCREEN_WIDTH - 32) / 2;
 const IS_DESKTOP_WEB = Platform.OS === "web" && SCREEN_WIDTH >= 768;
-// Warm off-white "table" colour used behind the collection grid — reused
-// as the full-screen viewer's background too, so opening a photo feels
-// like the same page rather than dropping into an unrelated black modal.
-const COLLECTION_BG = "#f0ece4";
 
 // ── Full-screen polaroid frame sizing ─────────────────────────
 // The outer box a photo's polaroid card is allowed to occupy — the actual
@@ -1140,7 +1137,7 @@ export default function CollectionPage() {
   };
 
   return (
-    <View style={styles.container}>
+    <AlbumBackground style={styles.container}>
       {/* Header */}
       <View
         style={[
@@ -1424,7 +1421,7 @@ export default function CollectionPage() {
         animationType="fade"
         statusBarTranslucent
       >
-        <View style={styles.fullScreenViewer}>
+        <AlbumBackground style={styles.fullScreenViewer}>
           {/* Native — FlatList with paging — rendered first */}
           {selectedPhotoIndex !== null && Platform.OS !== "web" && (
             <FlatList
@@ -1446,7 +1443,7 @@ export default function CollectionPage() {
                 setSelectedPhotoIndex(newIndex);
               }}
               renderItem={({ item }) => (
-                <View style={styles.fullScreenPage}>
+                <AlbumBackground style={styles.fullScreenPage}>
                   <View style={styles.polaroidViewerCard}>
                     <View
                       style={[
@@ -1464,7 +1461,7 @@ export default function CollectionPage() {
                       />
                     </View>
                   </View>
-                </View>
+                </AlbumBackground>
               )}
               windowSize={5}
               maxToRenderPerBatch={3}
@@ -1567,7 +1564,7 @@ export default function CollectionPage() {
               </TouchableOpacity>
             )}
           </View>
-        </View>
+        </AlbumBackground>
       </Modal>
 
       {/* Share Modal */}
@@ -2050,12 +2047,14 @@ export default function CollectionPage() {
         completed={uploadProgress.completed}
         label="Uploading photos"
       />
-    </View>
+    </AlbumBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f0ece4" },
+  // Texture itself supplies the background now (see AlbumBackground) —
+  // this just needs to size the screen.
+  container: { flex: 1 },
 
   // ── Header ────────────────────────────────────────────────
   header: {
@@ -2349,7 +2348,7 @@ const styles = StyleSheet.create({
   // ── Full screen viewer ────────────────────────────────────
   // Same warm background as the collection grid (was solid black) so
   // opening a photo feels continuous with the page it came from.
-  fullScreenViewer: { flex: 1, backgroundColor: COLLECTION_BG },
+  fullScreenViewer: { flex: 1 },
   // Overlay rendered after FlatList — always sits on top
   viewerControls: {
     position: "absolute",
@@ -2396,7 +2395,6 @@ const styles = StyleSheet.create({
     height: SCREEN_HEIGHT,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: COLLECTION_BG,
     paddingTop: VIEWER_TOP_CHROME,
     paddingBottom: VIEWER_BOTTOM_CHROME,
   },
