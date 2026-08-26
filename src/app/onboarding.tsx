@@ -12,10 +12,12 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+import { useAuth } from "../contexts/AuthContext";
 import { markOnboardingSeen } from "../utils/onboarding";
 
 // ── First-time walkthrough ────────────────────────────────────────────
-// Shown exactly once per device, right after a user's first sign-in (see
+// Shown exactly once per ACCOUNT (not device — see utils/onboarding.ts),
+// right after a user's first sign-in (see
 // the routing effect in app/_layout.tsx) — a handful of full-screen cards
 // explaining the app's core concepts, rather than a coach-mark library
 // pointing at specific buttons. Custom-built instead of pulling in a
@@ -104,6 +106,7 @@ const DESKTOP_CARD_MARGIN = 40;
 
 export default function Onboarding() {
   const router = useRouter();
+  const { session } = useAuth();
   const scrollRef = useRef<ScrollView>(null);
   const [index, setIndex] = useState(0);
   const isLast = index === SLIDES.length - 1;
@@ -132,7 +135,13 @@ export default function Onboarding() {
   const mediaWidth = isDesktopWeb ? frameWidth / 2 : frameWidth;
 
   async function finish() {
-    await markOnboardingSeen();
+    const userId = session?.user?.id;
+    if (userId) {
+      // This screen is only ever reached while signed in (see the
+      // routing effect in app/_layout.tsx) — the guard above is just
+      // defensive in case a sign-out races with tapping this button.
+      await markOnboardingSeen(userId);
+    }
     router.replace("/");
   }
 

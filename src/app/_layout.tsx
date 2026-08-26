@@ -7,7 +7,11 @@ import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { AuthProvider, useAuth } from "../contexts/AuthContext";
-import { getCachedOnboardingSeen, hasSeenOnboarding } from "../utils/onboarding";
+import {
+  getCachedOnboardingSeen,
+  hasSeenOnboarding,
+  resetOnboardingCache,
+} from "../utils/onboarding";
 import { hasNativePendingUpload } from "../utils/pendingUploadNative";
 import { supabase } from "../utils/supabase";
 
@@ -135,25 +139,35 @@ function RootLayoutNav() {
   // so every screen can already rely on it being available rather than
   // each screen re-loading (and re-flashing a fallback font) on its own.
   const [fontsLoaded] = useFonts({ Caveat_700Bold });
-  // Whether we've done the initial AsyncStorage read yet for "has this
-  // device ever completed (or skipped) the first-time walkthrough" (see
-  // app/onboarding.tsx). This only tracks "have we checked" — the routing
-  // effect below reads the actual seen/not-seen value straight from
-  // getCachedOnboardingSeen() at decision time rather than from React
-  // state here, because that state can't be updated by app/onboarding.tsx
-  // (a different mounted component) synchronously enough: the routing
-  // effect re-runs the very same tick onboarding.tsx calls
-  // router.replace("/"), and needs to already know the tour is done right
-  // then, not after an async re-fetch. See utils/onboarding.ts's
+  // Whether we've done the initial fetch yet for "has this ACCOUNT ever
+  // completed (or skipped) the first-time walkthrough" (see
+  // app/onboarding.tsx and utils/onboarding.ts — backed by a `profiles`
+  // row keyed by user id, not device storage, so it follows the account
+  // across devices/browsers). This only tracks "have we checked" — the
+  // routing effect below reads the actual seen/not-seen value straight
+  // from getCachedOnboardingSeen() at decision time rather than from
+  // React state here, because that state can't be updated by
+  // app/onboarding.tsx (a different mounted component) synchronously
+  // enough: the routing effect re-runs the very same tick onboarding.tsx
+  // calls router.replace("/"), and needs to already know the tour is done
+  // right then, not after an async re-fetch. See utils/onboarding.ts's
   // getCachedOnboardingSeen for the full explanation.
   const [onboardingChecked, setOnboardingChecked] = useState(false);
+  // Keyed on session?.user?.id, not the session object itself — see the
+  // "IMPORTANT" comment in AuthContext.tsx on why the object identity
+  // churns on every token refresh and shouldn't drive effects like this.
+  const userId = session?.user?.id;
   useEffect(() => {
-    if (!session) {
+    if (!userId) {
+      // Covers sign-out — a stale cached value from whoever WAS signed in
+      // must never leak into a routing decision for the next account (or
+      // no account) on this device.
+      resetOnboardingCache();
       setOnboardingChecked(false);
       return;
     }
-    hasSeenOnboarding().then(() => setOnboardingChecked(true));
-  }, [session]);
+    hasSeenOnboarding(userId).then(() => setOnboardingChecked(true));
+  }, [userId]);
   const router = useRouter();
   const segments = useSegments();
   // Deep-link handlers below run inside a mount-once effect ([] deps), so
@@ -298,9 +312,9 @@ function RootLayoutNav() {
     }
 
     // Everything below only applies once a session exists.
-    if (!onboardingChecked) return; // still doing the initial AsyncStorage read
+    if (!onboardingChecked) return; // still doing the initial profiles-row read
 
-    if (!getCachedOnboardingSeen() && !onOnboarding && !inPublicGroup) {
+    if (!getCachedOnboardingSeen(session.user.id) && !onOnboarding && !inPublicGroup) {
       // First-time walkthrough takes priority over landing anywhere else
       // post-login, including straight past the login/signup screen —
       // this routing effect is the single place that decides this, the
