@@ -77,10 +77,29 @@ serve(async (req) => {
       },
     });
 
-    const response = await s3.send(new ListObjectsV2Command({
-      Bucket: Deno.env.get("S3_BUCKET")!,
-      Prefix: `${userId}/${collectionName}/`,
-    }));
+    // Captions live in their own table (photo_captions), keyed by owner_id
+    // + the photo's S3 key — read here with the service-role client
+    // alongside the S3 listing (independent reads, so they run
+    // concurrently) so a shared viewer sees captions too, the same way
+    // they already see photos: this function has already verified access
+    // above, RLS on photo_captions itself is owner-only and would reject
+    // a viewer's own auth.uid().
+    const [response, captionRows] = await Promise.all([
+      s3.send(new ListObjectsV2Command({
+        Bucket: Deno.env.get("S3_BUCKET")!,
+        Prefix: `${userId}/${collectionName}/`,
+      })),
+      supabase
+        .from('photo_captions')
+        .select('photo_key, caption')
+        .eq('owner_id', userId)
+        .like('photo_key', `${userId}/${collectionName}/%`)
+        .then(({ data }) => data ?? []),
+    ]);
+
+    const captionByKey = new Map(
+      captionRows.map((row: any) => [row.photo_key, row.caption]),
+    );
 
     const allObjects = response.Contents || [];
     const realPhotos = allObjects.filter(
@@ -125,6 +144,7 @@ serve(async (req) => {
             url: url.status === 'fulfilled' ? url.value : null,
             thumbUrl: thumbUrl.status === 'fulfilled' ? thumbUrl.value : null,
             metadata,
+            caption: captionByKey.get(key) ?? null,
           };
         })
       );

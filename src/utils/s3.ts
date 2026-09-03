@@ -4,6 +4,7 @@ import { Platform } from "react-native";
 import { deleteCollectionMetadata } from "./collections";
 import { evictPhotoFromCache } from "./imageCache";
 import { compressImage, generateThumbnail } from "./imageProcessing";
+import { deletePhotoCaptionsForCollection } from "./photoCaptions";
 import { deleteAllCollectionShares } from "./sharing";
 import { supabase } from "./supabase";
 
@@ -373,6 +374,17 @@ export async function deleteCollection(
     await deleteAllCollectionShares(userId, collectionName);
   } catch (error: any) {
     console.warn("deleteCollection shares cleanup error:", error.message);
+  }
+
+  // Also best-effort — every caption row under this collection's prefix
+  // would otherwise sit around indefinitely, pointing at S3 keys that no
+  // longer exist (and, worse, silently resurface if a future collection
+  // ever reused this exact name — same reasoning as the shares cleanup
+  // just above).
+  try {
+    await deletePhotoCaptionsForCollection(userId, collectionName);
+  } catch (error: any) {
+    console.warn("deleteCollection caption cleanup error:", error.message);
   }
 }
 

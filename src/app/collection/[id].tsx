@@ -41,6 +41,7 @@ import {
 } from "../../utils/collections";
 import { deriveThumbKey, evictPhotosFromCache } from "../../utils/imageCache";
 import { getMemoryDateInfo } from "../../utils/memoryDate";
+import { deletePhotoCaption, setPhotoCaption } from "../../utils/photoCaptions";
 import {
   deleteCollection,
   deleteFromS3,
@@ -62,6 +63,45 @@ const SCREEN_WIDTH = Dimensions.get("window").width;
 const SCREEN_HEIGHT = Dimensions.get("window").height;
 const COLUMN_WIDTH = (SCREEN_WIDTH - 32) / 2;
 const IS_DESKTOP_WEB = Platform.OS === "web" && SCREEN_WIDTH >= 768;
+
+// ── Caption "See more…" overflow estimate ─────────────────────
+// Must match polaroidCaptionText's own fontSize — used to estimate
+// whether a caption will wrap past a single line in the preview strip.
+//
+// This is deliberately a character-count ESTIMATE rather than an actual
+// on-screen measurement (e.g. RN's onTextLayout, or a hidden Text +
+// onLayout). Both of those were tried first and both proved unreliable in
+// practice: onTextLayout isn't implemented by react-native-web's <Text>
+// at all (confirmed by inspecting its source — the callback just never
+// fires on web), and the onLayout-based fallback depends on
+// ResizeObserver's timing, which is one more moving part than this needs
+// for what's ultimately a "does this look like it'll fit" nicety, not
+// something that has to be pixel-perfect. A plain average-character-width
+// calculation has no browser API dependency at all, so it can't have a
+// browser-specific bug — it renders the right answer on the very first
+// frame, everywhere, by construction.
+const CAPTION_FONT_SIZE = IS_DESKTOP_WEB ? 22 : 19;
+// Caveat is a fairly condensed cursive/script font — this ratio (advance
+// width as a fraction of font size) was picked by eyeballing rendered
+// samples, not measured precisely; being slightly conservative (i.e.
+// erring toward showing "See more…" a little early) is the safer
+// direction for a truncation cue than the reverse.
+const CAPTION_AVG_CHAR_WIDTH = CAPTION_FONT_SIZE * 0.52;
+// Rough width of the "See more…" chip itself (label + its own left
+// margin) — reserved out of the available width so the ESTIMATE accounts
+// for the chip needing to fit on the same line as the truncated caption,
+// not just the caption alone.
+const CAPTION_SEE_MORE_RESERVED_WIDTH = IS_DESKTOP_WEB ? 84 : 70;
+
+function estimateCaptionOverflows(
+  caption: string,
+  availableWidth: number,
+): boolean {
+  const usableWidth = availableWidth - CAPTION_SEE_MORE_RESERVED_WIDTH;
+  if (usableWidth <= 0) return true;
+  const maxChars = Math.floor(usableWidth / CAPTION_AVG_CHAR_WIDTH);
+  return caption.length > maxChars;
+}
 
 // ── Full-screen polaroid frame sizing ─────────────────────────
 // The outer box a photo's polaroid card is allowed to occupy — the actual
@@ -108,10 +148,14 @@ const VIEWER_CARD_MAX_HEIGHT = IS_DESKTOP_WEB
       SCREEN_HEIGHT - VIEWER_TOP_CHROME - VIEWER_BOTTOM_CHROME,
     );
 // A real Polaroid's white border is thin and even on three sides, with a
-// noticeably deeper strip along the bottom for the caption.
+// noticeably deeper strip along the bottom for the caption. Widened
+// slightly from a flat 36 (and scaled to the card's own size rather than
+// staying fixed) so that strip can comfortably hold one line of the
+// actual caption text — see polaroidCaptionStrip — instead of just being
+// blank space.
 const VIEWER_POLAROID_TOP = 10;
 const VIEWER_POLAROID_SIDE = 10;
-const VIEWER_POLAROID_BOTTOM = 36;
+const VIEWER_POLAROID_BOTTOM = IS_DESKTOP_WEB ? 56 : 46;
 // Pagination dots — approximate center-to-center spacing (dot width + gap,
 // from the pageDot/pageDotsContent styles below), used only to estimate a
 // scroll offset that centers the active dot. Doesn't need to be exact —
@@ -133,6 +177,10 @@ type Photo = {
   thumbUrl?: string;
   width: number;
   height: number;
+  // Optional per-photo caption, shown on the "back" of the photo in the
+  // single-photo viewer's flip animation — see utils/photoCaptions.ts.
+  // Undefined (not empty string) means "no caption set".
+  caption?: string;
 };
 
 // ── Full-screen polaroid image sizing ────────────────────────
@@ -161,6 +209,230 @@ function getPolaroidViewerFrame(item: Photo) {
   }
 
   return { width, height };
+}
+
+// ── Caption preview strip ─────────────────────────────────────
+// The polaroid's bottom border — a real Polaroid's is where you'd
+// handwrite a line about the photo, so this is where the FRONT of the
+// card shows one (the first words, ellipsized if it runs past a single
+// line — see polaroidCaptionText's numberOfLines below). When there's no
+// caption yet and this card is the flippable, owned one, it doubles as
+// the "how do I even add one of these" affordance: tapping it flips the
+// card straight to the back AND focuses the caption input, rather than
+// requiring someone to already understand what the small flip icon up in
+// the corner does.
+function CaptionStrip({
+  caption,
+  interactive,
+  onTap,
+  onSeeMore,
+  availableWidth,
+}: {
+  caption?: string;
+  interactive: boolean;
+  onTap?: () => void;
+  onSeeMore?: () => void;
+  availableWidth: number;
+}) {
+  if (caption) {
+    // See estimateCaptionOverflows' own comment for why this is a
+    // computed estimate rather than an actual on-screen measurement.
+    const needsSeeMore = estimateCaptionOverflows(caption, availableWidth);
+    const captionText = (
+      <Text
+        style={styles.polaroidCaptionText}
+        numberOfLines={1}
+        ellipsizeMode="tail"
+      >
+        {caption}
+      </Text>
+    );
+    return (
+      <View style={styles.polaroidCaptionStrip}>
+        <View style={styles.polaroidCaptionRow}>
+          {interactive ? (
+            <TouchableOpacity
+              onPress={onTap}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={styles.polaroidCaptionTextWrap}
+            >
+              {captionText}
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.polaroidCaptionTextWrap}>{captionText}</View>
+          )}
+          {/* Only meaningful on the currently-flippable card — onSeeMore
+              is the flip trigger, and non-active cards elsewhere in the
+              list have nothing to flip to. */}
+          {needsSeeMore && onSeeMore && (
+            <TouchableOpacity
+              onPress={onSeeMore}
+              hitSlop={{ top: 10, bottom: 10, left: 4, right: 10 }}
+            >
+              <Text style={styles.polaroidSeeMore}>See more…</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+    );
+  }
+  if (interactive) {
+    return (
+      <View style={styles.polaroidCaptionStrip}>
+        <TouchableOpacity
+          onPress={onTap}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Text style={styles.polaroidCaptionPrompt}>+ Add a caption</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+  return <View style={styles.polaroidCaptionStrip} />;
+}
+
+// ── Flippable polaroid card ──────────────────────────────────
+// Used ONLY for the currently-viewed photo (native's other rendered
+// FlatList items, and the web branch always renders just the one active
+// photo anyway, stay on the plain unflipped card below).
+//
+// This deliberately does NOT use a real 3D rotateY/perspective/
+// backfaceVisibility flip — that was tried first and is exactly the kind
+// of thing that looks fine in one browser and breaks in the next: it
+// showed the front photo mirrored on some engines, and on Opera
+// specifically showed BOTH faces overlapping ("hovering" the caption text
+// on top of the image) — different failure per engine is the signature of
+// relying on real 3D compositing/backface-culling, which browsers
+// implement with genuinely inconsistent behavior particularly for two
+// independently-3D-transformed sibling elements. Firefox and Safari
+// showed no flip animation at all.
+//
+// Instead, this squashes the card flat via a plain 2D `scaleX` (1 → 0 →
+// 1) — a completely ordinary transform with zero cross-browser ambiguity,
+// no 3D context, no backface-visibility — and swaps which face is opaque
+// exactly when scaleX passes through ~0 (the card is edge-on / a sliver,
+// so the swap is imperceptible). This is the same "squash and swap" trick
+// many production flip-card implementations use specifically to avoid
+// backface-visibility's flakiness altogether, and it can't have an
+// engine-specific 3D rendering bug because there's no 3D rendering
+// involved at any point.
+function PhotoFlipCard({
+  item,
+  isOwner,
+  isFlipped,
+  flipAnim,
+  onTapCaption,
+  onFlip,
+}: {
+  item: Photo;
+  isOwner: boolean;
+  isFlipped: boolean;
+  flipAnim: Animated.Value;
+  onTapCaption: () => void;
+  onFlip: () => void;
+}) {
+  const box = getPolaroidViewerFrame(item);
+  const cardWidth = box.width + VIEWER_POLAROID_SIDE * 2;
+  const cardHeight = box.height + VIEWER_POLAROID_TOP + VIEWER_POLAROID_BOTTOM;
+
+  // Shared by both faces — squeezes the card horizontally to nothing at
+  // the halfway point (90) and back out to full width by the end (180),
+  // a symmetric "V". Applied to BOTH faces identically; which one is
+  // actually visible at any moment is entirely down to the opacity
+  // interpolations below, not this.
+  const scaleX = flipAnim.interpolate({
+    inputRange: [0, 90, 180],
+    outputRange: [1, 0, 1],
+  });
+
+  // The actual face-swap mechanism — snaps each face's opacity to 0/1
+  // right at the moment scaleX hits (or is closest to) zero, so swapping
+  // which content is showing happens while the card is visually a sliver,
+  // not a visible pop. This is the ONLY thing determining which face is
+  // showing — no transform, rotation, or backface trick is involved.
+  const frontOpacity = flipAnim.interpolate({
+    inputRange: [0, 89, 90, 180],
+    outputRange: [1, 1, 0, 0],
+  });
+  const backOpacity = flipAnim.interpolate({
+    inputRange: [0, 90, 91, 180],
+    outputRange: [0, 0, 1, 1],
+  });
+
+  return (
+    <View style={{ width: cardWidth, height: cardHeight }}>
+      {/* Front — the photo itself, plus its caption strip. `pointerEvents`
+          is toggled explicitly here rather than relying on
+          `backfaceVisibility: hidden` alone — that CSS property hides
+          PAINTING on web, but several browsers still deliver clicks/taps
+          to a backface-hidden element if it's the topmost one in the DOM
+          (the back face below is rendered after this one, so it stacks
+          on top). Without this, taps meant for "+ Add a caption" land on
+          the invisible back face instead and silently do nothing. */}
+      <Animated.View
+        style={[
+          styles.polaroidViewerCard,
+          styles.flipFace,
+          {
+            opacity: frontOpacity,
+            transform: [{ scaleX }],
+          },
+        ]}
+        pointerEvents={isFlipped ? "none" : "auto"}
+      >
+        <View style={[styles.polaroidViewerImageBox, box]}>
+          <Image
+            source={{ uri: item.url, cacheKey: item.key }}
+            style={styles.polaroidViewerImage}
+            contentFit="contain"
+            cachePolicy="memory-disk"
+            recyclingKey={item.key}
+            transition={{ duration: 250, effect: "cross-dissolve" }}
+          />
+        </View>
+        <CaptionStrip
+          caption={item.caption}
+          interactive={isOwner}
+          onTap={onTapCaption}
+          onSeeMore={onFlip}
+          availableWidth={cardWidth}
+        />
+      </Animated.View>
+
+      {/* Back — a white card, same as the front, that just displays the
+          full caption. All editing now happens through the caption modal
+          (see openCaptionModal) rather than an inline TextInput here —
+          the flip is purely a "look at the back" reveal. Same
+          pointerEvents reasoning as the front face, mirrored. */}
+      <Animated.View
+        style={[
+          styles.polaroidViewerCard,
+          styles.polaroidBackCard,
+          styles.flipFace,
+          {
+            opacity: backOpacity,
+            transform: [{ scaleX }],
+          },
+        ]}
+        pointerEvents={isFlipped ? "auto" : "none"}
+      >
+        {/* Scrollable rather than a plain centered Text — a caption up to
+            170 characters can wrap to more lines than a smaller
+            polaroid's back face has room for; without this, the extra
+            lines would silently overflow past the card's own edges (the
+            exact "extends past the white space" bug fixed earlier)
+            instead of being reachable by scrolling. */}
+        <ScrollView
+          style={styles.captionReadOnlyScroll}
+          contentContainerStyle={styles.captionReadOnlyContent}
+        >
+          <Text style={styles.captionReadOnly}>
+            {item.caption ?? "No caption yet"}
+          </Text>
+        </ScrollView>
+      </Animated.View>
+    </View>
+  );
 }
 
 // ── Preload full-res images in the background ──────────────
@@ -298,6 +570,106 @@ export default function CollectionPage() {
     const x = selectedPhotoIndex * DOT_STRIDE + DOT_STRIDE / 2;
     dotsScrollRef.current?.scrollTo({ x, animated: true });
   }, [selectedPhotoIndex]);
+
+  // ── Photo flip / caption ──────────────────────────────────────
+  // Whether the CURRENTLY VIEWED photo is showing its back (caption side)
+  // — a single boolean and a single Animated.Value, since only one photo
+  // is ever flippable at a time (the FlatList's other rendered items stay
+  // on their plain, unflipped front face — see the flip card usage below).
+  const [isFlipped, setIsFlipped] = useState(false);
+  const flipAnim = useRef(new Animated.Value(0)).current;
+
+  // Resets the flip to the front every time the viewed photo changes, so
+  // swiping to the next photo never leaves it showing the previous one's
+  // back face.
+  useEffect(() => {
+    setIsFlipped(false);
+    flipAnim.setValue(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPhotoIndex]);
+
+  function toggleFlip() {
+    const flippingToBack = !isFlipped;
+    Animated.timing(flipAnim, {
+      toValue: flippingToBack ? 180 : 0,
+      duration: 450,
+      useNativeDriver: true,
+    }).start();
+    setIsFlipped(flippingToBack);
+  }
+
+  // ── Caption modal ──────────────────────────────────────────────
+  // All caption entry/editing/deletion goes through this one small modal
+  // (mirrors the memory-date modal below) rather than an inline TextInput
+  // on the flip card's back face — tapping the caption strip's text (to
+  // edit) or its "+ Add a caption" prompt (to create) both open this,
+  // pre-filled from the tapped photo's current caption.
+  const [showCaptionModal, setShowCaptionModal] = useState(false);
+  const [captionModalPhotoKey, setCaptionModalPhotoKey] = useState<
+    string | null
+  >(null);
+  const [captionModalDraft, setCaptionModalDraft] = useState("");
+  const [captionModalOriginal, setCaptionModalOriginal] = useState("");
+  const [savingCaption, setSavingCaption] = useState(false);
+
+  function openCaptionModal(photo: Photo) {
+    setCaptionModalPhotoKey(photo.key);
+    setCaptionModalDraft(photo.caption ?? "");
+    setCaptionModalOriginal(photo.caption ?? "");
+    setShowCaptionModal(true);
+  }
+
+  // Optimistic local update, mirrors setCollectionMemoryDate's own
+  // update-then-write pattern used elsewhere on this screen.
+  function applyCaptionLocally(photoKey: string, caption: string | undefined) {
+    const owner = effectiveOwnerId ?? session?.user?.id;
+    if (!owner) return;
+    setPhotos((prev) => {
+      const next = prev.map((p) =>
+        p.key === photoKey ? { ...p, caption } : p,
+      );
+      setCachedCollectionPhotos(owner, collectionName, next);
+      return next;
+    });
+    bumpCollectionVersion(owner, collectionName);
+  }
+
+  async function handleSaveCaption() {
+    if (!session || !captionModalPhotoKey) return;
+    const owner = effectiveOwnerId ?? session.user.id;
+    const trimmed = captionModalDraft.trim();
+    setSavingCaption(true);
+    try {
+      await setPhotoCaption(owner, captionModalPhotoKey, trimmed);
+      applyCaptionLocally(captionModalPhotoKey, trimmed || undefined);
+      setShowCaptionModal(false);
+    } catch (error: any) {
+      console.error("Save caption error:", error.message);
+      const msg =
+        error.message || "Could not save the caption. Please try again.";
+      Platform.OS === "web" ? window.alert(msg) : Alert.alert("Error", msg);
+    } finally {
+      setSavingCaption(false);
+    }
+  }
+
+  async function handleDeleteCaption() {
+    if (!session || !captionModalPhotoKey) return;
+    const owner = effectiveOwnerId ?? session.user.id;
+    setSavingCaption(true);
+    try {
+      await deletePhotoCaption(owner, captionModalPhotoKey);
+      applyCaptionLocally(captionModalPhotoKey, undefined);
+      setShowCaptionModal(false);
+    } catch (error: any) {
+      console.error("Delete caption error:", error.message);
+      const msg =
+        error.message || "Could not delete the caption. Please try again.";
+      Platform.OS === "web" ? window.alert(msg) : Alert.alert("Error", msg);
+    } finally {
+      setSavingCaption(false);
+    }
+  }
 
   // Toast system
   const [toast, setToast] = useState<{
@@ -542,6 +914,7 @@ export default function CollectionPage() {
             thumbUrl: p.thumbUrl ?? p.url,
             width: p.metadata?.width ?? 1,
             height: p.metadata?.height ?? 1,
+            caption: p.caption ?? undefined,
           }));
           setPhotos(mapped);
           preloadImages(mapped);
@@ -650,6 +1023,7 @@ export default function CollectionPage() {
         thumbUrl: p.thumbUrl ?? p.url,
         width: p.metadata?.width ?? 1,
         height: p.metadata?.height ?? 1,
+        caption: p.caption ?? undefined,
       }));
 
       setPhotos(mapped);
@@ -862,7 +1236,14 @@ export default function CollectionPage() {
       setPhotos((prev) => prev.filter((p) => p.key !== photo.key));
       await deleteFromS3(photo.key);
       const owner = effectiveOwnerId ?? session?.user.id;
-      if (owner) bumpCollectionVersion(owner, collectionName);
+      if (owner) {
+        bumpCollectionVersion(owner, collectionName);
+        // Best-effort (deletePhotoCaption never throws on its own) — the
+        // photo itself is already gone from S3 at this point, so this is
+        // purely cleanup, not something that should block the delete the
+        // user asked for.
+        deletePhotoCaption(owner, photo.key);
+      }
       if (session) await fetchPhotos(session);
     } catch (error: any) {
       console.error("Delete error:", error.message);
@@ -1480,27 +1861,58 @@ export default function CollectionPage() {
                 );
                 setSelectedPhotoIndex(newIndex);
               }}
-              renderItem={({ item }) => (
-                <AlbumBackground style={styles.fullScreenPage}>
-                  <View style={styles.polaroidViewerCard}>
-                    <View
-                      style={[
-                        styles.polaroidViewerImageBox,
-                        getPolaroidViewerFrame(item),
-                      ]}
-                    >
-                      <Image
-                        source={{ uri: item.url, cacheKey: item.key }}
-                        style={styles.polaroidViewerImage}
-                        contentFit="contain"
-                        cachePolicy="memory-disk"
-                        recyclingKey={item.key}
-                        transition={{ duration: 250, effect: "cross-dissolve" }}
+              renderItem={({ item, index }) =>
+                index === selectedPhotoIndex ? (
+                  // Only the ACTIVE page gets the flip-capable card — the
+                  // adjacent pages FlatList keeps mounted for smooth
+                  // swiping stay on the plain card below, so they can
+                  // never end up sharing this one Animated.Value's
+                  // rotation.
+                  <AlbumBackground style={styles.fullScreenPage}>
+                    <PhotoFlipCard
+                      item={item}
+                      isOwner={isOwner}
+                      isFlipped={isFlipped}
+                      flipAnim={flipAnim}
+                      onTapCaption={() => openCaptionModal(item)}
+                      onFlip={() => toggleFlip()}
+                    />
+                  </AlbumBackground>
+                ) : (
+                  <AlbumBackground style={styles.fullScreenPage}>
+                    <View style={styles.polaroidViewerCard}>
+                      <View
+                        style={[
+                          styles.polaroidViewerImageBox,
+                          getPolaroidViewerFrame(item),
+                        ]}
+                      >
+                        <Image
+                          source={{ uri: item.url, cacheKey: item.key }}
+                          style={styles.polaroidViewerImage}
+                          contentFit="contain"
+                          cachePolicy="memory-disk"
+                          recyclingKey={item.key}
+                          transition={{ duration: 250, effect: "cross-dissolve" }}
+                        />
+                      </View>
+                      {/* Not the active/flippable card, so there's no
+                          onSeeMore to flip to anyway (needsSeeMore alone
+                          never renders the chip without it) — the exact
+                          width here doesn't matter, but a prop is still
+                          required. */}
+                      <CaptionStrip
+                        caption={item.caption}
+                        interactive={false}
+                        availableWidth={
+                          getPolaroidViewerFrame(item).width +
+                          VIEWER_POLAROID_SIDE * 2
+                        }
                       />
                     </View>
-                  </View>
-                </AlbumBackground>
-              )}
+                  </AlbumBackground>
+                )
+              }
               windowSize={5}
               maxToRenderPerBatch={3}
               initialNumToRender={3}
@@ -1512,7 +1924,17 @@ export default function CollectionPage() {
               drag-to-swipe via the panResponder declared above. Position
               among the other photos is shown by the dots below the image
               (see pageDots) rather than floating arrows — no controls
-              overlaid on the photo itself. */}
+              overlaid on the photo itself. Swipe stays active even while
+              flipped — the back face used to hold an inline TextInput
+              that a horizontal-drag gesture could swallow taps from, but
+              that's gone now (editing happens through the caption modal
+              instead), and onMoveShouldSetPanResponder only claims
+              genuinely horizontal drags (Math.abs(dx) > 10), so it
+              doesn't fight the back face's own vertical caption
+              ScrollView either. The per-photo flip-reset effect above
+              (keyed on selectedPhotoIndex) means swiping to a new photo
+              while flipped still lands on that photo's FRONT, not its
+              back. */}
           {selectedPhotoIndex !== null && Platform.OS === "web" && (
             <View style={styles.webViewerWrapper}>
               <Animated.View
@@ -1523,26 +1945,16 @@ export default function CollectionPage() {
                 ]}
                 {...panResponder.panHandlers}
               >
-                <View style={styles.polaroidViewerCard}>
-                  <View
-                    style={[
-                      styles.polaroidViewerImageBox,
-                      getPolaroidViewerFrame(photos[selectedPhotoIndex]),
-                    ]}
-                  >
-                    <Image
-                      source={{
-                        uri: photos[selectedPhotoIndex].url,
-                        cacheKey: photos[selectedPhotoIndex].key,
-                      }}
-                      style={styles.polaroidViewerImage}
-                      contentFit="contain"
-                      cachePolicy="memory-disk"
-                      recyclingKey={photos[selectedPhotoIndex].key}
-                      transition={{ duration: 250, effect: "cross-dissolve" }}
-                    />
-                  </View>
-                </View>
+                <PhotoFlipCard
+                  item={photos[selectedPhotoIndex]}
+                  isOwner={isOwner}
+                  isFlipped={isFlipped}
+                  flipAnim={flipAnim}
+                  onTapCaption={() =>
+                    openCaptionModal(photos[selectedPhotoIndex])
+                  }
+                  onFlip={() => toggleFlip()}
+                />
               </Animated.View>
             </View>
           )}
@@ -1563,6 +1975,24 @@ export default function CollectionPage() {
                   {selectedPhotoIndex + 1} / {photos.length}
                 </Text>
               </View>
+            )}
+
+            {/* Flip trigger — same top-right strip as close, just to its
+                left, rather than a floating control near the photo itself
+                (same reasoning as fullScreenDelete below: a fixed safe
+                zone never overlaps the image regardless of its size). A
+                plain rounded arrow rather than the camera-reverse glyph —
+                that one reads as a camera-specific control (it has an
+                actual little camera body drawn into it), which doesn't
+                fit a photo VIEWER at all. */}
+            {selectedPhotoIndex !== null && (
+              <TouchableOpacity
+                style={styles.fullScreenFlip}
+                onPress={() => toggleFlip()}
+                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+              >
+                <Ionicons name="reload-outline" size={22} color="#fff" />
+              </TouchableOpacity>
             )}
 
             {/* Small icon button in the same fixed top strip as close —
@@ -1613,6 +2043,92 @@ export default function CollectionPage() {
               </ScrollView>
             )}
           </View>
+
+          {/* Caption Modal — used both to add a new caption and to edit or
+              delete an existing one; see openCaptionModal/handleSaveCaption/
+              handleDeleteCaption above. Deliberately nested HERE, inside the
+              photo viewer's own <Modal>, rather than as a sibling overlay
+              further down the tree (that's where the Memory Date/Share
+              modals live, and it's fine for them — they're opened from the
+              collection GRID, which has nothing else stacked on top of it).
+              This modal, though, is opened from WITHIN the full-screen
+              photo viewer, which is itself a <Modal> — React Native's
+              (and react-native-web's) Modal renders in its own top-level
+              layer above the normal view tree, so a second overlay placed
+              outside this Modal would paint BEHIND it: technically mounted,
+              but invisible and untappable, which is exactly the "nothing
+              opens" silent failure. Living inside this same Modal sidesteps
+              that entirely — no nested <Modal> needed, just a plain
+              absolutely-positioned overlay that already stacks above
+              everything else in here. */}
+          {showCaptionModal && (
+            <View style={styles.shareWebOverlay}>
+              <TouchableOpacity
+                style={styles.shareOverlayBackdrop}
+                activeOpacity={1}
+                onPress={() => !savingCaption && setShowCaptionModal(false)}
+              >
+                <TouchableOpacity
+                  activeOpacity={1}
+                  style={[
+                    styles.shareOverlayCard,
+                    IS_DESKTOP_WEB && styles.captionModalCardDesktop,
+                  ]}
+                  onPress={(e) => e.stopPropagation()}
+                >
+                  <View style={styles.shareModalHeader}>
+                    <Text style={styles.shareModalTitle}>Caption</Text>
+                    <TouchableOpacity
+                      onPress={() => setShowCaptionModal(false)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Text style={styles.shareModalClose}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TextInput
+                    style={styles.captionModalInput}
+                    value={captionModalDraft}
+                    onChangeText={setCaptionModalDraft}
+                    placeholder="Write a caption…"
+                    placeholderTextColor="#999"
+                    multiline
+                    maxLength={170}
+                    autoFocus
+                  />
+                  <Text style={styles.captionModalCounter}>
+                    {captionModalDraft.length}/170
+                  </Text>
+                  <TouchableOpacity
+                    style={[
+                      styles.primaryModalButton,
+                      savingCaption && { opacity: 0.6 },
+                    ]}
+                    onPress={handleSaveCaption}
+                    disabled={savingCaption}
+                  >
+                    {savingCaption ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.primaryModalButtonText}>
+                        Save caption
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                  {captionModalOriginal && (
+                    <TouchableOpacity
+                      style={styles.clearDateButton}
+                      onPress={handleDeleteCaption}
+                      disabled={savingCaption}
+                    >
+                      <Text style={styles.clearDateButtonText}>
+                        Delete caption
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </TouchableOpacity>
+              </TouchableOpacity>
+            </View>
+          )}
         </AlbumBackground>
       </Modal>
 
@@ -2425,6 +2941,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  // Sits just to the left of fullScreenClose (44 width + 12 gap) in the
+  // same top-right cluster, rather than competing with fullScreenDelete's
+  // top-left spot (owner-only, and this button isn't).
+  fullScreenFlip: {
+    position: "absolute",
+    top: Platform.OS === "web" ? 20 : 52,
+    right: 76,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   fullScreenCounter: {
     position: "absolute",
     top: Platform.OS === "web" ? 26 : 58,
@@ -2476,9 +3006,19 @@ const styles = StyleSheet.create({
   polaroidViewerCard: {
     backgroundColor: "#fff",
     borderRadius: 4,
+    // Deliberately NOT overflow: "hidden" here — this style also carries
+    // the card's drop shadow (below), and on iOS/web, overflow: hidden on
+    // the same view that has a shadow clips the shadow itself into
+    // invisibility. Clipping caption content is instead scoped to just
+    // the elements that hold it (polaroidCaptionStrip below, and the
+    // ScrollView on the flip card's back face), which doesn't have that
+    // side effect.
     paddingTop: VIEWER_POLAROID_TOP,
     paddingHorizontal: VIEWER_POLAROID_SIDE,
-    paddingBottom: VIEWER_POLAROID_BOTTOM,
+    // No paddingBottom here — polaroidCaptionStrip below supplies that
+    // same VIEWER_POLAROID_BOTTOM height itself (as an actual row rather
+    // than blank padding), since it now needs to hold text rather than
+    // just being empty border.
     ...Platform.select({
       ios: {
         shadowColor: "#000",
@@ -2495,6 +3035,136 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
   polaroidViewerImage: { width: "100%", height: "100%" },
+  // The polaroid's bottom border, now a real row instead of blank
+  // padding — see CaptionStrip. Height matches VIEWER_POLAROID_BOTTOM
+  // exactly so the card's total size is unaffected by whether there's a
+  // caption or not.
+  polaroidCaptionStrip: {
+    height: VIEWER_POLAROID_BOTTOM,
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+    // A cursive display font's natural line box can run taller than its
+    // fontSize suggests (tall ascenders/descenders), which could push a
+    // "single" line's paint past this row's fixed height — this clips
+    // that to the row itself instead of letting it bleed onto the white
+    // polaroid border below/above. numberOfLines={1} already keeps the
+    // caption to one line; this is what makes that line's own edges
+    // actually a hard boundary too.
+    overflow: "hidden",
+  },
+  // Handwriting font at a smaller size than the back's caption editor —
+  // this is a glanceable preview line, not the primary place to read a
+  // caption. numberOfLines={1} + ellipsizeMode="tail" (set where this is
+  // used) is what turns an overflowing caption into "first words…"
+  // instead of wrapping or clipping mid-character.
+  polaroidCaptionText: {
+    fontFamily: "Caveat_700Bold",
+    // Shares CAPTION_FONT_SIZE with estimateCaptionOverflows' estimate —
+    // deliberately the same value, not a coincidence.
+    fontSize: CAPTION_FONT_SIZE,
+    lineHeight: IS_DESKTOP_WEB ? 26 : 23,
+    color: "#3a3a3a",
+  },
+  // The empty-state prompt — dashed-underline styling (via textDecoration
+  // since RN has no border-bottom-style: dashed on Text) reads as "this
+  // is a fillable blank", the same visual language a paper form uses.
+  polaroidCaptionPrompt: {
+    fontFamily: "Caveat_700Bold",
+    fontSize: IS_DESKTOP_WEB ? 22 : 19,
+    color: "rgba(0,0,0,0.32)",
+    textDecorationLine: "underline",
+    textDecorationStyle: "dashed",
+  },
+  // Row holding the (possibly truncated) caption plus its "See more…"
+  // chip — flexShrink on the text wrapper (below) is what lets the chip
+  // stay fully visible at its own natural width instead of getting
+  // squeezed off or clipped along with the caption.
+  polaroidCaptionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    maxWidth: "100%",
+  },
+  polaroidCaptionTextWrap: { flexShrink: 1 },
+  polaroidSeeMore: {
+    fontFamily: "Caveat_700Bold",
+    fontSize: IS_DESKTOP_WEB ? 20 : 17,
+    color: "rgba(58,58,58,0.55)",
+    marginLeft: 4,
+  },
+  // ── Flip card (PhotoFlipCard) ─────────────────────────────
+  // Shared by both faces: stacked exactly on top of each other. No
+  // backfaceVisibility here — see PhotoFlipCard's comment on why this
+  // card uses a plain scaleX squash instead of a real 3D rotation, which
+  // is what would have needed it.
+  flipFace: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  // Aged-paper tone instead of polaroidViewerCard's white — reads as the
+  // BACK of the photo, not another photo. Overrides just the background;
+  // padding/radius/shadow are inherited by combining with
+  // polaroidViewerCard in the style array (see PhotoFlipCard), which is
+  // also what keeps the two faces pixel-identical in size.
+  // White, matching the front card — not a separate "aged paper" tone —
+  // so the back reads as the SAME polaroid, just turned over to show the
+  // rest of what's written on it.
+  polaroidBackCard: {
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  // ── Caption modal ─────────────────────────────────────────
+  captionModalInput: {
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    fontSize: 14,
+    color: "#111",
+    backgroundColor: "#fafafa",
+    minHeight: 84,
+    textAlignVertical: "top",
+    marginBottom: 6,
+  },
+  captionModalCounter: {
+    fontSize: 12,
+    color: "#999",
+    textAlign: "right",
+    marginBottom: 14,
+  },
+  // shareOverlayCard's own width: "100%" fills its padded backdrop —
+  // fine for narrow phone/mobile-web viewports, but on a wide desktop
+  // browser that stretches the caption card edge-to-edge almost the full
+  // window. This caps it at a fixed proportion of the screen instead, on
+  // desktop web only (see IS_DESKTOP_WEB); centered by shareOverlayBackdrop
+  // either way.
+  captionModalCardDesktop: {
+    width: "65%",
+    alignSelf: "center",
+  },
+  captionReadOnly: {
+    fontFamily: "Caveat_700Bold",
+    fontSize: 26,
+    lineHeight: 30,
+    color: "#4a3826",
+    textAlign: "center",
+  },
+  // Wraps captionReadOnly (see PhotoFlipCard's back face) — fills the
+  // back card and scrolls instead of letting a long caption's extra
+  // wrapped lines overflow past the card's edges.
+  captionReadOnlyScroll: { width: "100%", height: "100%" },
+  captionReadOnlyContent: {
+    flexGrow: 1,
+    justifyContent: "center",
+    paddingHorizontal: 6,
+    paddingVertical: 10,
+  },
   // Pagination dots — a fixed strip along the very bottom of the screen
   // (not attached to the polaroid card itself), so it never shifts with
   // each photo's own aspect ratio the way something anchored to the card

@@ -255,6 +255,42 @@ serve(async (req) => {
       );
     }
 
+    // photo_captions rows are keyed by the photo's FULL S3 key, which just
+    // changed for every object above (the collection-name segment of the
+    // path). A plain column UPDATE can't do a substring replace here
+    // without raw SQL, so this reads back the (usually small) set of
+    // caption rows under the old prefix and rewrites each photo_key
+    // individually — best-effort, same as the two updates above: a
+    // failure here leaves an orphaned caption row pointing at a key that
+    // no longer exists, not a broken rename.
+    const { data: captionRows, error: captionSelectError } = await supabase
+      .from("photo_captions")
+      .select("photo_key")
+      .eq("owner_id", userId)
+      .like("photo_key", `${oldPrefix}%`);
+
+    if (captionSelectError) {
+      console.error(
+        "rename-collection: failed to read photo_captions:",
+        captionSelectError.message,
+      );
+    } else if (captionRows && captionRows.length > 0) {
+      await mapWithConcurrency(captionRows, 20, async (row) => {
+        const newKey = newPrefix + row.photo_key.slice(oldPrefix.length);
+        const { error } = await supabase
+          .from("photo_captions")
+          .update({ photo_key: newKey })
+          .eq("owner_id", userId)
+          .eq("photo_key", row.photo_key);
+        if (error) {
+          console.error(
+            "rename-collection: failed to re-key a photo_captions row:",
+            error.message,
+          );
+        }
+      });
+    }
+
     return new Response(
       JSON.stringify({ success: true, newName: trimmedNew }),
       {

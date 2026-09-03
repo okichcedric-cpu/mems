@@ -1,16 +1,4 @@
--- Minimal per-account profile row, first used to move the first-time
--- onboarding walkthrough's "have they seen it" flag off device-local
--- AsyncStorage and onto the account itself. Previously that flag lived
--- only on-device, so clearing the browser cache, switching browsers, or
--- signing in on a new device made a returning user sit through the
--- onboarding tour again even though nothing about their account had
--- changed. See src/utils/onboarding.ts for the client-side read/write.
---
--- This repo has no other tracked migrations / no `supabase/migrations`
--- history to match a prior convention against — this file establishes
--- one. Apply it via the Supabase SQL editor (or `supabase db push` if
--- you have the CLI linked to this project) before deploying the client
--- change that depends on it.
+
 
 create table if not exists public.profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
