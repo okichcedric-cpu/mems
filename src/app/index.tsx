@@ -4,9 +4,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { Session } from "@supabase/supabase-js";
 import { Image } from "expo-image";
 import { useFocusEffect, useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   Dimensions,
   Platform,
   RefreshControl,
@@ -166,6 +167,69 @@ export default function CollectionsPage() {
   // AuthContext — there is only ever one source of truth for the
   // whole app, set once in AuthProvider and shared everywhere.
   const { session } = useAuth();
+
+  // ── Hide-on-scroll header ─────────────────────────────────────
+  // Swiping up (deeper into the collections grid) slides the header off
+  // the top of the screen so only collections/photos are visible;
+  // swiping back down toward the top brings it back. Standard pattern —
+  // Instagram, Twitter, etc. all do this.
+  //
+  // headerHeight starts at a reasonable estimate (matches styles.header's
+  // minHeight + its own top/bottom padding) so the very first frame,
+  // before onLayout has fired even once, isn't animating against 0 — it's
+  // then corrected to the real measured height (which varies with
+  // insets.top per device) the moment the header actually lays out.
+  const [headerHeight, setHeaderHeight] = useState(
+    (Platform.OS === "web" ? 16 : insets.top + 6) +
+      (Platform.OS === "web" ? 64 : 56) +
+      12,
+  );
+  const scrollY = useRef(new Animated.Value(0)).current;
+  // diffClamp turns raw (unbounded, can go far past headerHeight or
+  // negative on overscroll) scroll offset into a value that only ever
+  // moves within [0, headerHeight] — and, critically, tracks the
+  // DIRECTION of the most recent scroll delta rather than absolute
+  // scroll position. That's what makes this "hide when scrolling up,
+  // show when scrolling down" instead of "hidden whenever you're not at
+  // the very top" — deep in a long scroll, a small downward flick still
+  // brings the header back immediately, exactly like the reference apps.
+  const clampedScrollY = useMemo(
+    () => Animated.diffClamp(scrollY, 0, headerHeight),
+    [scrollY, headerHeight],
+  );
+  const headerTranslateY = clampedScrollY.interpolate({
+    inputRange: [0, headerHeight],
+    outputRange: [0, -headerHeight],
+    extrapolate: "clamp",
+  });
+  // Content is deliberately NOT using useNativeDriver for this — it needs
+  // to reflow (occupy the space the header vacates) as the header slides
+  // away, and native-driven transforms can't drive a layout property like
+  // marginTop. The header's own translateY above likewise stays off the
+  // native driver so both stay perfectly in sync (a native-driven value
+  // and a JS-driven one derived from the same scroll events can drift a
+  // frame or two apart, which would show as the header and content
+  // visibly separating instead of moving as one).
+  //
+  // NOTE: this is deliberately its own interpolation of clampedScrollY,
+  // not derived from headerTranslateY — at rest (clampedScrollY 0) the
+  // header sits at its natural position (translateY 0) and content needs
+  // a margin of a full headerHeight to start right below it; fully
+  // hidden (clampedScrollY === headerHeight) the header has translated
+  // -headerHeight off-screen and content needs 0 margin to expand into
+  // that space. That's the INVERSE of translateY's own range, not its
+  // negation (negating translateY would start content's margin at 0 and
+  // grow it while scrolling, which is backwards).
+  const contentMarginTop = clampedScrollY.interpolate({
+    inputRange: [0, headerHeight],
+    outputRange: [headerHeight, 0],
+    extrapolate: "clamp",
+  });
+  const handleScroll = Animated.event(
+    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+    { useNativeDriver: false },
+  );
+
   const [collections, setCollections] = useState<Collection[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -570,11 +634,24 @@ export default function CollectionsPage() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View
+      {/* Header — absolutely positioned so it overlays the top of the
+          content rather than taking up flex space, which is what lets it
+          slide fully off-screen on scroll without leaving a blank gap
+          behind it (the content below has its own animated top margin —
+          see contentMarginTop — that shrinks in lockstep to fill exactly
+          that gap). onLayout keeps headerHeight (and therefore how far it
+          has to travel, and how much space content reserves for it) in
+          sync with its real measured height instead of the estimate. */}
+      <Animated.View
+        onLayout={(e) => {
+          const h = e.nativeEvent.layout.height;
+          if (Math.abs(h - headerHeight) > 0.5) setHeaderHeight(h);
+        }}
         style={[
           styles.header,
+          styles.headerFloating,
           { paddingTop: Platform.OS === "web" ? 16 : insets.top + 6 },
+          { transform: [{ translateY: headerTranslateY }] },
         ]}
       >
         {/* Left */}
@@ -647,7 +724,7 @@ export default function CollectionsPage() {
             <Ionicons name="person-circle-outline" size={24} color="#111" />
           </TouchableOpacity>
         </View>
-      </View>
+      </Animated.View>
 
       {/* ── Profile dropdown menu ── */}
       {showProfileMenu && (
@@ -707,37 +784,46 @@ export default function CollectionsPage() {
         </>
       )}
 
-      {/* Collections Grid */}
-      {loading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#000" />
-        </View>
-      ) : collections.length === 0 ? (
-        <View style={styles.centered}>
-          <Text style={styles.emptyIcon}>🗂️</Text>
-          <Text style={styles.emptyTitle}>No collections yet</Text>
-          <Text style={styles.emptyText}>
-            Tap + to create your first collection
-          </Text>
-        </View>
-      ) : (
-        <ScrollView
-          contentContainerStyle={styles.grid}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
-        >
-          <View style={styles.columns}>
-            <View style={styles.column}>
-              {leftCollections.map((c, i) => renderCard(c, i, LEFT_HEIGHTS))}
-            </View>
-            <View style={styles.column}>
-              {rightCollections.map((c, i) => renderCard(c, i, RIGHT_HEIGHTS))}
-            </View>
+      {/* Collections Grid — the animated top margin is what actually
+          creates the "content expands to fill the space the header just
+          vacated" effect; the header sliding away on its own (see above)
+          would otherwise just leave a blank gap here. */}
+      <Animated.View style={{ flex: 1, marginTop: contentMarginTop }}>
+        {loading ? (
+          <View style={styles.centered}>
+            <ActivityIndicator size="large" color="#000" />
           </View>
-        </ScrollView>
-      )}
+        ) : collections.length === 0 ? (
+          <View style={styles.centered}>
+            <Text style={styles.emptyIcon}>🗂️</Text>
+            <Text style={styles.emptyTitle}>No collections yet</Text>
+            <Text style={styles.emptyText}>
+              Tap + to create your first collection
+            </Text>
+          </View>
+        ) : (
+          <ScrollView
+            contentContainerStyle={styles.grid}
+            showsVerticalScrollIndicator={false}
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            }
+          >
+            <View style={styles.columns}>
+              <View style={styles.column}>
+                {leftCollections.map((c, i) => renderCard(c, i, LEFT_HEIGHTS))}
+              </View>
+              <View style={styles.column}>
+                {rightCollections.map((c, i) =>
+                  renderCard(c, i, RIGHT_HEIGHTS),
+                )}
+              </View>
+            </View>
+          </ScrollView>
+        )}
+      </Animated.View>
     </View>
   );
 }
@@ -759,6 +845,15 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#eee",
     minHeight: Platform.OS === "web" ? 64 : 56,
+  },
+  // Layered on top of the content (see the hide-on-scroll comment above
+  // the component) instead of taking up its own row in the flex column.
+  headerFloating: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 20,
   },
   headerLeft: { flexDirection: "row", alignItems: "center", gap: 6, flex: 1 },
   headerCenter: { alignItems: "center", justifyContent: "center" },

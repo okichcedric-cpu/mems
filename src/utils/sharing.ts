@@ -14,13 +14,25 @@ export async function shareCollection(
   }
 
   // Check if already shared
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from('shared_collections')
     .select('id')
     .eq('owner_id', ownerId)
     .eq('collection_name', collectionName)
     .eq('recipient_email', email)
     .maybeSingle();
+
+  // Previously this error was silently discarded (only `data` was
+  // destructured) — if this SELECT failed (RLS, network blip, etc.),
+  // `existing` was just `undefined`, so the code fell through as if
+  // "not already shared" and went straight to the insert below, which
+  // then either succeeded (masking the real problem) or threw a less
+  // clear error. Surfacing it here means a failure at THIS step is now
+  // distinguishable (and gets caught by handleShare's Sentry capture)
+  // instead of silently changing which line actually throws.
+  if (existingError) {
+    throw new Error(existingError.message);
+  }
 
   if (existing) {
     throw new Error('This collection is already shared with that email.');

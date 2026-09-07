@@ -41,6 +41,11 @@ type TierConfig = {
   maxCollections: number;
   maxPhotosPerCollection: number;
   price: number;
+  // Display-only USD equivalent shown to users — the actual charge is
+  // still placed in KES server-side (create-subscription/pesapal-webhook).
+  // Kept in sync with the same figures in app/subscription.tsx so the
+  // price shown here matches the subscription page exactly.
+  priceUSD: string;
   accent: string;
   bg: string;
   featured: boolean;
@@ -54,6 +59,7 @@ const TIERS: Record<Tier, TierConfig> = {
     maxCollections: 15,
     maxPhotosPerCollection: 35,
     price: 99,
+    priceUSD: "0.77",
     accent: "#22c55e",
     bg: "#f0fdf4",
     featured: false,
@@ -65,6 +71,7 @@ const TIERS: Record<Tier, TierConfig> = {
     maxCollections: 30,
     maxPhotosPerCollection: 50,
     price: 179,
+    priceUSD: "1.39",
     accent: "#3b82f6",
     bg: "#eff6ff",
     featured: true,
@@ -76,6 +83,7 @@ const TIERS: Record<Tier, TierConfig> = {
     maxCollections: 50,
     maxPhotosPerCollection: 75,
     price: 299,
+    priceUSD: "2.32",
     accent: "#f59e0b",
     bg: "#fffbeb",
     featured: false,
@@ -606,7 +614,7 @@ export default function PaywallModal({
                         <Text
                           style={[styles.tierPrice, { color: config.accent }]}
                         >
-                          KES {config.price.toLocaleString()}
+                          ${config.priceUSD}
                         </Text>
                         <Text style={styles.tierOnce}>/mo</Text>
                         <View

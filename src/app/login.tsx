@@ -511,6 +511,7 @@ export default function LoginScreen() {
       contentContainerStyle={[
         styles.formScrollContent,
         IS_DESKTOP && styles.formScrollContentDesktop,
+        !IS_WEB && styles.formScrollContentNative,
       ]}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
@@ -947,6 +948,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: IS_WEB ? 24 : 24,
   },
   formScrollContentDesktop: {
+    justifyContent: "center",
+    minHeight: "100%" as any,
+  },
+  // Native only (not mobile web — that's left as-is since it wasn't
+  // reported). Without this, the ScrollView's content container defaults
+  // to justifyContent: "flex-start", so on shorter phone screens the form
+  // sits flush against the top instead of sitting in the vertical middle
+  // of the screen the way the desktop web split layout already does.
+  // flexGrow: 1 on formScrollContent above is what lets "center" actually
+  // have room to work when the form is shorter than the screen, while
+  // still scrolling normally (e.g. keyboard open) when it isn't.
+  formScrollContentNative: {
     justifyContent: "center",
     minHeight: "100%" as any,
   },

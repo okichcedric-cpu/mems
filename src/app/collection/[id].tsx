@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Session } from "@supabase/supabase-js";
+import * as Sentry from "@sentry/react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -63,6 +64,23 @@ const SCREEN_WIDTH = Dimensions.get("window").width;
 const SCREEN_HEIGHT = Dimensions.get("window").height;
 const COLUMN_WIDTH = (SCREEN_WIDTH - 32) / 2;
 const IS_DESKTOP_WEB = Platform.OS === "web" && SCREEN_WIDTH >= 768;
+
+// Shared, never-animated Animated.Value passed to PhotoFlipCard for every
+// FlatList page that ISN'T the currently-active one (see renderItem in the
+// native photo viewer below). It's read-only in practice — nothing ever
+// calls .setValue()/Animated.timing() on it — so every inactive card's
+// scaleX/opacity interpolations just resolve to a fixed "front face, fully
+// visible" state, identical to what the old separate "plain card" branch
+// rendered. The point of reusing PhotoFlipCard (and this constant) for
+// EVERY page, active or not, rather than switching between two visually-
+// equivalent-but-structurally-different JSX subtrees as selectedPhotoIndex
+// changes, is that each FlatList cell's <Image> then mounts exactly once
+// for the lifetime of that cell — swapping component trees on the cell
+// that becomes (or stops being) active used to unmount and remount a
+// brand-new <Image>, which restarts expo-image's cross-dissolve transition
+// from blank regardless of whether the bitmap was already cached, and is
+// what caused the white flash reported when swiping to the next photo.
+const INERT_FLIP_ANIM = new Animated.Value(0);
 
 // ── Caption "See more…" overflow estimate ─────────────────────
 // Must match polaroidCaptionText's own fontSize — used to estimate
@@ -560,6 +578,49 @@ export default function CollectionPage() {
   // lines — this keeps the active dot centered even for very large
   // collections. See the effect below, which drives that centering.
   const dotsScrollRef = useRef<ScrollView>(null);
+
+  // ── Hide-on-scroll header/banner ────────────────────────────────
+  // Same pattern as the home screen (see app/index.tsx): swiping up
+  // through the photo grid slides the header + collection name banner +
+  // shared-avatars strip away as one unit so only the photos are on
+  // screen; swiping back down brings the whole block back. All three
+  // pieces are measured and animated together (one onLayout on their
+  // shared wrapper) rather than separately, since the avatar strip only
+  // renders once shares have loaded — treating them as one block means
+  // that appearing/disappearing just adjusts the measured height rather
+  // than needing its own separate animation wiring.
+  const [chromeHeight, setChromeHeight] = useState(
+    (Platform.OS === "web" ? 16 : insets.top + 6) +
+      (Platform.OS === "web" ? 64 : 56) +
+      12 +
+      64, // rough estimate for the name banner before first real layout
+  );
+  const gridScrollY = useRef(new Animated.Value(0)).current;
+  const clampedGridScrollY = useMemo(
+    () => Animated.diffClamp(gridScrollY, 0, chromeHeight),
+    [gridScrollY, chromeHeight],
+  );
+  const chromeTranslateY = clampedGridScrollY.interpolate({
+    inputRange: [0, chromeHeight],
+    outputRange: [0, -chromeHeight],
+    extrapolate: "clamp",
+  });
+  // See app/index.tsx's identical comment: kept off the native driver on
+  // both sides (not just the marginTop side) so the header/banner block
+  // and the grid's reserved top space never drift a frame apart. This is
+  // its own interpolation (not chromeTranslateY negated) — at rest the
+  // margin needs to be a full chromeHeight (grid starts right below the
+  // visible chrome), shrinking to 0 as the chrome finishes sliding off;
+  // that's the inverse of translateY's range, not its negation.
+  const gridMarginTop = clampedGridScrollY.interpolate({
+    inputRange: [0, chromeHeight],
+    outputRange: [chromeHeight, 0],
+    extrapolate: "clamp",
+  });
+  const handleGridScroll = Animated.event(
+    [{ nativeEvent: { contentOffset: { y: gridScrollY } } }],
+    { useNativeDriver: false },
+  );
 
   // Re-centers the active dot every time the selected photo changes —
   // pageDotsContent's own horizontal padding (SCREEN_WIDTH / 2 on each
@@ -1445,12 +1506,25 @@ export default function CollectionPage() {
         }
       }, 300);
     } catch (error: any) {
+      // Was previously always replaced with a generic "Could not share
+      // collection" message here, regardless of what actually failed —
+      // which meant shareCollection()'s own specific, useful errors (you
+      // can't share with yourself; this is already shared with that
+      // email) were thrown away right along with genuine unexpected
+      // failures, and a user's screenshot of the alert could never tell
+      // us which one they'd hit. Showing the real message fixes that for
+      // the common cases; Sentry.captureException covers the rest —
+      // this screen has no explicit error reporting anywhere else, so an
+      // unexpected failure here previously left no trace once the
+      // console log scrolled away.
       console.error("Share error:", error.message);
-      if (Platform.OS === "web") {
-        window.alert("Could not share collection. Please try again.");
-      } else {
-        Alert.alert("Error", "Could not share collection. Please try again.");
-      }
+      Sentry.captureException(error, {
+        tags: { action: "share_collection" },
+        extra: { collectionName },
+      });
+      const msg =
+        error.message || "Could not share collection. Please try again.";
+      showAlert("Error", msg);
     } finally {
       setSharing(false);
     }
@@ -1557,6 +1631,24 @@ export default function CollectionPage() {
 
   return (
     <AlbumBackground style={styles.container}>
+      {/* Header + collection name banner + avatar strip, as one unit —
+          see chromeHeight's comment above for why they're grouped and
+          measured together. Absolutely positioned so it overlays the top
+          of the photo grid instead of taking flex space (see
+          styles.headerFloating), which is what lets it slide fully
+          off-screen without leaving a blank gap — the grid below has its
+          own animated top margin (gridMarginTop) that shrinks in lockstep
+          to fill exactly that gap as this slides away. */}
+      <Animated.View
+        onLayout={(e) => {
+          const h = e.nativeEvent.layout.height;
+          if (Math.abs(h - chromeHeight) > 0.5) setChromeHeight(h);
+        }}
+        style={[
+          styles.headerFloating,
+          { transform: [{ translateY: chromeTranslateY }] },
+        ]}
+      >
       {/* Header */}
       <View
         style={[
@@ -1800,8 +1892,12 @@ export default function CollectionPage() {
           </Text>
         </TouchableOpacity>
       )}
+      </Animated.View>
 
-      {/* Photo Grid */}
+      {/* Photo Grid — animated top margin mirrors the chrome block's
+          height so the grid expands to fill the space it vacates (see
+          the comment above the header block). */}
+      <Animated.View style={{ flex: 1, marginTop: gridMarginTop }}>
       {loading ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color="#000" />
@@ -1819,6 +1915,8 @@ export default function CollectionPage() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
           showsVerticalScrollIndicator={false}
+          onScroll={handleGridScroll}
+          scrollEventThrottle={16}
         >
           <View style={styles.columns}>
             <View style={styles.column}>
@@ -1832,6 +1930,7 @@ export default function CollectionPage() {
           </View>
         </ScrollView>
       )}
+      </Animated.View>
 
       {/* Full Screen Photo Viewer */}
       <Modal
@@ -1861,58 +1960,32 @@ export default function CollectionPage() {
                 );
                 setSelectedPhotoIndex(newIndex);
               }}
-              renderItem={({ item, index }) =>
-                index === selectedPhotoIndex ? (
-                  // Only the ACTIVE page gets the flip-capable card — the
-                  // adjacent pages FlatList keeps mounted for smooth
-                  // swiping stay on the plain card below, so they can
-                  // never end up sharing this one Animated.Value's
-                  // rotation.
+              renderItem={({ item, index }) => {
+                // Every page renders the SAME component (PhotoFlipCard),
+                // active or not — see INERT_FLIP_ANIM's comment above for
+                // why. Only the active page gets the real, shared
+                // flipAnim/isFlipped/isOwner; inactive pages get the inert
+                // anim (permanently front-facing) and isOwner=false (so
+                // their caption strip stays non-interactive, matching the
+                // old plain-card behavior) and no-op handlers, since
+                // there's no sensible target for "flip"/"edit caption" on
+                // a page that isn't the one currently being viewed.
+                const active = index === selectedPhotoIndex;
+                return (
                   <AlbumBackground style={styles.fullScreenPage}>
                     <PhotoFlipCard
                       item={item}
-                      isOwner={isOwner}
-                      isFlipped={isFlipped}
-                      flipAnim={flipAnim}
-                      onTapCaption={() => openCaptionModal(item)}
-                      onFlip={() => toggleFlip()}
+                      isOwner={active && isOwner}
+                      isFlipped={active && isFlipped}
+                      flipAnim={active ? flipAnim : INERT_FLIP_ANIM}
+                      onTapCaption={
+                        active ? () => openCaptionModal(item) : () => {}
+                      }
+                      onFlip={active ? () => toggleFlip() : () => {}}
                     />
                   </AlbumBackground>
-                ) : (
-                  <AlbumBackground style={styles.fullScreenPage}>
-                    <View style={styles.polaroidViewerCard}>
-                      <View
-                        style={[
-                          styles.polaroidViewerImageBox,
-                          getPolaroidViewerFrame(item),
-                        ]}
-                      >
-                        <Image
-                          source={{ uri: item.url, cacheKey: item.key }}
-                          style={styles.polaroidViewerImage}
-                          contentFit="contain"
-                          cachePolicy="memory-disk"
-                          recyclingKey={item.key}
-                          transition={{ duration: 250, effect: "cross-dissolve" }}
-                        />
-                      </View>
-                      {/* Not the active/flippable card, so there's no
-                          onSeeMore to flip to anyway (needsSeeMore alone
-                          never renders the chip without it) — the exact
-                          width here doesn't matter, but a prop is still
-                          required. */}
-                      <CaptionStrip
-                        caption={item.caption}
-                        interactive={false}
-                        availableWidth={
-                          getPolaroidViewerFrame(item).width +
-                          VIEWER_POLAROID_SIDE * 2
-                        }
-                      />
-                    </View>
-                  </AlbumBackground>
-                )
-              }
+                );
+              }}
               windowSize={5}
               maxToRenderPerBatch={3}
               initialNumToRender={3}
@@ -2632,6 +2705,16 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#eee",
     minHeight: Platform.OS === "web" ? 64 : 56,
+  },
+  // Wraps the header + collectionBanner + avatarStrip block (see the
+  // hide-on-scroll comment near chromeHeight's declaration) so it floats
+  // over the grid instead of taking flex space.
+  headerFloating: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 20,
   },
   headerLeft: { flexDirection: "row", alignItems: "center", gap: 4, flex: 1 },
   headerCenter: { flex: 0 },
