@@ -418,10 +418,14 @@ function PhotoFlipCard({
       </Animated.View>
 
       {/* Back — a white card, same as the front, that just displays the
-          full caption. All editing now happens through the caption modal
-          (see openCaptionModal) rather than an inline TextInput here —
-          the flip is purely a "look at the back" reveal. Same
-          pointerEvents reasoning as the front face, mirrored. */}
+          full caption. Editing happens through the same caption modal
+          used on the front (see openCaptionModal) — reachable from here
+          too now, via the pencil button below, since someone who's
+          already flipped to read the full caption is often exactly who
+          wants to fix a typo in it, without flipping back to the front
+          first to find the "+ Add a caption" prompt. Owner-only, same as
+          the front face's caption tap. Same pointerEvents reasoning as
+          the front face, mirrored. */}
       <Animated.View
         style={[
           styles.polaroidViewerCard,
@@ -448,6 +452,22 @@ function PhotoFlipCard({
             {item.caption ?? "No caption yet"}
           </Text>
         </ScrollView>
+
+        {/* Sibling to the ScrollView (not inside it), so it stays fixed
+            in the corner regardless of scroll position for long
+            captions. Shown even with no caption yet — flipping is also
+            reachable via the always-present manual flip button in the
+            controls overlay, not just "See more", so an owner can land
+            here with nothing written and use this to add one. */}
+        {isOwner && (
+          <TouchableOpacity
+            style={styles.captionEditButton}
+            onPress={onTapCaption}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="pencil" size={15} color="#666" />
+          </TouchableOpacity>
+        )}
       </Animated.View>
     </View>
   );
@@ -3237,6 +3257,22 @@ const styles = StyleSheet.create({
     lineHeight: 30,
     color: "#4a3826",
     textAlign: "center",
+  },
+  // Owner-only pencil button on the caption's back face (see
+  // PhotoFlipCard) — subtle enough not to compete with the handwritten
+  // caption text itself, but big enough to tap comfortably (hitSlop
+  // extends it further still).
+  captionEditButton: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(0,0,0,0.06)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 5,
   },
   // Wraps captionReadOnly (see PhotoFlipCard's back face) — fills the
   // back card and scrolls instead of letting a long caption's extra
