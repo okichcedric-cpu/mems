@@ -1,31 +1,3 @@
--- Individual photo shares — lets an owner share ONE photo (rather than
--- the whole collection it lives in) with someone by email. The recipient
--- gets that single photo plus the collection's name (for context — "from
--- Ced's Family Trip 2024"), but no access to browse the rest of the
--- collection: authorization everywhere this table is checked
--- (generate-read-url, get-shared-photos) is scoped to the exact
--- `photo_key`, never the collection prefix.
---
--- Deliberately its own table rather than folded into `shared_collections`
--- — the two are checked independently (a photo can be individually
--- shared without the whole collection being shared, and vice versa), and
--- keeping them separate means neither function's authorization logic has
--- to branch on "is this a whole-collection row or a single-photo row".
---
--- Mirrors `shared_collections`' shape (owner_id/owner_email/
--- recipient_email/recipient_id, the same "backfill recipient_id from the
--- verified JWT on first lookup" pattern used in get-shared-collections)
--- plus `collection_name` so the recipient's home screen card and the
--- single-photo detail view can both show the album name without a second
--- lookup. `photo_key` is the photo's full S3 object key, same identity
--- convention photo_captions already uses for photos (they have no
--- database row of their own otherwise).
---
--- IMPORTANT: a collection rename copies every object to a new S3 key
--- prefix (see supabase/functions/rename-collection/index.ts) — that
--- function also rewrites `collection_name` and the `photo_key` prefix on
--- any matching rows here, same as it already does for shared_collections
--- and photo_captions.
 create table if not exists public.shared_photos (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
