@@ -31,6 +31,7 @@ import { getCollectionMemoryDate } from "../utils/collections";
 import { deriveThumbKey, evictPhotosFromCache } from "../utils/imageCache";
 import { getMemoryDateInfo } from "../utils/memoryDate";
 import { deleteCollection } from "../utils/s3";
+import { getSharedPhotos, type SharedPhoto } from "../utils/sharedPhotos";
 import { getSharedCollections } from "../utils/sharing";
 import { checkSubscription, SubscriptionStatus } from "../utils/subscription";
 import { supabase } from "../utils/supabase";
@@ -235,6 +236,17 @@ export default function CollectionsPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [subscriptionStatus, setSubscriptionStatus] =
     useState<SubscriptionStatus | null>(null);
+  // ── Individually-shared photos ──────────────────────────────────
+  // Deliberately kept OUT of the `collections` array/masonry grid and
+  // its versioned cache (collectionsCache.ts) — that system's left/right
+  // column-height split and the CollectionCollage component are both
+  // built around multi-photo collections specifically, and retrofitting
+  // a second, differently-shaped card type into it risked destabilizing
+  // logic that's already been tuned carefully (see the several fixes
+  // above this one for double-loads, stale caches surviving remounts,
+  // etc.). A single photo share is also just lower volume — always
+  // refetching on focus, no caching, is plenty here.
+  const [sharedPhotos, setSharedPhotos] = useState<SharedPhoto[]>([]);
 
   // ── Fetches data on focus — the ONLY place this screen fetches ──
   //
@@ -258,8 +270,15 @@ export default function CollectionsPage() {
       if (!session) {
         setLoading(false);
         setCollections([]);
+        setSharedPhotos([]);
         return;
       }
+
+      // Not gated behind the collections cache below, and not part of
+      // the Promise.all that `loading` waits on — see sharedPhotos' own
+      // comment above for why this stays a simple, always-refetch-on-
+      // focus fetch independent of the collections grid's loading state.
+      fetchSharedPhotos();
 
       // Refocusing (e.g. backing out of a collection you just opened)
       // doesn't need a real refetch if nothing has changed since the
@@ -288,6 +307,18 @@ export default function CollectionsPage() {
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [userId]),
   );
+
+  async function fetchSharedPhotos() {
+    try {
+      const photos = await getSharedPhotos();
+      setSharedPhotos(photos);
+    } catch (error: any) {
+      // Never blocks or errors the main collections grid — this is a
+      // secondary section, same "shared collections failing never
+      // blocks owned ones" reasoning as fetchCollections below.
+      console.warn("fetchSharedPhotos error:", error.message);
+    }
+  }
 
   async function fetchCollections(currentSession: Session) {
     try {
@@ -328,24 +359,29 @@ export default function CollectionsPage() {
             // Fetched alongside list-photos, not after it — this is a
             // separate lightweight table read (see utils/collections.ts),
             // so there's no reason to serialize it behind the S3 listing.
+            // previewCount:3 — this card only ever shows a 3-photo
+            // collage, so list-photos skips signing/HEAD-ing every OTHER
+            // photo in the collection (see that function's own comment on
+            // why that used to be the dominant cost on first load) and
+            // returns totalCount separately for the "N photos" badge.
             const [{ data, error }, memoryDate] = await Promise.all([
               supabase.functions.invoke("list-photos", {
                 body: {
                   userId: currentSession.user.id,
                   collectionName: name,
                   includeUrls: true,
+                  previewCount: 3,
                 },
               }),
               getCollectionMemoryDate(currentSession.user.id, name),
             ]);
             if (error) throw new Error(error.message);
 
-            const allPhotos = (data?.photos || []).filter(
+            const previewPhotos = (data?.photos || []).filter(
               (p: any) => p.Key && !p.Key.includes("/thumbs/"),
             );
 
-            const previewUrls: PreviewPhoto[] = allPhotos
-              .slice(0, 3)
+            const previewUrls: PreviewPhoto[] = previewPhotos
               .map((p: any) => {
                 const url = p.thumbUrl ?? p.url;
                 if (!url) return null;
@@ -359,7 +395,7 @@ export default function CollectionsPage() {
             return {
               name,
               previewUrls,
-              photoCount: allPhotos.length,
+              photoCount: data?.totalCount ?? previewPhotos.length,
               ownerId: currentSession.user.id,
               isShared: false,
               memoryDate,
@@ -398,24 +434,28 @@ export default function CollectionsPage() {
                 ownerEmail,
                 collectionName,
               }): Promise<Collection> => {
+                // previewCount:3 — same reasoning as the owned-collections
+                // fetch above.
                 const [{ data, error }, memoryDate] = await Promise.all([
                   supabase.functions.invoke("list-photos", {
                     body: {
                       userId: ownerId,
                       collectionName,
                       includeUrls: true,
+                      previewCount: 3,
                     },
                   }),
                   getCollectionMemoryDate(ownerId, collectionName),
                 ]);
                 if (error) throw new Error(error.message);
 
-                const allPhotos = (data?.photos || []).filter(
+                const previewPhotos = (data?.photos || []).filter(
                   (p: any) => p.Key && !p.Key.includes("/thumbs/"),
                 );
+                const totalCount = data?.totalCount ?? previewPhotos.length;
 
                 // Auto-clean empty shared collections
-                if (allPhotos.length === 0) {
+                if (totalCount === 0) {
                   await supabase
                     .from("shared_collections")
                     .delete()
@@ -424,8 +464,7 @@ export default function CollectionsPage() {
                   throw new Error("empty");
                 }
 
-                const previewUrls: PreviewPhoto[] = allPhotos
-                  .slice(0, 3)
+                const previewUrls: PreviewPhoto[] = previewPhotos
                   .map((p: any) => {
                     const url = p.thumbUrl ?? p.url;
                     if (!url) return null;
@@ -439,7 +478,7 @@ export default function CollectionsPage() {
                 return {
                   name: collectionName,
                   previewUrls,
-                  photoCount: allPhotos.length,
+                  photoCount: totalCount,
                   ownerId,
                   ownerEmail,
                   isShared: true,
@@ -511,7 +550,10 @@ export default function CollectionsPage() {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    if (session) fetchCollections(session);
+    if (session) {
+      fetchCollections(session);
+      fetchSharedPhotos();
+    }
   }, [session]);
 
   function confirmDeleteCollection(collection: Collection) {
@@ -556,6 +598,40 @@ export default function CollectionsPage() {
 
   const leftCollections = collections.filter((_, i) => i % 2 === 0);
   const rightCollections = collections.filter((_, i) => i % 2 !== 0);
+
+  // ── Group individually-shared photos by their source collection ──
+  // A user can be individually shared several photos from the same
+  // collection over time — showing one card per PHOTO used to mean the
+  // strip could balloon to a dozen near-identical entries for one
+  // collection. Grouping by (ownerId, collectionName) gives one card per
+  // group instead, with the most recently shared photo as the cover
+  // thumbnail (getSharedPhotos returns rows in insertion order, so the
+  // LAST photo matching a group is the most recent) and a count badge
+  // when there's more than one. Recomputed each render, same as
+  // leftCollections/rightCollections above — sharedPhotos is small enough
+  // that memoizing isn't worth the extra complexity.
+  const sharedPhotoGroups = (() => {
+    const groups = new Map<
+      string,
+      { ownerId: string; ownerEmail: string; collectionName: string; photos: SharedPhoto[] }
+    >();
+    for (const p of sharedPhotos) {
+      if (!p.thumbUrl && !p.url) continue;
+      const groupKey = `${p.ownerId}-${p.collectionName}`;
+      const existing = groups.get(groupKey);
+      if (existing) {
+        existing.photos.push(p);
+      } else {
+        groups.set(groupKey, {
+          ownerId: p.ownerId,
+          ownerEmail: p.ownerEmail,
+          collectionName: p.collectionName,
+          photos: [p],
+        });
+      }
+    }
+    return Array.from(groups.values());
+  })();
 
   const renderCard = (
     collection: Collection,
@@ -793,7 +869,7 @@ export default function CollectionsPage() {
           <View style={styles.centered}>
             <ActivityIndicator size="large" color="#000" />
           </View>
-        ) : collections.length === 0 ? (
+        ) : collections.length === 0 && sharedPhotos.length === 0 ? (
           <View style={styles.centered}>
             <Text style={styles.emptyIcon}>🗂️</Text>
             <Text style={styles.emptyTitle}>No collections yet</Text>
@@ -811,16 +887,105 @@ export default function CollectionsPage() {
               <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
             }
           >
-            <View style={styles.columns}>
-              <View style={styles.column}>
-                {leftCollections.map((c, i) => renderCard(c, i, LEFT_HEIGHTS))}
+            {sharedPhotos.length > 0 && (
+              <View style={styles.sharedPhotosSection}>
+                <Text style={styles.sharedPhotosSectionTitle}>
+                  Individual Photos Shared with you
+                </Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.sharedPhotosRow}
+                >
+                  {sharedPhotoGroups.map((g) => {
+                    // Cover thumbnail = most recently shared photo in the
+                    // group (see sharedPhotoGroups' own comment on why
+                    // the last entry, not the first).
+                    const cover = g.photos[g.photos.length - 1];
+                    return (
+                      <TouchableOpacity
+                        key={`${g.ownerId}-${g.collectionName}`}
+                        style={styles.sharedPhotoCard}
+                        activeOpacity={0.85}
+                        onPress={() =>
+                          router.push({
+                            pathname: "/shared-photo/[key]",
+                            params: {
+                              // The route's dynamic segment now identifies
+                              // the GROUP (ownerId), not a single photo —
+                              // the destination screen fetches the full
+                              // shared-photos list itself and filters to
+                              // this (ownerId, collectionName) pair rather
+                              // than trusting a single photoKey nav param,
+                              // consistent with this app's "re-derive
+                              // access fresh" approach elsewhere.
+                              key: encodeURIComponent(g.ownerId),
+                              collectionName: g.collectionName,
+                            },
+                          } as any)
+                        }
+                      >
+                        <View style={styles.sharedPhotoImageBox}>
+                          <Image
+                            source={{
+                              uri: (cover.thumbUrl ?? cover.url)!,
+                              cacheKey: cover.photoKey,
+                            }}
+                            style={StyleSheet.absoluteFill}
+                            contentFit="cover"
+                            cachePolicy="memory-disk"
+                            recyclingKey={cover.photoKey}
+                            transition={{
+                              duration: 200,
+                              effect: "cross-dissolve",
+                            }}
+                          />
+                          {g.photos.length > 1 && (
+                            <View style={styles.sharedPhotoCountBadge}>
+                              <Text style={styles.sharedPhotoCountText}>
+                                {g.photos.length}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text
+                          style={styles.sharedPhotoLabel}
+                          numberOfLines={1}
+                        >
+                          {g.collectionName}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
               </View>
-              <View style={styles.column}>
-                {rightCollections.map((c, i) =>
-                  renderCard(c, i, RIGHT_HEIGHTS),
-                )}
+            )}
+
+            {collections.length > 0 && (
+              <View style={styles.collectionsSection}>
+                {/* Only needed to tell this section apart from the
+                    individual-photos strip above — when that strip is
+                    empty this label is the only one on screen, but it
+                    still reads fine on its own ("Collections" over the
+                    grid), so it isn't conditioned on sharedPhotos.length
+                    the way the strip itself is. */}
+                <Text style={styles.collectionsSectionTitle}>
+                  Collections
+                </Text>
+                <View style={styles.columns}>
+                  <View style={styles.column}>
+                    {leftCollections.map((c, i) =>
+                      renderCard(c, i, LEFT_HEIGHTS),
+                    )}
+                  </View>
+                  <View style={styles.column}>
+                    {rightCollections.map((c, i) =>
+                      renderCard(c, i, RIGHT_HEIGHTS),
+                    )}
+                  </View>
+                </View>
               </View>
-            </View>
+            )}
           </ScrollView>
         )}
       </Animated.View>
@@ -949,6 +1114,81 @@ const styles = StyleSheet.create({
 
   // ── Grid ─────────────────────────────────────────────────
   grid: { padding: 16, paddingBottom: 36 },
+
+  // ── Shared-photos strip ───────────────────────────────────────────
+  // Individually-shared photos — deliberately a horizontal strip, not
+  // folded into the two-column collections grid below (see sharedPhotos'
+  // own state comment for why).
+  sharedPhotosSection: { marginBottom: 20 },
+  sharedPhotosSectionTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#888",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    marginBottom: 10,
+  },
+  sharedPhotosRow: { flexDirection: "row", gap: 12 },
+  // ── Collections section ───────────────────────────────────────────
+  // Same label treatment as sharedPhotosSectionTitle above, so the two
+  // sections read as clearly separate groups rather than one continuous
+  // list — this is the user's own collections plus any FULL collections
+  // shared with them (see Collection's isShared flag/badge), as opposed
+  // to the individually-shared single photos in the strip above.
+  collectionsSection: {},
+  collectionsSectionTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#888",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    marginBottom: 10,
+  },
+  sharedPhotoCard: { width: 96 },
+  sharedPhotoImageBox: {
+    width: 96,
+    height: 96,
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "#eee",
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 6,
+      },
+      android: { elevation: 2 },
+      web: { boxShadow: "0 2px 8px rgba(0,0,0,0.1)" } as any,
+    }),
+  },
+  sharedPhotoLabel: {
+    fontSize: 11,
+    color: "#666",
+    marginTop: 6,
+    textAlign: "center",
+  },
+  // Shown only when a group has more than one photo (see
+  // sharedPhotoGroups) — a small pill in the cover thumbnail's corner,
+  // same "you can page through more" signal a stack-of-photos icon would
+  // give, without needing a second icon asset.
+  sharedPhotoCountBadge: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 5,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sharedPhotoCountText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "700",
+  },
   columns: { flexDirection: "row", gap: 16 },
   column: { flex: 1, gap: 16 },
 

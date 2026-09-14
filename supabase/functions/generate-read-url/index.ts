@@ -95,7 +95,8 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    // Check access — owner OR recipient of a shared collection
+    // Check access — owner OR recipient of a shared collection OR
+    // recipient of this exact photo shared individually.
     const isOwner = ownerId === user.id;
     let hasAccess = isOwner;
 
@@ -105,15 +106,27 @@ serve(async (req) => {
 
       // .in() binds each value as a parameter — unlike .or() with a
       // template string, there's no filter syntax for a value to break out of.
-      const { data: share } = await supabase
-        .from('shared_collections')
-        .select('id')
-        .eq('owner_id', ownerId)
-        .eq('collection_name', collectionName)
-        .in('recipient_email', [userEmail, userEmailLower])
-        .maybeSingle();
+      const [{ data: collectionShare }, { data: photoShare }] = await Promise.all([
+        supabase
+          .from('shared_collections')
+          .select('id')
+          .eq('owner_id', ownerId)
+          .eq('collection_name', collectionName)
+          .in('recipient_email', [userEmail, userEmailLower])
+          .maybeSingle(),
+        // A single-photo share is scoped to the exact key, never just the
+        // collection prefix — this is what keeps "shared this one photo"
+        // from ever implying "can browse the whole collection".
+        supabase
+          .from('shared_photos')
+          .select('id')
+          .eq('owner_id', ownerId)
+          .eq('photo_key', safeKey)
+          .in('recipient_email', [userEmail, userEmailLower])
+          .maybeSingle(),
+      ]);
 
-      hasAccess = !!share;
+      hasAccess = !!collectionShare || !!photoShare;
     }
 
     if (!hasAccess) {

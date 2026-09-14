@@ -238,6 +238,40 @@ serve(async (req) => {
       );
     }
 
+    // shared_photos rows are keyed by the photo's FULL S3 key too (same
+    // situation as photo_captions below), so a rename needs both its
+    // display-only collection_name column AND its photo_key prefix
+    // rewritten — the collection_name update alone would leave the
+    // recipient's home screen card showing the OLD album name forever,
+    // and the photo_key would point at bytes that no longer exist there.
+    const { data: photoShareRows, error: photoShareSelectError } =
+      await supabase
+        .from("shared_photos")
+        .select("id, photo_key")
+        .eq("owner_id", userId)
+        .like("photo_key", `${oldPrefix}%`);
+
+    if (photoShareSelectError) {
+      console.error(
+        "rename-collection: failed to read shared_photos:",
+        photoShareSelectError.message,
+      );
+    } else if (photoShareRows && photoShareRows.length > 0) {
+      await mapWithConcurrency(photoShareRows, 20, async (row) => {
+        const newKey = newPrefix + row.photo_key.slice(oldPrefix.length);
+        const { error } = await supabase
+          .from("shared_photos")
+          .update({ photo_key: newKey, collection_name: trimmedNew })
+          .eq("id", row.id);
+        if (error) {
+          console.error(
+            "rename-collection: failed to re-key a shared_photos row:",
+            error.message,
+          );
+        }
+      });
+    }
+
     // The collections table is optional metadata (a collection may not
     // have a row at all if no memory date has ever been set on it), so
     // this update is a no-op — not an error — when there's nothing to

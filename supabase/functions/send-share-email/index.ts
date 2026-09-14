@@ -69,7 +69,7 @@ serve(async (req) => {
       });
     }
 
-    const { recipientEmail, collectionName } = await req.json();
+    const { recipientEmail, collectionName, photoKey } = await req.json();
 
     if (!recipientEmail || typeof recipientEmail !== "string" || !EMAIL_RE.test(recipientEmail)) {
       return new Response(JSON.stringify({ error: "Invalid recipient email" }), {
@@ -85,6 +85,16 @@ serve(async (req) => {
       });
     }
 
+    // ── Single photo vs whole collection ────────────────────────────
+    // An optional `photoKey` in the body is what distinguishes the two —
+    // present means "confirm+send for a single-photo share" (checked
+    // against shared_photos, scoped to that exact key), absent means the
+    // original whole-collection flow (checked against shared_collections).
+    // Kept as one function rather than two near-duplicates since the only
+    // real differences are which table gets the existence check and a
+    // handful of words in the copy below.
+    const isPhotoShare = typeof photoKey === "string" && photoKey.length > 0;
+
     // ── Ownership derived from the verified JWT, never from the request
     // body ── prevents a caller from impersonating a different "sharer"
     // in the email content.
@@ -92,21 +102,29 @@ serve(async (req) => {
     const normalisedRecipient = recipientEmail.trim().toLowerCase();
 
     // ── Confirm a real share exists before sending ─────────────────
-    // Ties this function to an actual shareCollection() call (which
-    // inserts into shared_collections first) rather than letting it be
-    // used as a standalone mailer for arbitrary owner/recipient pairs.
+    // Ties this function to an actual shareCollection()/sharePhoto() call
+    // (which inserts the row first) rather than letting it be used as a
+    // standalone mailer for arbitrary owner/recipient pairs.
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    const { data: share } = await supabase
-      .from("shared_collections")
-      .select("id")
-      .eq("owner_id", user.id)
-      .eq("collection_name", collectionName)
-      .eq("recipient_email", normalisedRecipient)
-      .maybeSingle();
+    const { data: share } = isPhotoShare
+      ? await supabase
+          .from("shared_photos")
+          .select("id")
+          .eq("owner_id", user.id)
+          .eq("photo_key", photoKey)
+          .eq("recipient_email", normalisedRecipient)
+          .maybeSingle()
+      : await supabase
+          .from("shared_collections")
+          .select("id")
+          .eq("owner_id", user.id)
+          .eq("collection_name", collectionName)
+          .eq("recipient_email", normalisedRecipient)
+          .maybeSingle();
 
     if (!share) {
       return new Response(JSON.stringify({ error: "No matching share found" }), {
@@ -118,6 +136,47 @@ serve(async (req) => {
     const safeOwnerEmail = escapeHtml(ownerEmail);
     const safeRecipientEmail = escapeHtml(normalisedRecipient);
     const safeCollectionName = escapeHtml(collectionName);
+
+    // ── Copy that differs between the two share types ───────────────
+    // Everything else in the template (header, Play Store badge, footer
+    // shell) is identical either way.
+    const subject = isPhotoShare
+      ? `${ownerEmail} shared a photo with you`
+      : `${ownerEmail} shared a photo collection with you`;
+
+    const textBody = isPhotoShare
+      ? `
+Hi,
+
+${ownerEmail} has shared a photo with you on Mems, from their "${collectionName}" album.
+
+View it on the web at https://www.mems-app.com, or get the Android app on Google Play: ${PLAY_STORE_URL}
+
+You received this email because someone shared a Mems photo with your email address.
+If you did not expect this, you can safely ignore it.
+
+— The Mems Team
+        `.trim()
+      : `
+Hi,
+
+${ownerEmail} has shared a photo collection called "${collectionName}" with you on Mems.
+
+View it on the web at https://www.mems-app.com, or get the Android app on Google Play: ${PLAY_STORE_URL}
+
+You received this email because someone shared a Mems collection with your email address.
+If you did not expect this, you can safely ignore it.
+
+— The Mems Team
+        `.trim();
+
+    const introLine = isPhotoShare
+      ? `<strong>${safeOwnerEmail}</strong> has shared a photo with you.`
+      : `<strong>${safeOwnerEmail}</strong> has shared a photo collection with you.`;
+
+    const cardLabel = isPhotoShare ? "From the album" : "Collection";
+    const ctaLabel = isPhotoShare ? "View Photo →" : "View Collection →";
+    const footerVerb = isPhotoShare ? "photo" : "collection";
 
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -134,21 +193,10 @@ serve(async (req) => {
 
         to: [normalisedRecipient],
 
-        subject: `${ownerEmail} shared a photo collection with you`,
+        subject,
 
         // ── Plain text version — required to avoid spam ──
-        text: `
-Hi,
-
-${ownerEmail} has shared a photo collection called "${collectionName}" with you on Mems.
-
-View it on the web at https://www.mems-app.com, or get the Android app on Google Play: ${PLAY_STORE_URL}
-
-You received this email because someone shared a Mems collection with your email address.
-If you did not expect this, you can safely ignore it.
-
-— The Mems Team
-        `.trim(),
+        text: textBody,
 
         // ── HTML version ──
         html: `
@@ -183,17 +231,17 @@ If you did not expect this, you can safely ignore it.
                 📸 You've been invited!
               </p>
               <p style="margin:0 0 24px;font-size:15px;color:#555555;line-height:24px;">
-                <strong>${safeOwnerEmail}</strong> has shared a photo collection with you.
+                ${introLine}
               </p>
 
-              <!-- Collection card -->
+              <!-- Collection/album card -->
               <table width="100%" cellpadding="0" cellspacing="0"
                 style="background:#f9f9f9;border:1px solid #eeeeee;border-radius:12px;margin-bottom:24px;">
                 <tr>
                   <td style="padding:20px;">
                     <p style="margin:0 0 4px;font-size:11px;font-weight:600;color:#999999;
                       text-transform:uppercase;letter-spacing:0.5px;">
-                      Collection
+                      ${cardLabel}
                     </p>
                     <p style="margin:0;font-size:20px;font-weight:800;color:#111111;">
                       ${safeCollectionName}
@@ -209,15 +257,14 @@ If you did not expect this, you can safely ignore it.
                     <a href="https://www.mems-app.com"
                       style="display:inline-block;padding:14px 28px;font-size:15px;
                         font-weight:600;color:#ffffff;text-decoration:none;">
-                      View Collection →
+                      ${ctaLabel}
                     </a>
                   </td>
                 </tr>
               </table>
 
               <p style="margin:24px 0 12px;font-size:13px;color:#999999;line-height:20px;">
-                Or get the Android app and the collection will appear in
-                your home screen.
+                Or get the Android app and it'll appear in your home screen.
               </p>
 
               <a href="${PLAY_STORE_URL}" style="display:inline-block;">
@@ -236,7 +283,7 @@ If you did not expect this, you can safely ignore it.
           <tr>
             <td style="background:#f9f9f9;padding:20px 32px;border-top:1px solid #eeeeee;">
               <p style="margin:0;font-size:12px;color:#bbbbbb;line-height:18px;text-align:center;">
-                You received this because ${safeOwnerEmail} shared a Mems collection with
+                You received this because ${safeOwnerEmail} shared a Mems ${footerVerb} with
                 ${safeRecipientEmail}.<br/>
                 If you did not expect this email you can safely ignore it.<br/><br/>
                 <a href="https://www.mems-app.com" style="color:#999999;">mems-app.com</a>

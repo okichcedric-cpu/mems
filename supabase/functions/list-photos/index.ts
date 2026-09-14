@@ -39,7 +39,7 @@ serve(async (req) => {
       });
     }
 
-    const { userId, collectionName, includeUrls } = await req.json();
+    const { userId, collectionName, includeUrls, previewCount } = await req.json();
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -77,6 +77,12 @@ serve(async (req) => {
       },
     });
 
+    // Preview mode (see below) only ever returns Key + thumbUrl — captions
+    // are never read off that shape, so skip this query entirely rather
+    // than paying for it on every home-screen card for nothing.
+    const isPreview =
+      includeUrls && typeof previewCount === "number" && previewCount > 0;
+
     // Captions live in their own table (photo_captions), keyed by owner_id
     // + the photo's S3 key — read here with the service-role client
     // alongside the S3 listing (independent reads, so they run
@@ -89,12 +95,14 @@ serve(async (req) => {
         Bucket: Deno.env.get("S3_BUCKET")!,
         Prefix: `${userId}/${collectionName}/`,
       })),
-      supabase
-        .from('photo_captions')
-        .select('photo_key, caption')
-        .eq('owner_id', userId)
-        .like('photo_key', `${userId}/${collectionName}/%`)
-        .then(({ data }) => data ?? []),
+      isPreview
+        ? Promise.resolve([])
+        : supabase
+            .from('photo_captions')
+            .select('photo_key, caption')
+            .eq('owner_id', userId)
+            .like('photo_key', `${userId}/${collectionName}/%`)
+            .then(({ data }) => data ?? []),
     ]);
 
     const captionByKey = new Map(
@@ -105,6 +113,54 @@ serve(async (req) => {
     const realPhotos = allObjects.filter(
       obj => obj.Key && !obj.Key.includes('/thumbs/')
     );
+
+    // ── Lightweight preview mode ────────────────────────────────────
+    // Used only by the home screen, which shows a 3-photo collage per
+    // collection card — it never displays a photo's aspect ratio (the
+    // collage tiles are fixed-size boxes with contentFit="cover") and
+    // never shows the full-resolution image, only the thumbnail. The
+    // full includeUrls path below used to run for the home screen too,
+    // which meant every photo in every collection — not just the 3 ever
+    // shown — paid for a HeadObjectCommand (a real S3 round trip, unlike
+    // getSignedUrl below which is a local signing computation with no
+    // network call) plus signing a full-res URL nobody was going to
+    // load. For a collection with, say, 40 photos, that's 40 wasted S3
+    // round trips on every home-screen load for a card that only ever
+    // renders 3 thumbnails — far and away the biggest contributor to a
+    // slow first load. previewCount slices the photo list down to just
+    // what the collage needs BEFORE doing any of that per-photo work,
+    // and skips HeadObject and full-url signing entirely, since neither
+    // is ever read by the caller in this mode. totalCount still reflects
+    // every real photo (from the single, already-cheap S3 LIST call
+    // above), so the "N photos" badge on the card stays accurate even
+    // though only a handful were actually signed.
+    if (isPreview) {
+      const previewTargets = realPhotos.slice(0, previewCount);
+      const photos = await Promise.all(
+        previewTargets.map(async (obj) => {
+          const key = obj.Key!;
+          const thumbKey = key.replace(
+            `/${collectionName}/`,
+            `/${collectionName}/thumbs/`,
+          );
+          const thumbUrl = await getSignedUrl(
+            s3,
+            new GetObjectCommand({
+              Bucket: Deno.env.get("S3_BUCKET")!,
+              Key: thumbKey,
+            }),
+            { expiresIn: 86400 },
+          ).catch(() => null);
+
+          return { Key: key, thumbUrl };
+        }),
+      );
+
+      return new Response(
+        JSON.stringify({ photos, totalCount: realPhotos.length }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     // If includeUrls, generate all signed URLs and metadata in parallel
     if (includeUrls) {
@@ -150,7 +206,7 @@ serve(async (req) => {
       );
 
       return new Response(
-        JSON.stringify({ photos }),
+        JSON.stringify({ photos, totalCount: realPhotos.length }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

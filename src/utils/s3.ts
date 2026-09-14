@@ -6,6 +6,7 @@ import { evictPhotoFromCache } from "./imageCache";
 import { compressImage, generateThumbnail } from "./imageProcessing";
 import { deletePhotoCaptionsForCollection } from "./photoCaptions";
 import { deleteAllCollectionShares } from "./sharing";
+import { deletePhotoSharesForCollection } from "./sharedPhotos";
 import { supabase } from "./supabase";
 
 // ── Native upload helper ───────────────────────────────────────────────────
@@ -385,6 +386,20 @@ export async function deleteCollection(
     await deletePhotoCaptionsForCollection(userId, collectionName);
   } catch (error: any) {
     console.warn("deleteCollection caption cleanup error:", error.message);
+  }
+
+  // Also best-effort, same reasoning as the shared_collections cleanup
+  // above but for individually-shared photos: shared_photos rows are
+  // keyed by the photo's full S3 key, which is now gone, and would
+  // otherwise silently resurface if a future collection ever reused this
+  // exact name.
+  try {
+    await deletePhotoSharesForCollection(userId, collectionName);
+  } catch (error: any) {
+    console.warn(
+      "deleteCollection photo-shares cleanup error:",
+      error.message,
+    );
   }
 }
 
