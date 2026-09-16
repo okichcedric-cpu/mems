@@ -1924,7 +1924,7 @@ export default function CollectionPage() {
                   activeOpacity={1}
                   style={[
                     styles.shareOverlayCard,
-                    IS_DESKTOP_WEB && styles.captionModalCardDesktop,
+                    IS_DESKTOP_WEB && styles.desktopModalCard,
                   ]}
                   onPress={(e) => e.stopPropagation()}
                 >
@@ -2002,7 +2002,7 @@ export default function CollectionPage() {
                   activeOpacity={1}
                   style={[
                     styles.shareOverlayCard,
-                    IS_DESKTOP_WEB && styles.captionModalCardDesktop,
+                    IS_DESKTOP_WEB && styles.desktopModalCard,
                   ]}
                   onPress={(e) => e.stopPropagation()}
                 >
@@ -2098,7 +2098,10 @@ export default function CollectionPage() {
             >
               <TouchableOpacity
                 activeOpacity={1}
-                style={styles.shareOverlayCard}
+                style={[
+                  styles.shareOverlayCard,
+                  IS_DESKTOP_WEB && styles.desktopModalCard,
+                ]}
                 onPress={(e) => e.stopPropagation()}
               >
                 <View style={styles.shareModalHeader}>
@@ -2183,7 +2186,10 @@ export default function CollectionPage() {
             >
               <TouchableOpacity
                 activeOpacity={1}
-                style={styles.shareOverlayCard}
+                style={[
+                  styles.shareOverlayCard,
+                  IS_DESKTOP_WEB && styles.desktopModalCard,
+                ]}
                 onPress={(e) => e.stopPropagation()}
               >
                 <View style={styles.shareModalHeader}>
@@ -2984,12 +2990,18 @@ const styles = StyleSheet.create({
   },
   // shareOverlayCard's own width: "100%" fills its padded backdrop —
   // fine for narrow phone/mobile-web viewports, but on a wide desktop
-  // browser that stretches the caption card edge-to-edge almost the full
-  // window. This caps it at a fixed proportion of the screen instead, on
-  // desktop web only (see IS_DESKTOP_WEB); centered by shareOverlayBackdrop
-  // either way.
-  captionModalCardDesktop: {
-    width: "65%",
+  // browser that stretched every one of these overlays (caption, share
+  // photo, share collection) edge-to-edge almost the full window. A
+  // percentage-of-screen width (the previous approach here) doesn't
+  // really fix that on a large monitor — 65% of 1800px is still a huge
+  // panel. A small popover, like the account/share menus elsewhere in
+  // the app, reads as a proper desktop dialog instead: a fixed max width
+  // that a phone-sized shareOverlayCard.width: "100%" never exceeds
+  // anyway, so the same style is safe to apply unconditionally under
+  // IS_DESKTOP_WEB across every overlay that reuses shareOverlayCard.
+  desktopModalCard: {
+    width: 420,
+    maxWidth: 420,
     alignSelf: "center",
   },
   // Pagination dots — a fixed strip along the very bottom of the screen
