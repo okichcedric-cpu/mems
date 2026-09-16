@@ -10,6 +10,7 @@ import {
   Dimensions,
   Image,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   ScrollView,
   StyleSheet,
@@ -60,6 +61,88 @@ const FORM_WIDTH = IS_DESKTOP
     : SCREEN_WIDTH - 48;
 
 type Mode = "login" | "signup";
+
+// ── "Get it on Google Play" — the same badge from the email ──────────
+// Deliberately the exact same asset + link as the one already sent in
+// the share-invite email (see PLAY_STORE_URL/PLAY_STORE_BADGE_URL in
+// supabase/functions/send-share-email/index.ts) — this is genuinely "the
+// pic that's on the email," not a re-created lookalike, so it stays in
+// sync with Google's own branding guidelines automatically. Shown only
+// on web (see the IS_WEB gates at each call site below) — a native app
+// build already IS the Android app, so there's nothing to advertise to
+// someone already inside it.
+const PLAY_STORE_URL =
+  "https://play.google.com/store/apps/details?id=com.cedricodera.Mems";
+const PLAY_STORE_BADGE_URL =
+  "https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png";
+
+// ── A little stuck-on sticker, not a boring footer link ───────────────
+// The rest of this page already leans into a scrapbook/polaroid feel
+// (tilted family photos, a handwritten accent line, pill-shaped tags) —
+// dropping a plain rectangular store badge at the bottom would look like
+// it belongs to a different, more corporate page. Instead this treats
+// the official badge artwork as one more thing "pinned" to the page:
+// tilted a few degrees, with a short handwritten (Caveat) caption above
+// it, and a small spring pop-in so it visibly "lands" like the other
+// photos do, just slightly after them. `rotate`/`style` let each call
+// site (desktop hero corner vs. mobile stacked layout) place and angle
+// its own copy without duplicating the animation/behavior.
+function AndroidBadgeSticker({
+  rotate = "-6deg",
+  style,
+}: {
+  rotate?: string;
+  style?: any;
+}) {
+  const anim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      Animated.spring(anim, {
+        toValue: 1,
+        tension: 60,
+        friction: 9,
+        useNativeDriver: true,
+      }).start();
+    }, 550);
+    return () => clearTimeout(timer);
+  }, [anim]);
+
+  return (
+    <Animated.View
+      style={[
+        style,
+        {
+          opacity: anim,
+          transform: [
+            { rotate },
+            {
+              scale: anim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.6, 1],
+              }),
+            },
+          ],
+        },
+      ]}
+    >
+      <TouchableOpacity
+        activeOpacity={0.8}
+        onPress={() => Linking.openURL(PLAY_STORE_URL)}
+        style={heroStyles.androidSticker}
+      >
+        <Text style={heroStyles.androidStickerCaption}>
+          also on Android →
+        </Text>
+        <Image
+          source={{ uri: PLAY_STORE_BADGE_URL }}
+          style={heroStyles.androidBadgeImage}
+          resizeMode="contain"
+        />
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
 
 // ── Uploaded family photos as polaroid thumbnails ─────────
 // Positioned in the middle zone — below the logo banner, above the text
@@ -224,6 +307,9 @@ function DesktopHeroPanel() {
           ),
         )}
       </View>
+
+      {/* ── Google Play sticker — tucked into the corner, landing last ── */}
+      <AndroidBadgeSticker style={heroStyles.androidStickerDesktop} />
     </View>
   );
 }
@@ -529,6 +615,17 @@ export default function LoginScreen() {
           </Text>
           <View style={[styles.sectionDivider, { width: FORM_WIDTH }]} />
         </View>
+      )}
+
+      {/* Mobile web only — same sticker as the desktop hero's corner,
+          just centered inline since a stacked layout has no spare corner
+          to tuck it into. Excluded from the native app itself (IS_WEB) —
+          nothing to advertise to someone already using it. */}
+      {!IS_DESKTOP && IS_WEB && (
+        <AndroidBadgeSticker
+          rotate="4deg"
+          style={heroStyles.androidStickerMobile}
+        />
       )}
 
       {/* ── Quick links row — About + Pricing ── */}
@@ -893,6 +990,55 @@ const heroStyles = StyleSheet.create({
   polaroidCaption: {
     height: 24,
     backgroundColor: "#fff",
+  },
+
+  // ── Android badge sticker ───────────────────────────────────────
+  // Pinned to the bottom-right corner of the hero panel, overlapping
+  // slightly with the pills row below it — reads as one more thing
+  // "stuck onto" the scrapbook rather than a laid-out fourth section.
+  androidStickerDesktop: {
+    position: "absolute",
+    bottom: 18,
+    right: 14,
+    zIndex: 5,
+  },
+  // Same card, just centered inline instead of pinned to a corner —
+  // there's no spare corner to tuck it into once the layout stacks
+  // vertically on mobile.
+  androidStickerMobile: {
+    alignSelf: "center",
+    marginBottom: 20,
+  },
+  androidSticker: {
+    backgroundColor: "#fff",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+    ...Platform.select({
+      web: { boxShadow: "3px 5px 16px rgba(0,0,0,0.16)" } as any,
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 2, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 8,
+      },
+      android: { elevation: 6 },
+    }),
+  },
+  androidStickerCaption: {
+    fontFamily: "Caveat_700Bold",
+    fontSize: 17,
+    color: "#333",
+    marginBottom: 4,
+  },
+  // Matches the official badge's own aspect ratio (150×58, same as the
+  // one embedded in the share-invite email) so it never looks stretched.
+  androidBadgeImage: {
+    width: 124,
+    height: 48,
   },
 });
 
