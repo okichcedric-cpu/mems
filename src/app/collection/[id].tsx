@@ -26,6 +26,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AlbumBackground from "../../components/AlbumBackground";
 import MemoryDatePicker from "../../components/MemoryDatePicker";
+import MultiSelectHintSticker from "../../components/MultiSelectHintSticker";
 import PaywallModal from "../../components/PaywallModal";
 import {
   INERT_FLIP_ANIM,
@@ -45,6 +46,10 @@ import {
   getCollectionMemoryDate,
   setCollectionMemoryDate,
 } from "../../utils/collections";
+import {
+  hasSeenMultiSelectHint,
+  markMultiSelectHintSeen,
+} from "../../utils/featureHints";
 import { deriveThumbKey, evictPhotosFromCache } from "../../utils/imageCache";
 import { getMemoryDateInfo } from "../../utils/memoryDate";
 import { deletePhotoCaption, setPhotoCaption } from "../../utils/photoCaptions";
@@ -58,6 +63,7 @@ import {
   deletePhotoSharesForPhoto,
   getPhotoShares,
   sharePhoto,
+  sharePhotos,
   unsharePhoto,
 } from "../../utils/sharedPhotos";
 import {
@@ -216,6 +222,30 @@ export default function CollectionPage() {
   const [sharePhotoEmail, setSharePhotoEmail] = useState("");
   const [sharingPhoto, setSharingPhoto] = useState(false);
   const [photoSharedWith, setPhotoSharedWith] = useState<string[]>([]);
+
+  // ── Grid multi-select ────────────────────────────────────────────
+  // A second, independent way into sharing — long-press any photo in the
+  // grid (not the full-screen viewer) to select several at once, rather
+  // than repeating the single-photo Share flow above one photo at a
+  // time. Deliberately entered ONLY via long-press, with no visible
+  // "Select" button anywhere: the grid looks and behaves exactly as it
+  // always did until someone discovers the gesture, so this is additive
+  // rather than something that changes the default browsing experience.
+  // selectionMode and selectedKeys are kept separate from
+  // sharePhotoTargetKey/photoSharedWith above on purpose — a multi-photo
+  // share has no single "shared with" list to show (different photos in
+  // the selection can have different existing recipients), so it gets
+  // its own minimal modal instead of overloading the single-photo one.
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [showMultiShareModal, setShowMultiShareModal] = useState(false);
+  const [multiShareEmail, setMultiShareEmail] = useState("");
+  const [multiSharing, setMultiSharing] = useState(false);
+  // One-time "long-press to select" discovery sticker — see
+  // utils/featureHints.ts and components/MultiSelectHintSticker.tsx.
+  // Whether it's worth showing at all is checked once photos have
+  // loaded (below); this only tracks whether it's currently on screen.
+  const [showMultiSelectHint, setShowMultiSelectHint] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameInput, setRenameInput] = useState("");
   const [renaming, setRenaming] = useState(false);
@@ -432,6 +462,37 @@ export default function CollectionPage() {
   const isOwner = session?.user?.id === (effectiveOwnerId ?? session?.user?.id);
   const leftColumn = photos.filter((_, i) => i % 2 === 0);
   const rightColumn = photos.filter((_, i) => i % 2 !== 0);
+
+  // ── Multi-select discovery hint ─────────────────────────────────
+  // Checked once photos have actually loaded (not while `loading` is
+  // still true, and not for a 0- or 1-photo collection — long-press
+  // there wouldn't select "more" than what's already showing). Owner-
+  // only, same gate as the feature itself: a shared-with-you visitor
+  // can't long-press to select in the first place. Runs once per screen
+  // mount, not on every refresh/refetch — hasSeenMultiSelectHint()
+  // itself is what makes this permanent across mounts.
+  useEffect(() => {
+    if (loading || !isOwner || photos.length < 2) return;
+    let cancelled = false;
+    hasSeenMultiSelectHint().then((seen) => {
+      if (seen || cancelled) return;
+      setShowMultiSelectHint(true);
+      markMultiSelectHintSeen();
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, isOwner, photos.length]);
+
+  // Auto-hide after a while so it never just sits there for someone who
+  // neither dismisses it nor happens to long-press anything — same
+  // safety net idea as the toast auto-dismiss above.
+  useEffect(() => {
+    if (!showMultiSelectHint) return;
+    const timer = setTimeout(() => setShowMultiSelectHint(false), 6000);
+    return () => clearTimeout(timer);
+  }, [showMultiSelectHint]);
 
   function getAvatarColor(email: string): string {
     const colors = [
@@ -1308,6 +1369,77 @@ export default function CollectionPage() {
     }
   }
 
+  // Long-press on a grid photo (not the full-screen viewer — see
+  // renderPhoto below) starts selection mode with that one photo already
+  // selected, mirroring the Photos-app pattern this is modeled on.
+  function startSelecting(key: string) {
+    setSelectionMode(true);
+    setSelectedKeys(new Set([key]));
+    // They just found the gesture the hint was pointing at — no reason
+    // to keep it on screen, whether or not it happened to be showing.
+    setShowMultiSelectHint(false);
+  }
+
+  // While selectionMode is on, a normal tap toggles membership instead of
+  // opening the full-screen viewer (see renderPhoto's onPress).
+  function toggleSelected(key: string) {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }
+
+  function exitSelectionMode() {
+    setSelectionMode(false);
+    setSelectedKeys(new Set());
+  }
+
+  async function handleMultiShare() {
+    if (!multiShareEmail.trim()) {
+      showAlert("Email required", "Please enter an email address.");
+      return;
+    }
+    if (!session?.user?.email || selectedKeys.size === 0) return;
+    setMultiSharing(true);
+    try {
+      const { sharedCount } = await sharePhotos(
+        session.user.id,
+        session.user.email,
+        collectionName,
+        Array.from(selectedKeys),
+        multiShareEmail.trim(),
+      );
+      const email = multiShareEmail.trim();
+      setMultiShareEmail("");
+      setShowMultiShareModal(false);
+      exitSelectionMode();
+      setTimeout(() => {
+        showAlert(
+          "Shared!",
+          `${sharedCount} photo${sharedCount === 1 ? "" : "s"} shared with ${email}`,
+        );
+      }, 300);
+    } catch (error: any) {
+      // Same reasoning as handleSharePhoto's catch — surface sharePhotos()'s
+      // own specific errors instead of a generic message, with Sentry
+      // coverage for anything unexpected.
+      console.error("Multi-share photo error:", error.message);
+      Sentry.captureException(error, {
+        tags: { action: "share_photos_batch" },
+        extra: { collectionName, photoCount: selectedKeys.size },
+      });
+      const msg = error.message || "Could not share photos. Please try again.";
+      showAlert("Error", msg);
+    } finally {
+      setMultiSharing(false);
+    }
+  }
+
   // Deterministic tilt per photo — same every render, no jitter
   // Alternates between slight left and right tilts for a scattered feel
   const TILTS = [-2.5, 1.8, -1.2, 2.8, -2.0, 1.5, -3.0, 2.2];
@@ -1327,6 +1459,7 @@ export default function CollectionPage() {
     const POLAROID_PADDING = 8; // white border on sides and top
     const POLAROID_BOTTOM = 32; // larger white space at bottom for the caption area
     const tilt = TILTS[index % TILTS.length];
+    const isSelected = selectedKeys.has(item.key);
 
     return (
       <TouchableOpacity
@@ -1335,11 +1468,22 @@ export default function CollectionPage() {
           styles.polaroidWrapper,
           { transform: [{ rotate: `${tilt}deg` }] },
         ]}
-        onPress={() => openPhoto(photos.indexOf(item))}
+        onPress={() =>
+          selectionMode
+            ? toggleSelected(item.key)
+            : openPhoto(photos.indexOf(item))
+        }
+        onLongPress={() => isOwner && startSelecting(item.key)}
+        delayLongPress={350}
         activeOpacity={0.88}
       >
         {/* Polaroid card */}
-        <View style={styles.polaroidCard}>
+        <View
+          style={[
+            styles.polaroidCard,
+            isSelected && styles.polaroidCardSelected,
+          ]}
+        >
           {/* Photo area */}
           <View
             style={[
@@ -1369,6 +1513,23 @@ export default function CollectionPage() {
               recyclingKey={item.key}
               transition={{ duration: 200, effect: "cross-dissolve" }}
             />
+            {/* Selection badge — only rendered at all once selectionMode is
+                on, so the grid's normal appearance is completely untouched
+                otherwise. Filled + checked when selected, a plain outline
+                circle otherwise, same "tap to select" affordance as
+                Photos/Google Photos. */}
+            {selectionMode && (
+              <View
+                style={[
+                  styles.selectionBadge,
+                  isSelected && styles.selectionBadgeSelected,
+                ]}
+              >
+                {isSelected && (
+                  <Ionicons name="checkmark" size={14} color="#fff" />
+                )}
+              </View>
+            )}
           </View>
           {/* Polaroid caption strip — the white space below the photo */}
           <View style={styles.polaroidCaption}>
@@ -1406,106 +1567,152 @@ export default function CollectionPage() {
           { paddingTop: Platform.OS === "web" ? 16 : insets.top + 6 },
         ]}
       >
-        <View style={styles.headerLeft}>
-          <TouchableOpacity
-            style={styles.iconButton}
-            onPress={() => {
-              if (router.canGoBack()) {
-                router.back();
-              } else {
-                router.replace("/");
-              }
-            }}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="arrow-back" size={22} color="#111" />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.iconButton}
-            onPress={() => {
-              // Prefer back() over replace("/") — this collection is
-              // always reached by pushing from home, so back() reveals
-              // the SAME still-mounted home instance (instant, cache
-              // intact) rather than replace()'s unmount-and-remount
-              // (see utils/collectionsCache.ts's getCachedHomeCollections
-              // comment for why that used to defeat the freshness cache
-              // entirely). Falls back to replace() only for the rare
-              // case this screen was reached with no history at all
-              // (e.g. a direct/deep link).
-              if (router.canGoBack()) {
-                router.back();
-              } else {
-                router.replace("/");
-              }
-            }}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="home-outline" size={22} color="#111" />
-          </TouchableOpacity>
-        </View>
+        {selectionMode ? (
+          // ── Selection-mode header ──────────────────────────────────
+          // Swaps in for the normal header entirely (same styles.header
+          // container, so nothing shifts position) rather than adding a
+          // second bar above/below it — reads as "the header's own
+          // temporary mode" rather than a new persistent piece of UI,
+          // and disappears completely the moment selection ends.
+          <>
+            <View style={styles.headerLeft}>
+              <TouchableOpacity
+                style={styles.iconButton}
+                onPress={exitSelectionMode}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="close" size={22} color="#111" />
+              </TouchableOpacity>
+              <Text style={styles.selectionCountText}>
+                {selectedKeys.size} selected
+              </Text>
+            </View>
 
-        <View style={styles.headerCenter} />
+            <View style={styles.headerCenter} />
 
-        <View style={styles.headerRight}>
-          <TouchableOpacity
-            style={styles.uploadIconButton}
-            onPress={uploadPhoto}
-            disabled={uploading}
-            activeOpacity={0.7}
-          >
-            {uploading ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <Ionicons name="add" size={22} color="#fff" />
-            )}
-          </TouchableOpacity>
+            <View style={styles.headerRight}>
+              <TouchableOpacity
+                style={[
+                  styles.iconButton,
+                  selectedKeys.size === 0 && styles.iconButtonDisabled,
+                ]}
+                onPress={() => setShowMultiShareModal(true)}
+                disabled={selectedKeys.size === 0}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                {/* Same glyph as the single-photo Share icon in the
+                    full-screen viewer below (fullScreenSharePhoto) —
+                    "share" reads as one consistent action across the
+                    app rather than two different icons for what's
+                    conceptually the same thing. */}
+                <Ionicons name="share-social-outline" size={22} color="#111" />
+              </TouchableOpacity>
+            </View>
+          </>
+        ) : (
+          <>
+            <View style={styles.headerLeft}>
+              <TouchableOpacity
+                style={styles.iconButton}
+                onPress={() => {
+                  if (router.canGoBack()) {
+                    router.back();
+                  } else {
+                    router.replace("/");
+                  }
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="arrow-back" size={22} color="#111" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.iconButton}
+                onPress={() => {
+                  // Prefer back() over replace("/") — this collection is
+                  // always reached by pushing from home, so back() reveals
+                  // the SAME still-mounted home instance (instant, cache
+                  // intact) rather than replace()'s unmount-and-remount
+                  // (see utils/collectionsCache.ts's getCachedHomeCollections
+                  // comment for why that used to defeat the freshness cache
+                  // entirely). Falls back to replace() only for the rare
+                  // case this screen was reached with no history at all
+                  // (e.g. a direct/deep link).
+                  if (router.canGoBack()) {
+                    router.back();
+                  } else {
+                    router.replace("/");
+                  }
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="home-outline" size={22} color="#111" />
+              </TouchableOpacity>
+            </View>
 
-          {isOwner && (
-            <TouchableOpacity
-              style={styles.shareTextButton}
-              onPress={() => {
-                loadShares();
-                setShowShareModal(true);
-              }}
-            >
-              {sharedWith.length > 0 ? (
-                <View style={styles.shareButtonWithAvatars}>
-                  <View
-                    style={[
-                      styles.shareButtonAvatar,
-                      { backgroundColor: getAvatarColor(sharedWith[0]) },
-                    ]}
-                  >
-                    <Text style={styles.shareButtonAvatarLetter}>
-                      {sharedWith[0][0].toUpperCase()}
-                    </Text>
-                  </View>
-                  {sharedWith.length > 1 && (
-                    <Text style={styles.shareButtonCount}>
-                      +{sharedWith.length - 1}
-                    </Text>
+            <View style={styles.headerCenter} />
+
+            <View style={styles.headerRight}>
+              <TouchableOpacity
+                style={styles.uploadIconButton}
+                onPress={uploadPhoto}
+                disabled={uploading}
+                activeOpacity={0.7}
+              >
+                {uploading ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Ionicons name="add" size={22} color="#fff" />
+                )}
+              </TouchableOpacity>
+
+              {isOwner && (
+                <TouchableOpacity
+                  style={styles.shareTextButton}
+                  onPress={() => {
+                    loadShares();
+                    setShowShareModal(true);
+                  }}
+                >
+                  {sharedWith.length > 0 ? (
+                    <View style={styles.shareButtonWithAvatars}>
+                      <View
+                        style={[
+                          styles.shareButtonAvatar,
+                          { backgroundColor: getAvatarColor(sharedWith[0]) },
+                        ]}
+                      >
+                        <Text style={styles.shareButtonAvatarLetter}>
+                          {sharedWith[0][0].toUpperCase()}
+                        </Text>
+                      </View>
+                      {sharedWith.length > 1 && (
+                        <Text style={styles.shareButtonCount}>
+                          +{sharedWith.length - 1}
+                        </Text>
+                      )}
+                    </View>
+                  ) : (
+                    <Text style={styles.shareTextButtonLabel}>Share</Text>
                   )}
-                </View>
-              ) : (
-                <Text style={styles.shareTextButtonLabel}>Share</Text>
+                </TouchableOpacity>
               )}
-            </TouchableOpacity>
-          )}
 
-          {isOwner && (
-            <TouchableOpacity
-              style={styles.iconButton}
-              onPress={handleDeleteCollection}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Ionicons
-                name="trash-outline"
-                size={22}
-                color="rgba(255,60,60,0.8)"
-              />
-            </TouchableOpacity>
-          )}
-        </View>
+              {isOwner && (
+                <TouchableOpacity
+                  style={styles.iconButton}
+                  onPress={handleDeleteCollection}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons
+                    name="trash-outline"
+                    size={22}
+                    color="rgba(255,60,60,0.8)"
+                  />
+                </TouchableOpacity>
+              )}
+            </View>
+          </>
+        )}
       </View>
 
       {/* Collection name banner */}
@@ -1681,6 +1888,13 @@ export default function CollectionPage() {
         </ScrollView>
       )}
       </Animated.View>
+
+      {showMultiSelectHint && !selectionMode && (
+        <MultiSelectHintSticker
+          top={chromeHeight + 6}
+          onDismiss={() => setShowMultiSelectHint(false)}
+        />
+      )}
 
       {/* Full Screen Photo Viewer */}
       <Modal
@@ -2261,6 +2475,145 @@ export default function CollectionPage() {
           </Modal>
         ))}
 
+      {/* Multi-Photo Share Modal — opened from the grid's selection-mode
+          header (see selectionMode/selectedKeys above), not from inside
+          the full-screen viewer, so it follows the same top-level
+          web-overlay-or-native-<Modal> pattern as the Share Collection
+          modal above rather than living inside another Modal the way
+          the single Share Photo one does. Deliberately no "shared with"
+          list here — different photos in one selection can already have
+          different recipients, so there's no single list that would be
+          accurate to show; each photo's own share list still lives in
+          the single-photo modal for that reason. */}
+      {showMultiShareModal &&
+        (Platform.OS === "web" ? (
+          <View style={styles.shareWebOverlay}>
+            <TouchableOpacity
+              style={styles.shareOverlayBackdrop}
+              activeOpacity={1}
+              onPress={() => setShowMultiShareModal(false)}
+            >
+              <TouchableOpacity
+                activeOpacity={1}
+                style={[
+                  styles.shareOverlayCard,
+                  IS_DESKTOP_WEB && styles.desktopModalCard,
+                ]}
+                onPress={(e) => e.stopPropagation()}
+              >
+                <View style={styles.shareModalHeader}>
+                  <Text style={styles.shareModalTitle}>
+                    Share {selectedKeys.size} Photo
+                    {selectedKeys.size === 1 ? "" : "s"}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => setShowMultiShareModal(false)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={styles.shareModalClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.sharePhotoHint}>
+                  They'll also see these are from your "{collectionName}"
+                  album, but won't be able to browse the rest of it.
+                </Text>
+                <View style={styles.shareInputRow}>
+                  <TextInput
+                    style={styles.shareInput}
+                    placeholder="Enter email to share"
+                    placeholderTextColor="#999"
+                    value={multiShareEmail}
+                    onChangeText={setMultiShareEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                  <TouchableOpacity
+                    style={[
+                      styles.shareSubmitButton,
+                      multiSharing && { opacity: 0.6 },
+                    ]}
+                    onPress={handleMultiShare}
+                    disabled={multiSharing}
+                  >
+                    {multiSharing ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.shareSubmitText}>Send</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <Modal
+            visible={showMultiShareModal}
+            transparent
+            animationType="fade"
+            statusBarTranslucent
+            onRequestClose={() => setShowMultiShareModal(false)}
+          >
+            <TouchableOpacity
+              style={styles.shareOverlayBackdrop}
+              activeOpacity={1}
+              onPress={() => setShowMultiShareModal(false)}
+            >
+              <TouchableOpacity
+                activeOpacity={1}
+                style={[
+                  styles.shareOverlayCard,
+                  IS_DESKTOP_WEB && styles.desktopModalCard,
+                ]}
+                onPress={(e) => e.stopPropagation()}
+              >
+                <View style={styles.shareModalHeader}>
+                  <Text style={styles.shareModalTitle}>
+                    Share {selectedKeys.size} Photo
+                    {selectedKeys.size === 1 ? "" : "s"}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => setShowMultiShareModal(false)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={styles.shareModalClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.sharePhotoHint}>
+                  They'll also see these are from your "{collectionName}"
+                  album, but won't be able to browse the rest of it.
+                </Text>
+                <View style={styles.shareInputRow}>
+                  <TextInput
+                    style={styles.shareInput}
+                    placeholder="Enter email to share"
+                    placeholderTextColor="#999"
+                    value={multiShareEmail}
+                    onChangeText={setMultiShareEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                  <TouchableOpacity
+                    style={[
+                      styles.shareSubmitButton,
+                      multiSharing && { opacity: 0.6 },
+                    ]}
+                    onPress={handleMultiShare}
+                    disabled={multiSharing}
+                  >
+                    {multiSharing ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.shareSubmitText}>Send</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </Modal>
+        ))}
+
       {/* Rename Modal */}
       {showRenameModal &&
         (Platform.OS === "web" ? (
@@ -2620,6 +2973,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  iconButtonDisabled: { opacity: 0.35 },
+  // Selection-mode header only (see the header's selectionMode branch).
+  selectionCountText: { fontSize: 15, fontWeight: "600", color: "#111" },
   title: { fontSize: 15, fontWeight: "700", color: "#111" },
   subtitle: { fontSize: 11, color: "#999", marginTop: 2 },
 
@@ -2850,11 +3206,41 @@ const styles = StyleSheet.create({
     paddingBottom: 0,
     borderRadius: 2,
   },
+  // Selection-mode only (see renderPhoto) — a plain colored ring rather
+  // than resizing or dimming the card, so the grid's layout stays pixel
+  // -identical whether or not a given card happens to be selected.
+  polaroidCardSelected: {
+    borderWidth: 3,
+    borderColor: "#111",
+  },
 
   // ── Photo area inside the polaroid ────────────────────────
   polaroidPhotoArea: {
     overflow: "hidden",
     backgroundColor: "#e8e8e8",
+  },
+  // Selection-mode checkbox — top-right corner of each photo, on top of
+  // the image. Plain translucent outline when unselected (the "you can
+  // tap this" affordance), filled black + checkmark when selected —
+  // same visual language as shareMethodButtonActive elsewhere in this
+  // file, reused here for a consistent "selected" look across the
+  // screen rather than inventing a second one.
+  selectionBadge: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.9)",
+    backgroundColor: "rgba(0,0,0,0.25)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  selectionBadgeSelected: {
+    backgroundColor: "#111",
+    borderColor: "#111",
   },
 
   // ── Caption strip — white space below photo ───────────────

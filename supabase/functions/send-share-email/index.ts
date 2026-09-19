@@ -69,7 +69,7 @@ serve(async (req) => {
       });
     }
 
-    const { recipientEmail, collectionName, photoKey } = await req.json();
+    const { recipientEmail, collectionName, photoKey, photoKeys } = await req.json();
 
     if (!recipientEmail || typeof recipientEmail !== "string" || !EMAIL_RE.test(recipientEmail)) {
       return new Response(JSON.stringify({ error: "Invalid recipient email" }), {
@@ -85,15 +85,21 @@ serve(async (req) => {
       });
     }
 
-    // ── Single photo vs whole collection ────────────────────────────
-    // An optional `photoKey` in the body is what distinguishes the two —
-    // present means "confirm+send for a single-photo share" (checked
-    // against shared_photos, scoped to that exact key), absent means the
-    // original whole-collection flow (checked against shared_collections).
-    // Kept as one function rather than two near-duplicates since the only
-    // real differences are which table gets the existence check and a
-    // handful of words in the copy below.
-    const isPhotoShare = typeof photoKey === "string" && photoKey.length > 0;
+    // ── Single photo vs a batch of photos vs whole collection ───────
+    // An optional `photoKey` in the body means "confirm+send for a
+    // single-photo share" (checked against shared_photos, scoped to that
+    // exact key). `photoKeys` (plural — a non-empty array) is its sibling
+    // for the grid's multi-select share: one email covering the whole
+    // selection, rather than one email per photo, which is what let this
+    // stay a single function call from sharePhotos() no matter how many
+    // photos were selected. Neither present means the original
+    // whole-collection flow (checked against shared_collections). Kept as
+    // one function rather than three near-duplicates since the only real
+    // differences are which table gets the existence check and a handful
+    // of words in the copy below.
+    const isBatchPhotoShare = Array.isArray(photoKeys) && photoKeys.length > 0;
+    const isPhotoShare =
+      !isBatchPhotoShare && typeof photoKey === "string" && photoKey.length > 0;
 
     // ── Ownership derived from the verified JWT, never from the request
     // body ── prevents a caller from impersonating a different "sharer"
@@ -110,23 +116,43 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    const { data: share } = isPhotoShare
-      ? await supabase
-          .from("shared_photos")
-          .select("id")
-          .eq("owner_id", user.id)
-          .eq("photo_key", photoKey)
-          .eq("recipient_email", normalisedRecipient)
-          .maybeSingle()
-      : await supabase
-          .from("shared_collections")
-          .select("id")
-          .eq("owner_id", user.id)
-          .eq("collection_name", collectionName)
-          .eq("recipient_email", normalisedRecipient)
-          .maybeSingle();
+    let shareExists: boolean;
+    if (isBatchPhotoShare) {
+      // Just needs at least one of the selected keys to actually be
+      // shared with this recipient — same "confirm a real share exists"
+      // gate as the single-photo/collection cases below, not a strict
+      // count match. sharePhotos() on the client already did the real
+      // per-key work (skipping any that were already shared); this only
+      // exists to stop send-share-email being callable as a standalone
+      // mailer for an owner/recipient pair with no share behind it.
+      const { data: rows, error: rowsError } = await supabase
+        .from("shared_photos")
+        .select("id")
+        .eq("owner_id", user.id)
+        .in("photo_key", photoKeys)
+        .eq("recipient_email", normalisedRecipient);
+      if (rowsError) throw new Error(rowsError.message);
+      shareExists = (rows?.length ?? 0) > 0;
+    } else {
+      const { data: share } = isPhotoShare
+        ? await supabase
+            .from("shared_photos")
+            .select("id")
+            .eq("owner_id", user.id)
+            .eq("photo_key", photoKey)
+            .eq("recipient_email", normalisedRecipient)
+            .maybeSingle()
+        : await supabase
+            .from("shared_collections")
+            .select("id")
+            .eq("owner_id", user.id)
+            .eq("collection_name", collectionName)
+            .eq("recipient_email", normalisedRecipient)
+            .maybeSingle();
+      shareExists = !!share;
+    }
 
-    if (!share) {
+    if (!shareExists) {
       return new Response(JSON.stringify({ error: "No matching share found" }), {
         status: 403,
         headers: corsHeaders,
@@ -137,15 +163,33 @@ serve(async (req) => {
     const safeRecipientEmail = escapeHtml(normalisedRecipient);
     const safeCollectionName = escapeHtml(collectionName);
 
-    // ── Copy that differs between the two share types ───────────────
+    // ── Copy that differs between the three share types ─────────────
     // Everything else in the template (header, Play Store badge, footer
     // shell) is identical either way.
-    const subject = isPhotoShare
-      ? `${ownerEmail} shared a photo with you`
-      : `${ownerEmail} shared a photo collection with you`;
+    const photoCount = isBatchPhotoShare ? (photoKeys as unknown[]).length : 0;
+    const photoCountLabel = `${photoCount} photo${photoCount === 1 ? "" : "s"}`;
 
-    const textBody = isPhotoShare
+    const subject = isBatchPhotoShare
+      ? `${ownerEmail} shared ${photoCountLabel} with you`
+      : isPhotoShare
+        ? `${ownerEmail} shared a photo with you`
+        : `${ownerEmail} shared a photo collection with you`;
+
+    const textBody = isBatchPhotoShare
       ? `
+Hi,
+
+${ownerEmail} has shared ${photoCountLabel} with you on Mems, from their "${collectionName}" album.
+
+View them on the web at https://www.mems-app.com, or get the Android app on Google Play: ${PLAY_STORE_URL}
+
+You received this email because someone shared Mems photos with your email address.
+If you did not expect this, you can safely ignore it.
+
+— The Mems Team
+        `.trim()
+      : isPhotoShare
+        ? `
 Hi,
 
 ${ownerEmail} has shared a photo with you on Mems, from their "${collectionName}" album.
@@ -157,7 +201,7 @@ If you did not expect this, you can safely ignore it.
 
 — The Mems Team
         `.trim()
-      : `
+        : `
 Hi,
 
 ${ownerEmail} has shared a photo collection called "${collectionName}" with you on Mems.
@@ -170,13 +214,27 @@ If you did not expect this, you can safely ignore it.
 — The Mems Team
         `.trim();
 
-    const introLine = isPhotoShare
-      ? `<strong>${safeOwnerEmail}</strong> has shared a photo with you.`
-      : `<strong>${safeOwnerEmail}</strong> has shared a photo collection with you.`;
+    const introLine = isBatchPhotoShare
+      ? `<strong>${safeOwnerEmail}</strong> has shared ${photoCountLabel} with you.`
+      : isPhotoShare
+        ? `<strong>${safeOwnerEmail}</strong> has shared a photo with you.`
+        : `<strong>${safeOwnerEmail}</strong> has shared a photo collection with you.`;
 
-    const cardLabel = isPhotoShare ? "From the album" : "Collection";
-    const ctaLabel = isPhotoShare ? "View Photo →" : "View Collection →";
-    const footerVerb = isPhotoShare ? "photo" : "collection";
+    const cardLabel = isBatchPhotoShare || isPhotoShare ? "From the album" : "Collection";
+    const ctaLabel = isBatchPhotoShare
+      ? "View Photos →"
+      : isPhotoShare
+        ? "View Photo →"
+        : "View Collection →";
+    // A full noun phrase rather than just a pluralizable word — "shared a
+    // Mems photos with you" reads wrong, so the article has to change
+    // along with the noun ("a Mems photo" / "Mems photos" / "a Mems
+    // collection"), not just its ending.
+    const footerNounPhrase = isBatchPhotoShare
+      ? "Mems photos"
+      : isPhotoShare
+        ? "a Mems photo"
+        : "a Mems collection";
 
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -283,7 +341,7 @@ If you did not expect this, you can safely ignore it.
           <tr>
             <td style="background:#f9f9f9;padding:20px 32px;border-top:1px solid #eeeeee;">
               <p style="margin:0;font-size:12px;color:#bbbbbb;line-height:18px;text-align:center;">
-                You received this because ${safeOwnerEmail} shared a Mems ${footerVerb} with
+                You received this because ${safeOwnerEmail} shared ${footerNounPhrase} with
                 ${safeRecipientEmail}.<br/>
                 If you did not expect this email you can safely ignore it.<br/><br/>
                 <a href="https://www.mems-app.com" style="color:#999999;">mems-app.com</a>

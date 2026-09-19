@@ -80,6 +80,92 @@ export async function sharePhoto(
   }
 }
 
+// Share MULTIPLE photos with one recipient in a single action — backs
+// the grid's long-press multi-select flow (see collection/[id].tsx's
+// selectionMode). Same per-key rules as sharePhoto() above (can't share
+// with yourself; a key already shared with this email is silently
+// skipped rather than failing the whole batch over one duplicate), but
+// ends in exactly ONE email via send-share-email's batch `photoKeys`
+// path — calling sharePhoto() once per key here would fire one email
+// per photo, which reads as spam for anything more than a couple of
+// photos.
+export async function sharePhotos(
+  ownerId: string,
+  ownerEmail: string,
+  collectionName: string,
+  photoKeys: string[],
+  recipientEmail: string,
+): Promise<{ sharedCount: number }> {
+  const email = recipientEmail.trim().toLowerCase();
+
+  if (email === ownerEmail.toLowerCase()) {
+    throw new Error("You can't share a photo with yourself.");
+  }
+  if (photoKeys.length === 0) {
+    throw new Error('No photos selected.');
+  }
+
+  const { data: existingRows, error: existingError } = await supabase
+    .from('shared_photos')
+    .select('photo_key')
+    .eq('owner_id', ownerId)
+    .eq('recipient_email', email)
+    .in('photo_key', photoKeys);
+
+  if (existingError) {
+    throw new Error(existingError.message);
+  }
+
+  const alreadyShared = new Set((existingRows ?? []).map((row) => row.photo_key));
+  const newKeys = photoKeys.filter((key) => !alreadyShared.has(key));
+
+  if (newKeys.length === 0) {
+    throw new Error('These photos are already shared with that email.');
+  }
+
+  const { error } = await supabase.from('shared_photos').insert(
+    newKeys.map((photoKey) => ({
+      owner_id: ownerId,
+      owner_email: ownerEmail,
+      collection_name: collectionName,
+      photo_key: photoKey,
+      recipient_email: email,
+    })),
+  );
+
+  if (error) throw new Error(error.message);
+
+  // One email covering the whole selection — see send-share-email's own
+  // comment on its photoKeys (plural) branch. Sends the full requested
+  // list, not just newKeys, so the email reflects what the owner meant
+  // to share even if a couple of the selected photos were already
+  // shared with this person before.
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  const { error: fnError } = await supabase.functions.invoke(
+    'send-share-email',
+    {
+      headers: session
+        ? { Authorization: `Bearer ${session.access_token}` }
+        : undefined,
+      body: {
+        recipientEmail: email,
+        collectionName,
+        photoKeys,
+      },
+    },
+  );
+
+  if (fnError) {
+    console.warn('Photo batch share saved but email failed:', fnError.message);
+    // Don't throw — the shares themselves were saved; email is non-critical.
+  }
+
+  return { sharedCount: newKeys.length };
+}
+
 // Get every photo shared with the current user — mirrors
 // getSharedCollections()'s session-refresh-then-fallback dance.
 export type SharedPhoto = {
