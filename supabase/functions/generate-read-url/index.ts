@@ -1,11 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import {
-  GetObjectCommand,
-  HeadObjectCommand,
-  S3Client,
-} from "npm:@aws-sdk/client-s3";
-import { getSignedUrl } from "npm:@aws-sdk/s3-request-presigner";
+import { HeadObjectCommand, S3Client } from "npm:@aws-sdk/client-s3";
 import { createClient } from "npm:@supabase/supabase-js";
+import { signedReadUrl } from "../_shared/cdn.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -161,14 +157,13 @@ serve(async (req) => {
       // Metadata not available — use defaults
     }
 
-    // Generate signed URL valid for 24 hours
-    const url = await getSignedUrl(
+    // CloudFront signed URL (24-36h) when the CDN is configured, otherwise
+    // the S3 presigned URL valid for 24 hours — see _shared/cdn.ts.
+    const url = await signedReadUrl(
       s3,
-      new GetObjectCommand({
-        Bucket: Deno.env.get("S3_BUCKET")!,
-        Key: safeKey,
-      }),
-      { expiresIn: 86400 }
+      Deno.env.get("S3_BUCKET")!,
+      safeKey,
+      86400,
     );
 
     return new Response(

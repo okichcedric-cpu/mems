@@ -1,12 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import {
-  GetObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
   S3Client,
 } from "npm:@aws-sdk/client-s3";
-import { getSignedUrl } from "npm:@aws-sdk/s3-request-presigner";
 import { createClient } from "npm:@supabase/supabase-js";
+import { signedReadUrl } from "../_shared/cdn.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -143,13 +142,11 @@ serve(async (req) => {
             `/${collectionName}/`,
             `/${collectionName}/thumbs/`,
           );
-          const thumbUrl = await getSignedUrl(
+          const thumbUrl = await signedReadUrl(
             s3,
-            new GetObjectCommand({
-              Bucket: Deno.env.get("S3_BUCKET")!,
-              Key: thumbKey,
-            }),
-            { expiresIn: 86400 },
+            Deno.env.get("S3_BUCKET")!,
+            thumbKey,
+            86400,
           ).catch(() => null);
 
           return { Key: key, thumbUrl };
@@ -174,14 +171,8 @@ serve(async (req) => {
 
           // Get full URL and thumb URL in parallel
           const [url, thumbUrl, head] = await Promise.allSettled([
-            getSignedUrl(s3, new GetObjectCommand({
-              Bucket: Deno.env.get("S3_BUCKET")!,
-              Key: key,
-            }), { expiresIn: 604800 }),
-            getSignedUrl(s3, new GetObjectCommand({
-              Bucket: Deno.env.get("S3_BUCKET")!,
-              Key: thumbKey,
-            }), { expiresIn: 86400 }),
+            signedReadUrl(s3, Deno.env.get("S3_BUCKET")!, key, 604800),
+            signedReadUrl(s3, Deno.env.get("S3_BUCKET")!, thumbKey, 86400),
             s3.send(new HeadObjectCommand({
               Bucket: Deno.env.get("S3_BUCKET")!,
               Key: key,

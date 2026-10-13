@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { DeleteObjectsCommand, ListObjectsV2Command, S3Client } from "npm:@aws-sdk/client-s3";
+import { invalidateCdn } from "../_shared/cdn.ts";
 import { createClient } from "npm:@supabase/supabase-js";
 
 const corsHeaders = {
@@ -86,6 +87,8 @@ serve(async (req) => {
       } while (continuationToken);
 
       console.log(`Deleted ${deletedObjectCount} S3 objects for user ${userId}`);
+      // One wildcard path = one invalidation, covers everything they owned.
+      await invalidateCdn([`${userId}/*`]);
     } catch (s3Error: any) {
       // Log but don't block account deletion if S3 cleanup partially fails
       console.error(`S3 cleanup error for user ${userId}:`, s3Error.message);

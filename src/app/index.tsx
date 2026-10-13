@@ -20,6 +20,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { showAlert } from "../utils/alert";
+import { collectionHref } from "../utils/collectionRoute";
 import {
   dropCollectionCache,
   getCachedHomeCollections,
@@ -653,7 +654,7 @@ export default function CollectionsPage() {
         style={styles.polaroidWrapper}
         onPress={() =>
           router.push(
-            `/collection/${encodeURIComponent(collection.name)}?ownerId=${collection.ownerId}`,
+            collectionHref(collection.name, collection.ownerId) as any,
           )
         }
         onLongPress={() =>
@@ -1214,6 +1215,20 @@ const styles = StyleSheet.create({
     padding: 8,
     paddingBottom: 0,
     borderRadius: 2,
+    // Web gets its card-edge definition from the drop-shadow filter above
+    // (polaroidWrapper) alone — it renders crisply there. Android's
+    // elevation shadow is much softer/fuzzier by comparison, especially
+    // over the busy paper-texture backdrop (AlbumBackground), so the
+    // white card can end up with no visible edge at all on native. A
+    // real hairline border fixes that on both iOS/Android without
+    // changing web's look (Platform.select below is a no-op there).
+    ...Platform.select({
+      web: {},
+      default: {
+        borderWidth: 1,
+        borderColor: "rgba(0,0,0,0.1)",
+      },
+    }),
   },
   photoArea: {
     position: "relative",

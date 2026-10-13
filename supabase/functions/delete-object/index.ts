@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { DeleteObjectCommand, S3Client } from "npm:@aws-sdk/client-s3";
 import { createClient } from "npm:@supabase/supabase-js";
+import { invalidateCdn } from "../_shared/cdn.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -103,6 +104,15 @@ serve(async (req) => {
       } catch {
         // Thumbnail may not exist — ignore
       }
+    }
+
+    // Drop the cached copies at the CDN edge (best-effort, never throws).
+    if (safeKey.includes("/thumbs/")) {
+      await invalidateCdn([safeKey]);
+    } else {
+      const parts = safeKey.split("/");
+      const fileName = parts.pop()!;
+      await invalidateCdn([safeKey, [...parts, "thumbs", fileName].join("/")]);
     }
 
     return new Response(

@@ -1,11 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import {
-  GetObjectCommand,
-  HeadObjectCommand,
-  S3Client,
-} from "npm:@aws-sdk/client-s3";
-import { getSignedUrl } from "npm:@aws-sdk/s3-request-presigner";
+import { HeadObjectCommand, S3Client } from "npm:@aws-sdk/client-s3";
 import { createClient } from "npm:@supabase/supabase-js";
+import { signedReadUrl } from "../_shared/cdn.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -137,16 +133,8 @@ serve(async (req) => {
           );
 
           const [url, thumbUrl, head] = await Promise.allSettled([
-            getSignedUrl(
-              s3,
-              new GetObjectCommand({ Bucket: bucket, Key: key }),
-              { expiresIn: 604800 },
-            ),
-            getSignedUrl(
-              s3,
-              new GetObjectCommand({ Bucket: bucket, Key: thumbKey }),
-              { expiresIn: 86400 },
-            ),
+            signedReadUrl(s3, bucket, key, 604800),
+            signedReadUrl(s3, bucket, thumbKey, 86400),
             s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key })),
           ]);
 

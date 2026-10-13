@@ -75,7 +75,17 @@ export default function SharedPhotoGroupScreen() {
     ? params.collectionName[0]
     : params.collectionName;
 
-  const ownerId = rawOwnerId ? decodeURIComponent(rawOwnerId) : null;
+  // Guarded for the same reason as collection/[id].tsx: the param may be
+  // pre-decoded, and a second decode can throw "URI malformed".
+  const ownerId = rawOwnerId
+    ? (() => {
+        try {
+          return decodeURIComponent(rawOwnerId);
+        } catch {
+          return rawOwnerId;
+        }
+      })()
+    : null;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

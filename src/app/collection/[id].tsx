@@ -36,6 +36,7 @@ import {
 import UploadProgressOverlay from "../../components/UploadProgressOverlay";
 import { useAuth } from "../../contexts/AuthContext";
 import { showAlert } from "../../utils/alert";
+import { collectionHref } from "../../utils/collectionRoute";
 import {
   bumpCollectionVersion,
   dropCollectionCache,
@@ -188,7 +189,10 @@ export default function CollectionPage() {
     id: string;
     ownerId?: string;
   }>();
-  const collectionName = decodeURIComponent(id);
+  // useLocalSearchParams() already decodes the param (see
+  // utils/collectionRoute.ts for why it's double-encoded going in), so
+  // decoding here again would corrupt names containing "%".
+  const collectionName = id;
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -1120,12 +1124,7 @@ export default function CollectionPage() {
 
       // Update the URL too, so the address bar, refreshes, and the
       // back/forward history all point at the collection's real name.
-      const ownerQuery = ownerIdParam
-        ? `?ownerId=${encodeURIComponent(ownerIdParam)}`
-        : "";
-      router.replace(
-        `/collection/${encodeURIComponent(finalName)}${ownerQuery}` as any,
-      );
+      router.replace(collectionHref(finalName, ownerIdParam) as any);
     } catch (error: any) {
       console.error("Rename collection error:", error.message);
       const msg =
@@ -3205,6 +3204,20 @@ const styles = StyleSheet.create({
     padding: 8,
     paddingBottom: 0,
     borderRadius: 2,
+    // Web's edge definition comes entirely from the drop-shadow filter
+    // on polaroidWrapper above, which renders crisply there. Android's
+    // elevation shadow is much softer in comparison, especially over
+    // the paper-texture backdrop, so the card can read as borderless —
+    // same colour as the background behind it. A real hairline border
+    // gives native (iOS + Android) the same visible edge, without
+    // touching web's look (Platform.select below is a no-op there).
+    ...Platform.select({
+      web: {},
+      default: {
+        borderWidth: 1,
+        borderColor: "rgba(0,0,0,0.1)",
+      },
+    }),
   },
   // Selection-mode only (see renderPhoto) — a plain colored ring rather
   // than resizing or dimming the card, so the grid's layout stays pixel

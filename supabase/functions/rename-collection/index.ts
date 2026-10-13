@@ -6,6 +6,7 @@ import {
   S3Client,
 } from "npm:@aws-sdk/client-s3";
 import { createClient } from "npm:@supabase/supabase-js";
+import { invalidateCdn } from "../_shared/cdn.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -218,6 +219,10 @@ serve(async (req) => {
         Delete: { Objects: copiedKeys.map((Key) => ({ Key })) },
       }),
     );
+
+    // The old prefix no longer exists — purge it from the CDN edge too
+    // (best-effort). The new name has nothing cached yet.
+    await invalidateCdn([`${userId}/${trimmedOld}/*`]);
 
     // ── Keep any active shares — and any memory-date metadata row —
     // pointed at the new name ─────────────────────────────────────
