@@ -1,6 +1,7 @@
 import { Caveat_700Bold, useFonts } from "@expo-google-fonts/caveat";
 import * as Sentry from "@sentry/react-native";
 import * as Linking from "expo-linking";
+import * as Notifications from "expo-notifications";
 import { Slot, useRouter, useSegments } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import { useEffect, useRef, useState } from "react";
@@ -13,6 +14,7 @@ import {
   resetOnboardingCache,
 } from "../utils/onboarding";
 import { hasNativePendingUpload } from "../utils/pendingUploadNative";
+import { registerForPushNotifications } from "../utils/pushNotifications";
 import { supabase } from "../utils/supabase";
 
 // ── Crash reporting ───────────────────────────────────────────
@@ -170,6 +172,46 @@ function RootLayoutNav() {
   }, [userId]);
   const router = useRouter();
   const segments = useSegments();
+
+  // ── Push notifications (Android app only) ─────────────────────
+  // Register this device for the "create your first collection" nudge once
+  // the account has finished onboarding — `segments` is a dependency so
+  // this re-checks the moment onboarding finishes and routes to "/", which
+  // is what makes the permission prompt appear right after onboarding. The
+  // util itself is a no-op on web/iOS/emulators and only runs once per
+  // user per session.
+  useEffect(() => {
+    if (!userId || !onboardingChecked) return;
+    if (!getCachedOnboardingSeen(userId)) return;
+    registerForPushNotifications(userId);
+  }, [userId, onboardingChecked, segments]);
+
+  // Tapping a nudge opens the new-collection screen. The tap can arrive
+  // before the session/onboarding state is ready (cold start from a
+  // notification), so it's stored and acted on once routing is settled
+  // rather than navigating immediately.
+  const [pendingNudgeTap, setPendingNudgeTap] = useState(false);
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    const handle = (response: Notifications.NotificationResponse | null) => {
+      const data = response?.notification.request.content.data;
+      if (data?.type === "collection_nudge") {
+        setPendingNudgeTap(true);
+        Notifications.clearLastNotificationResponseAsync().catch(() => {});
+      }
+    };
+    Notifications.getLastNotificationResponseAsync()
+      .then(handle)
+      .catch(() => {});
+    const sub = Notifications.addNotificationResponseReceivedListener(handle);
+    return () => sub.remove();
+  }, []);
+  useEffect(() => {
+    if (!pendingNudgeTap || loading || !userId || !onboardingChecked) return;
+    setPendingNudgeTap(false);
+    if (getCachedOnboardingSeen(userId)) router.push("/new-collection");
+  }, [pendingNudgeTap, loading, userId, onboardingChecked]);
+
   // Deep-link handlers below run inside a mount-once effect ([] deps), so
   // they'd otherwise close over whatever `segments` was at that very
   // first render — a ref kept in sync on every render is what lets them

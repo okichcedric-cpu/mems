@@ -30,6 +30,7 @@ import {
 } from "../utils/collectionsCache";
 import { getCollectionMemoryDate } from "../utils/collections";
 import { deriveThumbKey, evictPhotosFromCache } from "../utils/imageCache";
+import { unregisterPushToken } from "../utils/pushNotifications";
 import { getMemoryDateInfo } from "../utils/memoryDate";
 import { deleteCollection } from "../utils/s3";
 import { getSharedPhotos, type SharedPhoto } from "../utils/sharedPhotos";
@@ -591,6 +592,9 @@ export default function CollectionsPage() {
   }
 
   async function signOut() {
+    // Needs the live session, so before signOut — stops this device
+    // getting the signed-out account's notifications.
+    await unregisterPushToken();
     await supabase.auth.signOut();
     router.replace("/login");
   }

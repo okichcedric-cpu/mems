@@ -19,7 +19,8 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.cedricodera.Mems"
+      "package": "com.cedricodera.Mems",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "output": "static",
@@ -43,6 +44,13 @@
       "expo-secure-store",
       "expo-image",
       "expo-iap",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/android-icon-monochrome.png",
+          "color": "#4AE8A0"
+        }
+      ],
       [
         "@sentry/react-native/expo",
         {

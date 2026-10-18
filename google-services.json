@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "847194789195",
+    "project_id": "mems-e3569",
+    "storage_bucket": "mems-e3569.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:847194789195:android:6c823041ec9353b09504ce",
+        "android_client_info": {
+          "package_name": "com.cedricodera.Mems"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAhoG77Q1iBGhwN-6rGGNwKusCRtuc0vpI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
