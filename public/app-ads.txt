@@ -1,1 +1,1 @@
-printf 'google.com, pub-7298124404016128, DIRECT, f08c47fec0942fa0\n' > public/app-ads.txt
+google.com, pub-7298124404016128, DIRECT, f08c47fec0942fa0
