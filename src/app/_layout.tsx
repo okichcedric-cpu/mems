@@ -182,7 +182,10 @@ function RootLayoutNav() {
   // user per session.
   useEffect(() => {
     if (!userId || !onboardingChecked) return;
-    if (!getCachedOnboardingSeen(userId)) return;
+    if (!getCachedOnboardingSeen(userId)) {
+      if (__DEV__) console.log("[push] waiting: onboarding not finished yet");
+      return;
+    }
     registerForPushNotifications(userId);
   }, [userId, onboardingChecked, segments]);
 
@@ -343,6 +346,7 @@ function RootLayoutNav() {
       segments[0] === "subscription-callback" ||
       segments[0] === "delete-account" ||
       segments[0] === "reset-password" ||
+      segments[0] === "unsubscribe" ||
       segments[0] === "child-safety";
     const onOnboarding = segments[0] === "onboarding";
 

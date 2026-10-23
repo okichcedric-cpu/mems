@@ -185,3 +185,16 @@ entrypoint = "./functions/google-rtdn-webhook/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/google-rtdn-webhook/*.html" ]
+
+[functions.unsubscribe-nudge]
+enabled = true
+verify_jwt = false
+import_map = "./functions/unsubscribe-nudge/deno.json"
+entrypoint = "./functions/unsubscribe-nudge/index.ts"
+
+[functions.send-collection-nudge]
+enabled = true
+# Not called by users: protected by the x-cron-secret header instead.
+verify_jwt = false
+import_map = "./functions/send-collection-nudge/deno.json"
+entrypoint = "./functions/send-collection-nudge/index.ts"

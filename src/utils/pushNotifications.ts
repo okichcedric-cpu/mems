@@ -29,10 +29,21 @@ const attemptedThisSession = new Set<string>();
 export async function registerForPushNotifications(
   userId: string,
 ): Promise<void> {
+  const log = (msg: string) => {
+    if (__DEV__) console.log(`[push] ${msg}`);
+  };
+
   if (Platform.OS !== "android") return;
-  if (!Device.isDevice) return; // emulators can't receive real pushes
-  if (attemptedThisSession.has(userId)) return;
+  // Emulators are skipped in release builds. In dev builds they're allowed
+  // so registration can be tested on an AVD that has Google Play services
+  // (a "Google Play" system image) — those can receive FCM pushes.
+  if (!Device.isDevice && !__DEV__) return;
+  if (attemptedThisSession.has(userId)) {
+    log("already attempted this session, skipping");
+    return;
+  }
   attemptedThisSession.add(userId);
+  log(`starting registration (isDevice=${Device.isDevice})`);
 
   try {
     // On Android 13+ the permission prompt only appears once a
@@ -45,11 +56,16 @@ export async function registerForPushNotifications(
     const promptedKey = PROMPTED_KEY_PREFIX + userId;
     let { status } = await Notifications.getPermissionsAsync();
 
+    log(`permission status: ${status}`);
     if (status !== "granted") {
       const alreadyPrompted = await AsyncStorage.getItem(promptedKey);
-      if (alreadyPrompted) return;
+      if (alreadyPrompted) {
+        log("permission not granted and we already asked once; not asking again");
+        return;
+      }
       await AsyncStorage.setItem(promptedKey, "1");
       ({ status } = await Notifications.requestPermissionsAsync());
+      log(`permission after prompt: ${status}`);
     }
     if (status !== "granted") return;
 
@@ -68,6 +84,7 @@ export async function registerForPushNotifications(
     });
     if (error) throw error;
 
+    log("token registered with server");
     AsyncStorage.setItem(TOKEN_KEY, token).catch(() => {});
   } catch (error: any) {
     // Never let push setup affect the app — the nudge is a nice-to-have.
