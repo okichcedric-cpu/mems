@@ -17,7 +17,12 @@ export function marketplaceOrigin(): string {
   if (Platform.OS === "web" && typeof window !== "undefined") {
     const { protocol, hostname, port } = window.location;
     if (hostname.startsWith("marketplace.")) return window.location.origin;
-    if (hostname === "www.mems-app.com" || hostname === "mems-app.com") {
+    // Until the marketplace subdomain is set up, www serves the marketplace
+    // itself. Set EXPO_PUBLIC_MARKETPLACE_DOMAIN_LIVE=1 at build time to switch.
+    if (
+      process.env.EXPO_PUBLIC_MARKETPLACE_DOMAIN_LIVE === "1" &&
+      (hostname === "www.mems-app.com" || hostname === "mems-app.com")
+    ) {
       return "https://marketplace.mems-app.com";
     }
     // localhost / preview deployments: stay on the same origin.
