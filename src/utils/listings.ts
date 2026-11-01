@@ -30,7 +30,7 @@ export type MyListing = {
   status: "published" | "unpublished";
 };
 
-export const PRICE_MIN = 100;
+export const PRICE_MIN = 50;
 export const PRICE_MAX = 500000;
 export const PREVIEW_MAX = 20;
 

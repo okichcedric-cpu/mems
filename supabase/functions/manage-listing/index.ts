@@ -96,8 +96,8 @@ serve(async (req) => {
     if (description.length > 600) {
       return json({ error: "Description must be 600 characters or fewer." }, 400);
     }
-    if (!Number.isInteger(priceAmount) || priceAmount < 100 || priceAmount > 500000) {
-      return json({ error: "Price must be between KES 100 and KES 500,000." }, 400);
+    if (!Number.isInteger(priceAmount) || priceAmount < 50 || priceAmount > 500000) {
+      return json({ error: "Price must be between KES 50 and KES 500,000." }, 400);
     }
     if (!Number.isInteger(previewCount) || previewCount < 1 || previewCount > 20) {
       return json({ error: "Choose between 1 and 20 public preview photos." }, 400);
