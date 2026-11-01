@@ -25,6 +25,8 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AlbumBackground from "../../components/AlbumBackground";
+import SellCollectionModal from "../../components/SellCollectionModal";
+import { getMyCreatorProfile } from "../../utils/creator";
 import MemoryDatePicker from "../../components/MemoryDatePicker";
 import MultiSelectHintSticker from "../../components/MultiSelectHintSticker";
 import PaywallModal from "../../components/PaywallModal";
@@ -211,6 +213,21 @@ export default function CollectionPage() {
   });
   const [refreshing, setRefreshing] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [showSellModal, setShowSellModal] = useState(false);
+  // True only for users who have created (or converted to) a marketplace
+  // account; the sell option stays hidden for everyone else.
+  const [isSeller, setIsSeller] = useState(false);
+  const sessionUserId = session?.user?.id;
+  useEffect(() => {
+    if (Platform.OS !== "web" || !sessionUserId) return;
+    let cancelled = false;
+    getMyCreatorProfile(sessionUserId)
+      .then((p) => !cancelled && setIsSeller(!!p && p.status === "active"))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionUserId]);
   const [shareEmail, setShareEmail] = useState("");
   const [sharing, setSharing] = useState(false);
   const [sharedWith, setSharedWith] = useState<string[]>([]);
@@ -1696,6 +1713,17 @@ export default function CollectionPage() {
                 </TouchableOpacity>
               )}
 
+              {isOwner && isSeller && Platform.OS === "web" && (
+                <TouchableOpacity
+                  style={styles.iconButton}
+                  onPress={() => setShowSellModal(true)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityLabel="Sell this collection"
+                >
+                  <Ionicons name="storefront-outline" size={22} color="#111" />
+                </TouchableOpacity>
+              )}
+
               {isOwner && (
                 <TouchableOpacity
                   style={styles.iconButton}
@@ -2925,6 +2953,14 @@ export default function CollectionPage() {
         completed={uploadProgress.completed}
         label="Uploading photos"
       />
+      {isOwner && isSeller && showSellModal && (
+        <SellCollectionModal
+          visible={showSellModal}
+          onClose={() => setShowSellModal(false)}
+          collectionName={collectionName}
+          photoCount={photos.length}
+        />
+      )}
     </AlbumBackground>
   );
 }

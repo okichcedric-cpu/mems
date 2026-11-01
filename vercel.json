@@ -1,6 +1,17 @@
 {
   "rewrites": [
     {
+      "source": "/listing/:id",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(WhatsApp|facebookexternalhit|Facebot|Twitterbot|TelegramBot|LinkedInBot|Slackbot|Discordbot|Pinterest|SkypeUriPreview|Googlebot|bingbot|Applebot|iMessage|vkShare|redditbot).*"
+        }
+      ],
+      "destination": "/api/listing-share?id=:id"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

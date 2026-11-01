@@ -47,7 +47,10 @@ const BODY =
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 const SITE_URL = "https://www.mems-app.com";
-const EMAIL_FROM = "Mems <contact@mems-app.com>";
+// A separate address from contact@ (used for share/billing mail) — override
+// with the NUDGE_EMAIL_FROM secret. Any @mems-app.com address works once the
+// domain is verified in Resend.
+const EMAIL_FROM = "Mems <hello@mems-app.com>";
 const EMAIL_REPLY_TO = "contact@mems-app.com";
 
 const EMAIL_PAGE_SIZE = 100;
@@ -55,8 +58,18 @@ const EMAIL_MAX_PAGES = 20; // bounds work per run: at most 2,000 accounts scann
 
 // ── Email content ────────────────────────────────────────────────────────
 // `unsubscribeUrl` is built server-side from a user id and an HMAC (hex
-// only), so interpolating it needs no escaping.
-function buildEmailText(unsubscribeUrl: string): string {
+// only), so interpolating it needs no escaping. `footerAddress` comes from
+// our own secret, but is escaped anyway.
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildEmailText(unsubscribeUrl: string, footerAddress: string): string {
   return `
 Hi,
 
@@ -66,12 +79,15 @@ Create your first collection: ${SITE_URL}
 
 You received this email because you have a Mems account.
 Unsubscribe from these reminders: ${unsubscribeUrl}
-
+${footerAddress ? `\n${footerAddress}\n` : ""}
 — The Mems Team
 `.trim();
 }
 
-function buildEmailHtml(unsubscribeUrl: string): string {
+function buildEmailHtml(unsubscribeUrl: string, footerAddress: string): string {
+  const addressHtml = footerAddress
+    ? `${escapeHtml(footerAddress)}<br/><br/>`
+    : "";
   return `
 <!DOCTYPE html>
 <html>
@@ -120,7 +136,7 @@ function buildEmailHtml(unsubscribeUrl: string): string {
               <p style="margin:0;font-size:12px;color:#bbbbbb;line-height:18px;text-align:center;">
                 You received this email because you have a Mems account.<br/>
                 <a href="${unsubscribeUrl}" style="color:#999999;">Unsubscribe from these reminders</a><br/><br/>
-                <a href="${SITE_URL}" style="color:#999999;">mems-app.com</a>
+                ${addressHtml}<a href="${SITE_URL}" style="color:#999999;">mems-app.com</a>
               </p>
             </td>
           </tr>
@@ -164,7 +180,8 @@ serve(async (req) => {
       return jsonResponse({ error: "Unauthorized" }, 401);
     }
 
-    let dryRun = new URL(req.url).searchParams.get("dryRun") === "1";
+    const reqUrl = new URL(req.url);
+    let dryRun = reqUrl.searchParams.get("dryRun") === "1";
     try {
       const body = await req.json();
       if (body?.dryRun === true) dryRun = true;
@@ -192,18 +209,46 @@ serve(async (req) => {
     // and email phases). Returns null if S3 couldn't be reached: callers
     // treat that as "unknown" and skip the user (fail closed).
     const collectionCache = new Map<string, boolean | null>();
+
+    // The raw S3 answer, kept separate so the diagnostics endpoint can show
+    // exactly what S3 said. Uses the SAME listing the app itself uses to show
+    // a user their collections (list-collections: prefix `<userId>/` with a
+    // "/" delimiter, where each CommonPrefix is a collection), and ALSO counts
+    // any object under the prefix — so "has a collection" is decided
+    // generously: if anything at all exists there, we treat them as an owner.
+    async function s3Facts(userId: string) {
+      const res = await s3.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: `${userId}/`,
+          Delimiter: "/",
+        }),
+      );
+      return {
+        commonPrefixes: res.CommonPrefixes?.length ?? 0,
+        objects: res.Contents?.length ?? 0,
+        keyCount: res.KeyCount,
+        // True only if S3 returned a recognisable listing at all. If none of
+        // these fields exist the response is malformed, which must NOT be
+        // read as "no collection".
+        recognisable:
+          res.KeyCount !== undefined ||
+          res.CommonPrefixes !== undefined ||
+          res.Contents !== undefined,
+      };
+    }
+
     async function checkHasCollection(userId: string): Promise<boolean | null> {
       if (collectionCache.has(userId)) return collectionCache.get(userId)!;
       let result: boolean | null;
       try {
-        const res = await s3.send(
-          new ListObjectsV2Command({
-            Bucket: bucket,
-            Prefix: `${userId}/`,
-            MaxKeys: 1,
-          }),
-        );
-        result = (res.KeyCount ?? 0) > 0;
+        const f = await s3Facts(userId);
+        if (!f.recognisable) {
+          console.warn(`Unrecognisable S3 listing for ${userId}; treating as unknown`);
+          result = null; // unknown => skip (fail closed), never "no collection"
+        } else {
+          result = f.commonPrefixes > 0 || f.objects > 0;
+        }
       } catch (e: any) {
         console.warn(`S3 check failed for ${userId}:`, e?.message);
         result = null;
@@ -214,6 +259,26 @@ serve(async (req) => {
     async function checkMany(userIds: string[]): Promise<void> {
       for (let i = 0; i < userIds.length; i += 10) {
         await Promise.all(userIds.slice(i, i + 10).map(checkHasCollection));
+      }
+    }
+
+    // ── Diagnostics: ?checkUser=<userId> ─────────────────────────
+    // Shows what S3 says about one user, so you can test the collection
+    // check against someone you KNOW has (or lacks) a collection. Sends and
+    // writes nothing.
+    const checkUser = reqUrl.searchParams.get("checkUser");
+    if (checkUser) {
+      try {
+        const facts = await s3Facts(checkUser);
+        return jsonResponse({
+          checkUser,
+          bucketConfigured: !!bucket,
+          ...facts,
+          wouldCountAsHavingCollection:
+            facts.recognisable && (facts.commonPrefixes > 0 || facts.objects > 0),
+        });
+      } catch (e: any) {
+        return jsonResponse({ checkUser, error: e?.message }, 500);
       }
     }
 
@@ -358,12 +423,22 @@ serve(async (req) => {
     // Best-effort and independent of push: any failure is logged and
     // retried on the next run (email_sent_at is only written on success),
     // and never affects the push results above.
+    // OFF unless NUDGE_EMAIL_ENABLED is exactly "true": deploying this code
+    // can never send email by itself. Turn it on only after a dry run looks
+    // right. Small default cap (25/day) so a mistake stays small.
+    const emailEnabled = Deno.env.get("NUDGE_EMAIL_ENABLED") === "true";
     const emailCap = Math.max(
       1,
-      parseInt(Deno.env.get("NUDGE_EMAIL_MAX_PER_RUN") ?? "100", 10) || 100,
+      parseInt(Deno.env.get("NUDGE_EMAIL_MAX_PER_RUN") ?? "25", 10) || 25,
     );
     const resendKey = Deno.env.get("RESEND_API_KEY");
     const canSignLinks = !!Deno.env.get("UNSUBSCRIBE_SECRET");
+    // Marketing mail uses its own sender so spam complaints can't hurt the
+    // reputation of share/billing mail sent from contact@.
+    const emailFrom = Deno.env.get("NUDGE_EMAIL_FROM") ?? EMAIL_FROM;
+    // Company name + postal address line for the footer (marketing-email
+    // rules in many countries expect it). Optional; shown only if set.
+    const footerAddress = Deno.env.get("NUDGE_EMAIL_FOOTER_ADDRESS") ?? "";
 
     // ── 7. Collect up to `emailCap` accounts that need the email ──
     // Candidates come from a SQL function (all confirmed accounts past
@@ -412,18 +487,31 @@ serve(async (req) => {
         pushTotalUsersWithTokens: byUser.size,
         pushDue: due.length,
         pushWouldNotify: pushEligible.length,
+        emailEnabled,
         emailWouldSend: toEmail.length,
         emailPerRunCap: emailCap,
         emailPagesScanned: pagesScanned,
         emailCanSign: canSignLinks,
         emailResendConfigured: !!resendKey,
+        emailFrom,
+        emailFooterAddressSet: !!footerAddress,
+        // Masked, so you can eyeball who would be emailed without a full
+        // list of addresses sitting in a log.
+        emailSample: toEmail.slice(0, 10).map((r) => ({
+          userId: r.userId,
+          email: r.email.replace(/^(.).*(@.*)$/, "$1***$2"),
+        })),
       });
     }
 
     // ── 8. Send the emails ───────────────────────────────────────
     let emailed = 0;
     let emailFailed = 0;
-    if (toEmail.length > 0 && (!resendKey || !canSignLinks)) {
+    if (toEmail.length > 0 && !emailEnabled) {
+      console.warn(
+        `Nudge emails are OFF (NUDGE_EMAIL_ENABLED is not "true"); ${toEmail.length} would have been sent`,
+      );
+    } else if (toEmail.length > 0 && (!resendKey || !canSignLinks)) {
       // Never send without a working unsubscribe link.
       console.warn(
         "Skipping nudge emails: RESEND_API_KEY or UNSUBSCRIBE_SECRET is not set",
@@ -444,12 +532,12 @@ serve(async (req) => {
           return {
             userId: r.userId,
             payload: {
-              from: EMAIL_FROM,
+              from: emailFrom,
               reply_to: EMAIL_REPLY_TO,
               to: [r.email],
               subject: TITLE,
-              text: buildEmailText(pageUrl),
-              html: buildEmailHtml(pageUrl),
+              text: buildEmailText(pageUrl, footerAddress),
+              html: buildEmailHtml(pageUrl, footerAddress),
               // Lets Gmail/Apple Mail show their own Unsubscribe button.
               headers: {
                 "List-Unsubscribe": `<${oneClickUrl}>, <mailto:${EMAIL_REPLY_TO}?subject=unsubscribe>`,
@@ -460,23 +548,51 @@ serve(async (req) => {
         }),
       );
 
-      const markSent = async (ids: string[]) => {
-        if (ids.length === 0) return;
-        // Only this column: an upsert touches just what it's given, so
-        // nudge_count etc. written earlier are left alone.
-        await supabase.from("collection_nudges").upsert(
-          ids.map((user_id) => ({ user_id, email_sent_at: nowIso })),
-          { onConflict: "user_id" },
-        );
+      // Records that these people were emailed. Returns false if the write
+      // failed (after one retry). That matters: without the record, the next
+      // daily run would email the same people again — so on failure the
+      // caller stops sending anything further.
+      const markSent = async (ids: string[]): Promise<boolean> => {
+        if (ids.length === 0) return true;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          // Only this column: an upsert touches just what it's given, so
+          // nudge_count etc. written earlier are left alone.
+          const { error } = await supabase.from("collection_nudges").upsert(
+            ids.map((user_id) => ({ user_id, email_sent_at: nowIso })),
+            { onConflict: "user_id" },
+          );
+          if (!error) return true;
+          console.error(`markSent failed (attempt ${attempt + 1}):`, error.message);
+          await sleep(300);
+        }
+        return false;
       };
 
-      for (let i = 0; i < prepared.length; i += 100) {
+      // Resend remembers an Idempotency-Key for 24 hours and refuses to send
+      // the same request twice. Derived from exactly who is in the request,
+      // so a retry of the same batch (e.g. after a timeout) can't double-send.
+      const idemKey = async (ids: string[]): Promise<string> => {
+        const digest = await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode([...ids].sort().join(",")),
+        );
+        const hex = [...new Uint8Array(digest)]
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+        return `first-collection-nudge-${hex.slice(0, 40)}`;
+      };
+
+      let abortSending = false;
+      for (let i = 0; i < prepared.length && !abortSending; i += 100) {
         const chunk = prepared.slice(i, i + 100);
         let batchOk = false;
         try {
           const res = await fetch("https://api.resend.com/emails/batch", {
             method: "POST",
-            headers: authHeaders,
+            headers: {
+              ...authHeaders,
+              "Idempotency-Key": await idemKey(chunk.map((c) => c.userId)),
+            },
             body: JSON.stringify(chunk.map((c) => c.payload)),
           });
           if (res.ok) {
@@ -489,8 +605,13 @@ serve(async (req) => {
         }
 
         if (batchOk) {
-          await markSent(chunk.map((c) => c.userId));
           emailed += chunk.length;
+          if (!(await markSent(chunk.map((c) => c.userId)))) {
+            console.error(
+              "STOPPING: emails were sent but could not be recorded. Fix the database, then check collection_nudges before the next run.",
+            );
+            abortSending = true;
+          }
           continue;
         }
 
@@ -500,15 +621,22 @@ serve(async (req) => {
         // rest. A permanent rejection (4xx other than rate-limit) marks
         // that account as skipped so it isn't retried forever.
         for (const c of chunk) {
+          if (abortSending) break;
           try {
             const res = await fetch("https://api.resend.com/emails", {
               method: "POST",
-              headers: authHeaders,
+              headers: {
+                ...authHeaders,
+                "Idempotency-Key": await idemKey([c.userId]),
+              },
               body: JSON.stringify(c.payload),
             });
             if (res.ok) {
-              await markSent([c.userId]);
               emailed++;
+              if (!(await markSent([c.userId]))) {
+                console.error("STOPPING: email sent but could not be recorded.");
+                abortSending = true;
+              }
             } else if (res.status >= 400 && res.status < 500 && res.status !== 429) {
               console.warn(`Permanent email failure for ${c.userId}:`, res.status);
               await supabase.from("collection_nudges").upsert(
@@ -533,6 +661,7 @@ serve(async (req) => {
       pushDue: due.length,
       pushNotified: notifiedUsers.size,
       removedDeadTokens: deadTokens.length,
+      emailEnabled,
       emailed,
       emailFailed,
       emailSkippedHaveCollection: skippedHaveCollectionEmail,

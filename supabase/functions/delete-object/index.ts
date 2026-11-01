@@ -77,6 +77,51 @@ serve(async (req) => {
       );
     }
 
+    // A photo in a collection that is listed on the marketplace can't be
+    // deleted until the listing is removed: buyers are paying for this set,
+    // and the public previews point at these exact files.
+    const collectionSegment = safeKey.split("/")[1];
+    if (collectionSegment) {
+      const admin = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      );
+      const { data: listed } = await admin
+        .from("listings")
+        .select("id")
+        .eq("seller_id", user.id)
+        .eq("collection_name", collectionSegment)
+        .eq("status", "published")
+        .maybeSingle();
+      if (listed) {
+        return new Response(
+          JSON.stringify({
+            error:
+              "This collection is for sale on the marketplace. Remove it from the marketplace first.",
+          }),
+          { status: 409, headers: corsHeaders },
+        );
+      }
+      // Buyers keep access to what they paid for, so a collection that has
+      // been sold can never lose photos.
+      const { data: sold } = await admin
+        .from("orders")
+        .select("id")
+        .eq("seller_id", user.id)
+        .eq("collection_name", collectionSegment)
+        .eq("status", "paid")
+        .limit(1);
+      if (sold && sold.length > 0) {
+        return new Response(
+          JSON.stringify({
+            error:
+              "This collection has been sold on the marketplace, so its photos can't be deleted.",
+          }),
+          { status: 409, headers: corsHeaders },
+        );
+      }
+    }
+
     const s3 = new S3Client({
       region: Deno.env.get("AWS_REGION")!,
       credentials: {

@@ -33,6 +33,8 @@ import { deriveThumbKey, evictPhotosFromCache } from "../utils/imageCache";
 import { unregisterPushToken } from "../utils/pushNotifications";
 import { getMemoryDateInfo } from "../utils/memoryDate";
 import { deleteCollection } from "../utils/s3";
+import { marketplaceOrigin } from "../utils/host";
+import { fetchPurchaseSummaries, type PurchaseSummary } from "../utils/orders";
 import { getSharedPhotos, type SharedPhoto } from "../utils/sharedPhotos";
 import { getSharedCollections } from "../utils/sharing";
 import { checkSubscription, SubscriptionStatus } from "../utils/subscription";
@@ -57,6 +59,9 @@ type Collection = {
   // time (or later) via MemoryDatePicker. Null/undefined means unset, in
   // which case the polaroid caption below just shows the name.
   memoryDate?: string | null;
+  // Set for collections bought on the marketplace; opens the purchase
+  // viewer instead of the normal collection screen.
+  purchaseId?: string;
 };
 
 // Module-level, NOT defined inside CollectionsPage — this used to be a
@@ -249,6 +254,9 @@ export default function CollectionsPage() {
   // etc.). A single photo share is also just lower volume — always
   // refetching on focus, no caching, is plenty here.
   const [sharedPhotos, setSharedPhotos] = useState<SharedPhoto[]>([]);
+  // Collections bought on the marketplace. Same reasoning as sharedPhotos:
+  // a separate strip, refetched on focus, outside the collections cache.
+  const [purchases, setPurchases] = useState<PurchaseSummary[]>([]);
 
   // ── Fetches data on focus — the ONLY place this screen fetches ──
   //
@@ -273,6 +281,7 @@ export default function CollectionsPage() {
         setLoading(false);
         setCollections([]);
         setSharedPhotos([]);
+        setPurchases([]);
         return;
       }
 
@@ -281,6 +290,7 @@ export default function CollectionsPage() {
       // comment above for why this stays a simple, always-refetch-on-
       // focus fetch independent of the collections grid's loading state.
       fetchSharedPhotos();
+      fetchPurchases();
 
       // Refocusing (e.g. backing out of a collection you just opened)
       // doesn't need a real refetch if nothing has changed since the
@@ -309,6 +319,15 @@ export default function CollectionsPage() {
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [userId]),
   );
+
+  async function fetchPurchases() {
+    try {
+      setPurchases(await fetchPurchaseSummaries());
+    } catch (error: any) {
+      // Secondary section: never blocks the main grid.
+      console.warn("fetchPurchases error:", error.message);
+    }
+  }
 
   async function fetchSharedPhotos() {
     try {
@@ -601,8 +620,21 @@ export default function CollectionsPage() {
 
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
-  const leftCollections = collections.filter((_, i) => i % 2 === 0);
-  const rightCollections = collections.filter((_, i) => i % 2 !== 0);
+  // Bought collections sit in the same grid as owned and shared ones.
+  // Merged at render time (not stored in `collections`) so the versioned
+  // home cache is untouched.
+  const purchasedCollections: Collection[] = purchases.map((p) => ({
+    name: p.title,
+    previewUrls: (p.coverUrls?.length ? p.coverUrls : p.coverUrl ? [p.coverUrl] : []).map(
+      (url, i) => ({ url, key: `purchase-${p.id}-${i}` }),
+    ),
+    photoCount: 0,
+    ownerId: "purchase",
+    purchaseId: p.id,
+  }));
+  const allCollections = [...collections, ...purchasedCollections];
+  const leftCollections = allCollections.filter((_, i) => i % 2 === 0);
+  const rightCollections = allCollections.filter((_, i) => i % 2 !== 0);
 
   // ── Group individually-shared photos by their source collection ──
   // A user can be individually shared several photos from the same
@@ -654,15 +686,19 @@ export default function CollectionsPage() {
 
     return (
       <TouchableOpacity
-        key={`${collection.ownerId}-${collection.name}`}
+        key={`${collection.ownerId}-${collection.purchaseId ?? collection.name}`}
         style={styles.polaroidWrapper}
         onPress={() =>
           router.push(
-            collectionHref(collection.name, collection.ownerId) as any,
+            (collection.purchaseId
+              ? `/bought/${collection.purchaseId}`
+              : collectionHref(collection.name, collection.ownerId)) as any,
           )
         }
         onLongPress={() =>
-          !collection.isShared && confirmDeleteCollection(collection)
+          !collection.isShared &&
+          !collection.purchaseId &&
+          confirmDeleteCollection(collection)
         }
         activeOpacity={0.9}
       >
@@ -680,7 +716,13 @@ export default function CollectionsPage() {
               </View>
             )}
 
-            {!collection.isShared && (
+            {collection.purchaseId && (
+              <View style={[styles.sharedBadge, styles.purchasedBadge]}>
+                <Text style={styles.sharedBadgeText}>Purchased</Text>
+              </View>
+            )}
+
+            {!collection.isShared && !collection.purchaseId && (
               <TouchableOpacity
                 style={styles.deleteCardButton}
                 onPress={(e) => {
@@ -851,6 +893,25 @@ export default function CollectionsPage() {
 
             <View style={styles.profileMenuDivider} />
 
+            {/* The marketplace exists on the website only. */}
+            {Platform.OS === "web" && (
+              <>
+                <TouchableOpacity
+                  style={styles.profileMenuItem}
+                  onPress={() => {
+                    setShowProfileMenu(false);
+                    window.location.href = `${marketplaceOrigin()}/marketplace`;
+                  }}
+                >
+                  <Ionicons name="storefront-outline" size={18} color="#333" />
+                  <Text style={styles.profileMenuItemText}>Marketplace</Text>
+                </TouchableOpacity>
+
+                <View style={styles.profileMenuDivider} />
+
+              </>
+            )}
+
             <TouchableOpacity
               style={styles.profileMenuItem}
               onPress={() => {
@@ -874,7 +935,7 @@ export default function CollectionsPage() {
           <View style={styles.centered}>
             <ActivityIndicator size="large" color="#000" />
           </View>
-        ) : collections.length === 0 && sharedPhotos.length === 0 ? (
+        ) : collections.length === 0 && sharedPhotos.length === 0 && purchases.length === 0 ? (
           <View style={styles.centered}>
             <Text style={styles.emptyIcon}>🗂️</Text>
             <Text style={styles.emptyTitle}>No collections yet</Text>
@@ -966,7 +1027,7 @@ export default function CollectionsPage() {
               </View>
             )}
 
-            {collections.length > 0 && (
+            {allCollections.length > 0 && (
               <View style={styles.collectionsSection}>
                 {/* Only needed to tell this section apart from the
                     individual-photos strip above — when that strip is
@@ -1297,6 +1358,7 @@ const styles = StyleSheet.create({
     color: "#999",
     marginTop: 1,
   },
+  purchasedBadge: { backgroundColor: "rgba(26,127,75,0.85)" },
   sharedBadge: {
     position: "absolute",
     top: 8,

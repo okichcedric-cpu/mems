@@ -111,6 +111,48 @@ serve(async (req) => {
     }
 
     const userId = user.id;
+
+    // Listed collections can't be renamed: the listing points at the
+    // current S3 keys. Remove it from the marketplace first.
+    if (trimmedOld !== trimmedNew) {
+      const admin = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      );
+      const { data: listed } = await admin
+        .from("listings")
+        .select("id")
+        .eq("seller_id", userId)
+        .eq("collection_name", trimmedOld)
+        .eq("status", "published")
+        .maybeSingle();
+      if (listed) {
+        return new Response(
+          JSON.stringify({
+            error:
+              "This collection is for sale on the marketplace. Remove it from the marketplace before renaming.",
+          }),
+          { status: 409, headers: corsHeaders },
+        );
+      }
+      const { data: sold } = await admin
+        .from("orders")
+        .select("id")
+        .eq("seller_id", userId)
+        .eq("collection_name", trimmedOld)
+        .eq("status", "paid")
+        .limit(1);
+      if (sold && sold.length > 0) {
+        return new Response(
+          JSON.stringify({
+            error:
+              "This collection has been sold on the marketplace, so it can't be renamed.",
+          }),
+          { status: 409, headers: corsHeaders },
+        );
+      }
+    }
+
     const bucket = Deno.env.get("S3_BUCKET")!;
     const s3 = new S3Client({
       region: Deno.env.get("AWS_REGION")!,

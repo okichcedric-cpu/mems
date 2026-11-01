@@ -13,6 +13,7 @@ import {
   hasSeenOnboarding,
   resetOnboardingCache,
 } from "../utils/onboarding";
+import { isMarketplaceHost } from "../utils/host";
 import { hasNativePendingUpload } from "../utils/pendingUploadNative";
 import { registerForPushNotifications } from "../utils/pushNotifications";
 import { supabase } from "../utils/supabase";
@@ -347,8 +348,28 @@ function RootLayoutNav() {
       segments[0] === "delete-account" ||
       segments[0] === "reset-password" ||
       segments[0] === "unsubscribe" ||
+      segments[0] === "marketplace" ||
+      segments[0] === "creator" ||
+      segments[0] === "listing" ||
       segments[0] === "child-safety";
     const onOnboarding = segments[0] === "onboarding";
+
+    // The marketplace is website-only. If the native app is ever pointed at
+    // one of its routes (deep link, stale navigation), send it home.
+    if (
+      Platform.OS !== "web" &&
+      MARKETPLACE_ROUTES.includes(String(segments[0]))
+    ) {
+      router.replace("/");
+      return;
+    }
+
+    // marketplace.mems-app.com lands on the public storefront, not the
+    // personal-collections home (which would bounce visitors to /login).
+    if (isMarketplaceHost() && (segments as string[]).length === 0) {
+      router.replace("/marketplace");
+      return;
+    }
 
     if (!session) {
       if (!inAuthGroup && !inPublicGroup && !onOnboarding) {
@@ -391,6 +412,19 @@ function RootLayoutNav() {
 
   return <Slot />;
 }
+
+// Route groups that only exist on the website. "purchases" is the web
+// library; the app shows purchased collections on its home screen and opens
+// them via "bought/[orderId]" instead.
+const MARKETPLACE_ROUTES = [
+  "marketplace",
+  "marketplace-offer",
+  "creator",
+  "creator-setup",
+  "listing",
+  "purchases",
+  "purchase-callback",
+];
 
 function RootLayout() {
   return (

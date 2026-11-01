@@ -142,7 +142,9 @@ export default function Onboarding() {
       // defensive in case a sign-out races with tapping this button.
       await markOnboardingSeen(userId);
     }
-    router.replace("/");
+    // One-time "want a marketplace account?" question before landing home.
+    // Marketplace is website-only, so the app skips the question.
+    router.replace(Platform.OS === "web" ? "/marketplace-offer" : "/");
   }
 
   function goNext() {

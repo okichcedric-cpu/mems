@@ -1,7 +1,7 @@
 import { useAuth } from "@/contexts/AuthContext";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -14,6 +14,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { CreatorProfile, getMyCreatorProfile } from "../utils/creator";
 import { supabase } from "../utils/supabase";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
@@ -26,6 +27,16 @@ export default function AccountManagementPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [updating, setUpdating] = useState(false);
+  // Marketplace account (website only). undefined = still loading.
+  const [creator, setCreator] = useState<CreatorProfile | null | undefined>(undefined);
+  const userId = session?.user?.id;
+
+  useEffect(() => {
+    if (!IS_WEB || !userId) return;
+    getMyCreatorProfile(userId)
+      .then(setCreator)
+      .catch(() => setCreator(null));
+  }, [userId]);
 
   async function handleUpdatePassword() {
     if (password.length < 8) {
@@ -119,6 +130,43 @@ export default function AccountManagementPage() {
             )}
           </TouchableOpacity>
         </View>
+
+        {/* ── Marketplace account — website only ── */}
+        {IS_WEB && creator !== undefined && (
+          <View style={[styles.card, IS_DESKTOP && styles.cardDesktop]}>
+            <Text style={styles.icon}>🛍️</Text>
+            <Text style={styles.title}>
+              {creator ? "Your marketplace account" : "Sell on the marketplace"}
+            </Text>
+            {creator ? (
+              <>
+                <Text style={styles.sub}>
+                  Selling as <Text style={styles.signedInEmail}>@{creator.handle}</Text>. To
+                  sell a collection, open it and tap the storefront icon.
+                </Text>
+                <TouchableOpacity
+                  style={styles.primaryButton}
+                  onPress={() => router.push("/creator-setup" as any)}
+                >
+                  <Text style={styles.primaryButtonText}>Edit marketplace profile</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={styles.sub}>
+                  Create a marketplace account to sell your collections. Buyers pay
+                  once and get every photo instantly.
+                </Text>
+                <TouchableOpacity
+                  style={styles.primaryButton}
+                  onPress={() => router.push("/creator-setup" as any)}
+                >
+                  <Text style={styles.primaryButtonText}>Create Marketplace Account</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        )}
 
         {/* ── Deactivate account — unchanged flow, just relocated here ── */}
         <View style={[styles.card, IS_DESKTOP && styles.cardDesktop]}>

@@ -327,8 +327,24 @@ export async function deleteFromS3(key: string): Promise<void> {
     const { error } = await supabase.functions.invoke("delete-object", {
       body: { key },
     });
-    if (error) throw new Error(error.message);
+    if (error) {
+      // A 409 means the collection is listed on the marketplace — show
+      // that reason instead of a generic retry message.
+      try {
+        const ctx = (error as any)?.context;
+        if (ctx?.status === 409) {
+          const body = await ctx.json();
+          if (body?.error) throw new Error(body.error);
+        }
+      } catch (inner: any) {
+        if (inner?.message?.includes("marketplace")) {
+          throw Object.assign(new Error(inner.message), { userFacing: true });
+        }
+      }
+      throw new Error(error.message);
+    }
   } catch (error: any) {
+    if (error?.userFacing) throw error;
     console.error("deleteFromS3 error:", error.message);
     throw new Error("Could not delete photo. Please try again.");
   }

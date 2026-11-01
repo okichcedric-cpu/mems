@@ -198,3 +198,39 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/send-collection-nudge/deno.json"
 entrypoint = "./functions/send-collection-nudge/index.ts"
+
+[functions.manage-listing]
+enabled = true
+verify_jwt = false
+import_map = "./functions/manage-listing/deno.json"
+entrypoint = "./functions/manage-listing/index.ts"
+
+[functions.marketplace-listings]
+enabled = true
+verify_jwt = false
+import_map = "./functions/marketplace-listings/deno.json"
+entrypoint = "./functions/marketplace-listings/index.ts"
+
+[functions.marketplace-checkout]
+enabled = true
+verify_jwt = false
+import_map = "./functions/marketplace-checkout/deno.json"
+entrypoint = "./functions/marketplace-checkout/index.ts"
+
+[functions.marketplace-webhook]
+enabled = true
+verify_jwt = false
+import_map = "./functions/marketplace-webhook/deno.json"
+entrypoint = "./functions/marketplace-webhook/index.ts"
+
+[functions.get-purchased-collection]
+enabled = true
+verify_jwt = false
+import_map = "./functions/get-purchased-collection/deno.json"
+entrypoint = "./functions/get-purchased-collection/index.ts"
+
+[functions.report-content]
+enabled = true
+verify_jwt = false
+import_map = "./functions/report-content/deno.json"
+entrypoint = "./functions/report-content/index.ts"
