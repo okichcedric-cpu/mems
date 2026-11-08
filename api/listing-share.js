@@ -10,7 +10,7 @@ module.exports = async (req, res) => {
   const origin = `https://${host}`;
   const pageUrl = `${origin}/listing/${encodeURIComponent(id)}`;
 
-  let title = "Mems Marketplace";
+  let title = "Picture Board Marketplace";
   let desc = "Buy whole photo collections from creators.";
   let image = `${origin}/og-image.jpg`;
   if (listing) {
@@ -28,7 +28,7 @@ module.exports = async (req, res) => {
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(desc)}">
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="Mems Marketplace">
+<meta property="og:site_name" content="Picture Board Marketplace">
 <meta property="og:url" content="${esc(pageUrl)}">
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="${esc(desc)}">
