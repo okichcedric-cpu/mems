@@ -32,10 +32,10 @@ export default function ChildSafetyStandardsPage() {
       title: "Our commitment",
       body: (
         <Text style={styles.paragraph}>
-          Mems is a private photo album app built for families and friends to
+          Picture Board is a private photo album app built for families and friends to
           keep and share their most precious memories. We have a zero-tolerance
           policy toward child sexual abuse and exploitation (CSAE) and child
-          sexual abuse material (CSAM) in any form. This page sets out Mems'
+          sexual abuse material (CSAM) in any form. This page sets out Picture Board's
           published standards against CSAE and explains how we detect, prevent,
           report and act on any violation of these standards.
         </Text>
@@ -46,7 +46,7 @@ export default function ChildSafetyStandardsPage() {
       body: (
         <>
           <Text style={styles.paragraph}>
-            Mems strictly prohibits any content or behaviour that sexually
+            Picture Board strictly prohibits any content or behaviour that sexually
             exploits, abuses, or endangers a child. This includes but is not
             limited to:
           </Text>
@@ -70,7 +70,7 @@ export default function ChildSafetyStandardsPage() {
       body: (
         <>
           <Text style={styles.paragraph}>
-            If you encounter content or behaviour on Mems that you believe
+            If you encounter content or behaviour on Picture Board that you believe
             violates this policy, you can report it directly from within the app
             or by contacting us:
           </Text>
@@ -78,7 +78,7 @@ export default function ChildSafetyStandardsPage() {
             <View style={styles.bulletDot} />
             <Text style={styles.bulletText}>
               In-app: open the profile menu in the top right corner of the app
-              and select "About Mems", then use the contact link provided to
+              and select "About Picture Board", then use the contact link provided to
               reach our support team
             </Text>
           </View>
@@ -95,7 +95,7 @@ export default function ChildSafetyStandardsPage() {
             </Text>
           </View>
           <Text style={[styles.paragraph, { marginTop: 8 }]}>
-            All reports are reviewed promptly. You do not need a Mems account to
+            All reports are reviewed promptly. You do not need a Picture Board account to
             submit a report.
           </Text>
         </>
@@ -106,7 +106,7 @@ export default function ChildSafetyStandardsPage() {
       body: (
         <>
           <Text style={styles.paragraph}>
-            When we obtain actual knowledge of CSAM or CSAE activity on Mems, we
+            When we obtain actual knowledge of CSAM or CSAE activity on Picture Board, we
             take immediate action in accordance with these published standards
             and applicable law, including:
           </Text>
@@ -129,7 +129,7 @@ export default function ChildSafetyStandardsPage() {
       title: "Compliance with child safety laws",
       body: (
         <Text style={styles.paragraph}>
-          Mems complies with all applicable child safety laws in the
+          Picture Board complies with all applicable child safety laws in the
           jurisdictions in which it operates, including obligations to report
           apparent CSAM to designated authorities such as NCMEC's CyberTipline
           where legally required. These standards are informed by and consistent
@@ -142,7 +142,7 @@ export default function ChildSafetyStandardsPage() {
       title: "Child safety point of contact",
       body: (
         <Text style={styles.paragraph}>
-          For matters relating to Mems' child safety practices and compliance
+          For matters relating to Picture Board's child safety practices and compliance
           with this policy, our designated point of contact can be reached at{" "}
           <Text
             style={styles.link}
@@ -177,7 +177,7 @@ export default function ChildSafetyStandardsPage() {
         <View style={[styles.card, IS_DESKTOP && styles.cardDesktop]}>
           <Text style={styles.icon}>🛡️</Text>
           <Text style={styles.title}>
-            Mems' Standards Against Child Sexual{"\n"}Abuse and Exploitation
+            Picture Board's Standards Against Child Sexual{"\n"}Abuse and Exploitation
           </Text>
           <Text style={styles.sub}>Last updated {LAST_UPDATED}</Text>
 
@@ -196,7 +196,7 @@ export default function ChildSafetyStandardsPage() {
             />
             <Text style={styles.footerNoteText}>
               This page is publicly accessible without signing in and may be
-              referenced as Mems' externally published standards against CSAE,
+              referenced as Picture Board's externally published standards against CSAE,
               as required under Google Play's Child Safety Standards policy.
             </Text>
           </View>
@@ -206,7 +206,7 @@ export default function ChildSafetyStandardsPage() {
             onPress={() => Linking.openURL(`mailto:${SUPPORT_EMAIL}`)}
           >
             <Ionicons name="mail-outline" size={16} color="#fff" />
-            <Text style={styles.contactButtonText}>Contact Mems Support</Text>
+            <Text style={styles.contactButtonText}>Contact Picture Board Support</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>

@@ -234,3 +234,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/report-content/deno.json"
 entrypoint = "./functions/report-content/index.ts"
+
+[functions.report-app-content]
+enabled = true
+verify_jwt = false
+import_map = "./functions/report-app-content/deno.json"
+entrypoint = "./functions/report-app-content/index.ts"

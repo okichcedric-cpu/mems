@@ -144,7 +144,7 @@ serve(async (req) => {
     }
     keys.sort();
 
-    // A listing taken down by Mems can't be republished by the seller.
+    // A listing taken down by Picture Board can't be republished by the seller.
     const { data: existingListing } = await supabase
       .from("listings")
       .select("status")
@@ -153,7 +153,7 @@ serve(async (req) => {
       .maybeSingle();
     if (existingListing?.status === "removed") {
       return json({
-        error: "This listing was removed by Mems. Contact contact@mems-app.com for details.",
+        error: "This listing was removed by Picture Board. Contact contact@mems-app.com for details.",
       }, 403);
     }
 

@@ -43,7 +43,7 @@ serve(async (req) => {
     // ── Auth check ────────────────────────────────────────────────
     // Without this, anyone holding the (public) anon key could call this
     // function directly and use it as an open relay to send arbitrary
-    // "Mems" branded email to any address.
+    // "Picture Board" branded email to any address.
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -179,39 +179,39 @@ serve(async (req) => {
       ? `
 Hi,
 
-${ownerEmail} has shared ${photoCountLabel} with you on Mems, from their "${collectionName}" album.
+${ownerEmail} has shared ${photoCountLabel} with you on Picture Board, from their "${collectionName}" album.
 
 View them on the web at https://www.mems-app.com, or get the Android app on Google Play: ${PLAY_STORE_URL}
 
-You received this email because someone shared Mems photos with your email address.
+You received this email because someone shared Picture Board photos with your email address.
 If you did not expect this, you can safely ignore it.
 
-— The Mems Team
+— The Picture Board Team
         `.trim()
       : isPhotoShare
         ? `
 Hi,
 
-${ownerEmail} has shared a photo with you on Mems, from their "${collectionName}" album.
+${ownerEmail} has shared a photo with you on Picture Board, from their "${collectionName}" album.
 
 View it on the web at https://www.mems-app.com, or get the Android app on Google Play: ${PLAY_STORE_URL}
 
-You received this email because someone shared a Mems photo with your email address.
+You received this email because someone shared a Picture Board photo with your email address.
 If you did not expect this, you can safely ignore it.
 
-— The Mems Team
+— The Picture Board Team
         `.trim()
         : `
 Hi,
 
-${ownerEmail} has shared a photo collection called "${collectionName}" with you on Mems.
+${ownerEmail} has shared a photo collection called "${collectionName}" with you on Picture Board.
 
 View it on the web at https://www.mems-app.com, or get the Android app on Google Play: ${PLAY_STORE_URL}
 
-You received this email because someone shared a Mems collection with your email address.
+You received this email because someone shared a Picture Board collection with your email address.
 If you did not expect this, you can safely ignore it.
 
-— The Mems Team
+— The Picture Board Team
         `.trim();
 
     const introLine = isBatchPhotoShare
@@ -227,14 +227,14 @@ If you did not expect this, you can safely ignore it.
         ? "View Photo →"
         : "View Collection →";
     // A full noun phrase rather than just a pluralizable word — "shared a
-    // Mems photos with you" reads wrong, so the article has to change
-    // along with the noun ("a Mems photo" / "Mems photos" / "a Mems
+    // Picture Board photos with you" reads wrong, so the article has to change
+    // along with the noun ("a Picture Board photo" / "Picture Board photos" / "a Picture Board
     // collection"), not just its ending.
     const footerNounPhrase = isBatchPhotoShare
-      ? "Mems photos"
+      ? "Picture Board photos"
       : isPhotoShare
-        ? "a Mems photo"
-        : "a Mems collection";
+        ? "a Picture Board photo"
+        : "a Picture Board collection";
 
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -244,7 +244,7 @@ If you did not expect this, you can safely ignore it.
       },
       body: JSON.stringify({
         // ── Use your verified domain address ──
-        from: "Mems <contact@mems-app.com>",
+        from: "Picture Board <contact@mems-app.com>",
 
         // ── Reply-To gives recipients a real address to respond to ──
         reply_to: "contact@mems-app.com",
@@ -274,7 +274,7 @@ If you did not expect this, you can safely ignore it.
           <tr>
             <td style="background:#111111;padding:28px 32px;text-align:center;">
               <p style="margin:0;font-size:28px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">
-                Mems
+                Picture Board
               </p>
               <p style="margin:6px 0 0;font-size:13px;color:rgba(255,255,255,0.6);font-style:italic;">
                 Your life's best moments, all in one place.

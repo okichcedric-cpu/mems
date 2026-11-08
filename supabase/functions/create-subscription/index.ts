@@ -106,7 +106,7 @@ serve(async (req) => {
 
     // Merchant reference encodes tier + partial user ID for webhook fallback
     const merchantReference =
-      `MEMS-${tier.toUpperCase()}-${user.id.replace(/-/g, "").slice(0, 8)}-${Date.now()}`;
+      `PB-${tier.toUpperCase()}-${user.id.replace(/-/g, "").slice(0, 8)}-${Date.now()}`;
 
     const token = await getPesapalToken();
 
@@ -130,7 +130,7 @@ serve(async (req) => {
 
     // Use the full email as the name on the Pesapal payment screen
     // last_name accepts empty string — not required by Pesapal API
-    const firstName = user.email ?? "Mems User";
+    const firstName = user.email ?? "Picture Board User";
     const lastName = "";
 
     // Submit order to Pesapal
@@ -147,7 +147,7 @@ serve(async (req) => {
           id: merchantReference,
           currency: "KES",
           amount: tierConfig.amount,
-          description: `Mems ${tierConfig.label} — Monthly subscription`,
+          description: `Picture Board ${tierConfig.label} — Monthly subscription`,
           callback_url: callbackUrl,
           notification_id: ipnId,
           billing_address: {

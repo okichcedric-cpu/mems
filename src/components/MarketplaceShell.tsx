@@ -77,7 +77,7 @@ export default function MarketplaceShell({
           onPress={() => router.push("/marketplace" as any)}
         >
           <RNImage
-            source={require("@/assets/images/icon.png")}
+            source={require("@/assets/images/logo.png")}
             style={styles.headerLogo}
             resizeMode="contain"
           />
@@ -207,7 +207,7 @@ const styles = StyleSheet.create({
   },
   headerSide: { flex: 1, flexDirection: "row", alignItems: "center", gap: 6 },
   headerCenter: { alignItems: "center", justifyContent: "center" },
-  headerLogo: { height: 40, width: 40 },
+  headerLogo: { height: 56, width: 48 },
   iconButton: {
     width: 40,
     height: 40,

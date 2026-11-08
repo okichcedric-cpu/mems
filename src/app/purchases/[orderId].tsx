@@ -1,3 +1,4 @@
+import PushPin from "../../components/PushPin";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
@@ -77,6 +78,7 @@ export default function PurchasedCollection() {
                 activeOpacity={0.9}
                 onPress={() => open(p.url)}
               >
+        <PushPin />
                 <View style={polaroid.card}>
                   <View style={styles.photoBox}>
                     {(p.thumbUrl || p.url) && (

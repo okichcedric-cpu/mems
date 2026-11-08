@@ -12,7 +12,7 @@ export default function MarketplaceOffer() {
       <View style={styles.card}>
         <Text style={styles.title}>Want to sell your photography?</Text>
         <Text style={styles.body}>
-          Set up a marketplace account to sell your collections on Mems. Buyers
+          Set up a marketplace account to sell your collections on Picture Board. Buyers
           get instant access when they pay. You can also do this later from your
           profile menu.
         </Text>

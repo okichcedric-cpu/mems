@@ -4,9 +4,9 @@ import { type PropsWithChildren } from "react";
 // ── Root HTML document (web only)
 const SITE_URL = "https://www.mems-app.com";
 const OG_IMAGE_URL = `${SITE_URL}/og-image.jpg`;
-const TITLE = "Mems – Your Digital Album for Life's Most Precious Moments";
+const TITLE = "Picture Board – Got a memory? Pin it, frame it, and pass it on.";
 const DESCRIPTION =
-  "Keep your memories safe, beautifully organised, and shared with the people who matter most.";
+  "Got a memory? Pin it, frame it, and pass it on.";
 
 export default function Root({ children }: PropsWithChildren) {
   return (
@@ -25,7 +25,7 @@ export default function Root({ children }: PropsWithChildren) {
 
         {/* ── Open Graph — WhatsApp, iMessage, Slack, Facebook, etc. ── */}
         <meta property="og:type" content="website" />
-        <meta property="og:site_name" content="Mems" />
+        <meta property="og:site_name" content="Picture Board" />
         <meta property="og:url" content={SITE_URL} />
         <meta property="og:title" content={TITLE} />
         <meta property="og:description" content={DESCRIPTION} />
@@ -34,7 +34,7 @@ export default function Root({ children }: PropsWithChildren) {
         <meta property="og:image:height" content="630" />
         <meta
           property="og:image:alt"
-          content="Mems — your digital photo album"
+          content="Picture Board — Got a memory? Pin it, frame it, and pass it on."
         />
 
         {/* ── Twitter/X card — reads og:image/og:title on its own, but

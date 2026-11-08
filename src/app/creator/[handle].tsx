@@ -25,7 +25,7 @@ export default function CreatorPage() {
 
   if (creator === undefined) {
     return (
-      <MarketplaceShell title="Mems Marketplace">
+      <MarketplaceShell title="Picture Board Marketplace">
         <ActivityIndicator color="#111" style={{ marginTop: 40 }} />
       </MarketplaceShell>
     );
@@ -43,7 +43,7 @@ export default function CreatorPage() {
   }
 
   return (
-    <MarketplaceShell title={`${creator.displayName} · Mems Marketplace`}>
+    <MarketplaceShell title={`${creator.displayName} · Picture Board Marketplace`}>
       <View style={polaroid.wrapper}>
         <View style={[polaroid.card, styles.profileCard]}>
           <Text style={t.heading}>{creator.displayName}</Text>

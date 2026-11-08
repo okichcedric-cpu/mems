@@ -1,3 +1,4 @@
+import AppReportModal from "../../components/AppReportModal";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
@@ -61,6 +62,7 @@ const DOTS_WINDOW_WIDTH = DOTS_VISIBLE * DOT_STRIDE;
 // how a photo, its flip, and its caption behave is the same component.
 export default function SharedPhotoGroupScreen() {
   const router = useRouter();
+  const [showReport, setShowReport] = useState(false);
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     key?: string;
@@ -325,6 +327,17 @@ export default function SharedPhotoGroupScreen() {
                 only the visible Text glyphs would seem interactive, but
                 the invisible rest of the row still intercepts touches by
                 default. */}
+            {Platform.OS !== "web" && (
+              <TouchableOpacity
+                style={styles.fullScreenReport}
+                onPress={() => setShowReport(true)}
+                hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+                accessibilityLabel="Report this photo"
+              >
+                <Ionicons name="flag-outline" size={22} color="#fff" />
+              </TouchableOpacity>
+            )}
+
             <View style={styles.fullScreenCounter} pointerEvents="none">
               <Text style={styles.fullScreenCounterText}>
                 {selectedPhotoIndex + 1} / {photos.length}
@@ -361,6 +374,15 @@ export default function SharedPhotoGroupScreen() {
             )}
           </View>
         </>
+      )}
+      {Platform.OS !== "web" && (
+        <AppReportModal
+          visible={showReport}
+          onClose={() => setShowReport(false)}
+          context="photo"
+          ownerId={ownerId}
+          collectionName={collectionName}
+        />
       )}
     </AlbumBackground>
   );
@@ -399,6 +421,17 @@ const styles = StyleSheet.create({
     bottom: 0,
     zIndex: 100,
     pointerEvents: "box-none" as any,
+  },
+  fullScreenReport: {
+    position: "absolute",
+    top: Platform.OS === "web" ? 20 : 52,
+    left: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   fullScreenClose: {
     position: "absolute",

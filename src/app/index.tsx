@@ -34,6 +34,7 @@ import { unregisterPushToken } from "../utils/pushNotifications";
 import { getMemoryDateInfo } from "../utils/memoryDate";
 import { deleteCollection } from "../utils/s3";
 import { marketplaceOrigin } from "../utils/host";
+import AppReportModal from "../components/AppReportModal";
 import { fetchPurchaseSummaries, type PurchaseSummary } from "../utils/orders";
 import { getSharedPhotos, type SharedPhoto } from "../utils/sharedPhotos";
 import { getSharedCollections } from "../utils/sharing";
@@ -619,6 +620,7 @@ export default function CollectionsPage() {
   }
 
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showAppReport, setShowAppReport] = useState(false);
 
   // Bought collections sit in the same grid as owned and shared ones.
   // Merged at render time (not stored in `collections`) so the versioned
@@ -825,7 +827,7 @@ export default function CollectionsPage() {
           onPress={() => router.replace("/")}
         >
           <RNImage
-            source={require("@/assets/images/icon.png")}
+            source={require("@/assets/images/logo.png")}
             style={styles.headerLogo}
             resizeMode="contain"
           />
@@ -875,7 +877,7 @@ export default function CollectionsPage() {
                 size={18}
                 color="#333"
               />
-              <Text style={styles.profileMenuItemText}>About Mems</Text>
+              <Text style={styles.profileMenuItemText}>About Picture Board</Text>
             </TouchableOpacity>
 
             <View style={styles.profileMenuDivider} />
@@ -909,6 +911,23 @@ export default function CollectionsPage() {
 
                 <View style={styles.profileMenuDivider} />
 
+              </>
+            )}
+
+            {Platform.OS !== "web" && (
+              <>
+                <TouchableOpacity
+                  style={styles.profileMenuItem}
+                  onPress={() => {
+                    setShowProfileMenu(false);
+                    setShowAppReport(true);
+                  }}
+                >
+                  <Ionicons name="flag-outline" size={18} color="#333" />
+                  <Text style={styles.profileMenuItemText}>Report or send feedback</Text>
+                </TouchableOpacity>
+
+                <View style={styles.profileMenuDivider} />
               </>
             )}
 
@@ -1055,6 +1074,13 @@ export default function CollectionsPage() {
           </ScrollView>
         )}
       </Animated.View>
+      {Platform.OS !== "web" && (
+        <AppReportModal
+          visible={showAppReport}
+          onClose={() => setShowAppReport(false)}
+          context="general"
+        />
+      )}
     </View>
   );
 }
@@ -1147,8 +1173,8 @@ const styles = StyleSheet.create({
     marginVertical: 2,
   },
   headerLogo: {
-    height: Platform.OS === "web" ? 40 : SCREEN_WIDTH * 0.12,
-    width: Platform.OS === "web" ? 40 : SCREEN_WIDTH * 0.12,
+    height: Platform.OS === "web" ? 56 : 60,
+    width: Platform.OS === "web" ? 48 : 51,
     resizeMode: "contain",
   },
   iconButton: {

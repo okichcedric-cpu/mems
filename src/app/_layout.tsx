@@ -245,7 +245,7 @@ function RootLayoutNav() {
       // Pesapal redirects back to mems://subscription-callback inside
       // the in-app browser that PaywallModal opened via
       // WebBrowser.openBrowserAsync(). The OS intercepts that custom
-      // scheme with its own "Open in Mems?" prompt and, on confirming,
+      // scheme with its own "Open in Picture Board?" prompt and, on confirming,
       // fires this very listener — while PaywallModal is STILL awaiting
       // that openBrowserAsync() call to resolve.
       //

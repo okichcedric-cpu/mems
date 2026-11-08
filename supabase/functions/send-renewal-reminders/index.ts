@@ -104,7 +104,7 @@ serve(async (req) => {
 
         // Generate a fresh payment link for renewal
         const merchantReference =
-          `MEMS-${sub.tier.toUpperCase()}-${sub.user_id.replace(/-/g, "").slice(0, 8)}-${Date.now()}`;
+          `PB-${sub.tier.toUpperCase()}-${sub.user_id.replace(/-/g, "").slice(0, 8)}-${Date.now()}`;
 
         const callbackUrl = `${Deno.env.get("SUPABASE_URL")?.replace("supabase.co/", "")}mems-app.com/subscription-callback`;
 
@@ -137,12 +137,12 @@ serve(async (req) => {
               id: merchantReference,
               currency: "KES",
               amount: tierConfig.amount,
-              description: `Mems ${tierConfig.label} — Monthly renewal`,
+              description: `Picture Board ${tierConfig.label} — Monthly renewal`,
               callback_url: "https://mems-app.com/subscription-callback",
               notification_id: ipnData.ipn_id,
               billing_address: {
                 email_address: user.email,
-                first_name: "Mems",
+                first_name: "Picture Board",
                 last_name: "User",
               },
             }),
@@ -181,14 +181,14 @@ serve(async (req) => {
             Authorization: `Bearer ${Deno.env.get("RESEND_API_KEY")}`,
           },
           body: JSON.stringify({
-            from: "Mems <noreply@mems-app.com>",
+            from: "Picture Board <noreply@mems-app.com>",
             reply_to: "support@mems-app.com",
             to: [user.email],
-            subject: `Your Mems ${tierConfig.label} plan renews on ${formatDate(sub.current_period_end)}`,
+            subject: `Your Picture Board ${tierConfig.label} plan renews on ${formatDate(sub.current_period_end)}`,
             text: `
 Hi,
 
-Your Mems ${tierConfig.label} subscription expires on ${formatDate(sub.current_period_end)}.
+Your Picture Board ${tierConfig.label} subscription expires on ${formatDate(sub.current_period_end)}.
 
 To keep your collections and photos safe, renew your plan:
 
@@ -199,7 +199,7 @@ Amount: KES ${tierConfig.amount}/month
 
 If you choose not to renew, your account will move to the free plan (3 collections, 10 photos each). Your existing photos will remain safe.
 
-— The Mems Team
+— The Picture Board Team
             `.trim(),
             html: `
 <!DOCTYPE html>
@@ -211,7 +211,7 @@ If you choose not to renew, your account will move to the free plan (3 collectio
       <table width="560" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:16px;overflow:hidden;max-width:560px;width:100%;">
         <tr>
           <td style="background:#111;padding:28px 32px;text-align:center;">
-            <p style="margin:0;font-size:28px;font-weight:800;color:#fff;letter-spacing:-0.5px;">Mems</p>
+            <p style="margin:0;font-size:28px;font-weight:800;color:#fff;letter-spacing:-0.5px;">Picture Board</p>
             <p style="margin:6px 0 0;font-size:13px;color:rgba(255,255,255,0.6);font-style:italic;">Your life's best moments, all in one place.</p>
           </td>
         </tr>
@@ -245,7 +245,7 @@ If you choose not to renew, your account will move to the free plan (3 collectio
         <tr>
           <td style="background:#f9f9f9;padding:20px 32px;border-top:1px solid #eee;">
             <p style="margin:0;font-size:12px;color:#bbb;line-height:18px;text-align:center;">
-              You're receiving this because you have a Mems subscription.<br/>
+              You're receiving this because you have a Picture Board subscription.<br/>
               <a href="https://mems-app.com" style="color:#999;">mems-app.com</a>
             </p>
           </td>

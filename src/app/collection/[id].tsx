@@ -1,3 +1,5 @@
+import PushPin from "../../components/PushPin";
+import AppReportModal from "../../components/AppReportModal";
 import { Ionicons } from "@expo/vector-icons";
 import { Session } from "@supabase/supabase-js";
 import * as Sentry from "@sentry/react-native";
@@ -214,6 +216,7 @@ export default function CollectionPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [showSellModal, setShowSellModal] = useState(false);
+  const [showReport, setShowReport] = useState(false);
   // True only for users who have created (or converted to) a marketplace
   // account; the sell option stays hidden for everyone else.
   const [isSeller, setIsSeller] = useState(false);
@@ -929,7 +932,7 @@ export default function CollectionPage() {
       showToast(
         `This collection has reached the ${maxPhotos} photo limit.`,
         "📸",
-        "Subscribe to Mems to add more photos.",
+        "Subscribe to Picture Board to add more photos.",
         true,
       );
       return;
@@ -1493,6 +1496,7 @@ export default function CollectionPage() {
         delayLongPress={350}
         activeOpacity={0.88}
       >
+        <PushPin />
         {/* Polaroid card */}
         <View
           style={[
@@ -1680,6 +1684,17 @@ export default function CollectionPage() {
                   <Ionicons name="add" size={22} color="#fff" />
                 )}
               </TouchableOpacity>
+
+              {!isOwner && Platform.OS !== "web" && (
+                <TouchableOpacity
+                  style={styles.iconButton}
+                  onPress={() => setShowReport(true)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityLabel="Report this collection"
+                >
+                  <Ionicons name="flag-outline" size={22} color="#111" />
+                </TouchableOpacity>
+              )}
 
               {isOwner && (
                 <TouchableOpacity
@@ -2953,6 +2968,15 @@ export default function CollectionPage() {
         completed={uploadProgress.completed}
         label="Uploading photos"
       />
+      {!isOwner && Platform.OS !== "web" && (
+        <AppReportModal
+          visible={showReport}
+          onClose={() => setShowReport(false)}
+          context="collection"
+          ownerId={effectiveOwnerId}
+          collectionName={collectionName}
+        />
+      )}
       {isOwner && isSeller && showSellModal && (
         <SellCollectionModal
           visible={showSellModal}

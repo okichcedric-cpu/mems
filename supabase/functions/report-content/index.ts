@@ -180,7 +180,7 @@ serve(async (req) => {
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          from: Deno.env.get("MARKETPLACE_EMAIL_FROM") ?? "Mems <hello@mems-app.com>",
+          from: Deno.env.get("MARKETPLACE_EMAIL_FROM") ?? "Picture Board <hello@mems-app.com>",
           to: Deno.env.get("REPORTS_TO") ?? "contact@mems-app.com",
           subject: `${autoHidden ? "[URGENT] " : ""}Marketplace report: ${REASONS[reason]} — ${listing.title}`.slice(0, 200),
           html,

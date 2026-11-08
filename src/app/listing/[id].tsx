@@ -1,3 +1,4 @@
+import PushPin from "../../components/PushPin";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -111,7 +112,7 @@ export default function ListingPage() {
 
   if (listing === undefined) {
     return (
-      <MarketplaceShell title="Mems Marketplace">
+      <MarketplaceShell title="Picture Board Marketplace">
         <ActivityIndicator color="#111" style={{ marginTop: 40 }} />
       </MarketplaceShell>
     );
@@ -133,7 +134,7 @@ export default function ListingPage() {
   const hidden = listing.photoCount - listing.previewCount;
 
   return (
-    <MarketplaceShell title={`${listing.title} · Mems Marketplace`}>
+    <MarketplaceShell title={`${listing.title} · Picture Board Marketplace`}>
       <Text style={t.heading}>{listing.title}</Text>
       <TouchableOpacity onPress={() => router.push(`/creator/${listing.seller.handle}` as any)}>
         <Text style={t.link}>by {listing.seller.displayName}</Text>
@@ -200,13 +201,14 @@ export default function ListingPage() {
           <View key={ci} style={{ flex: 1, gap: 16 }}>
             {col.map(({ uri, idx }) => (
               <View key={idx} style={polaroid.wrapper}>
+        <PushPin />
                 <View style={polaroid.card}>
                   <View style={styles.photoBox}>
                     {uri && <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" />}
-                    {/* Watermark: tiled "Mems Marketplace" across the preview.
+                    {/* Watermark: tiled "Picture Board Marketplace" across the preview.
                         Pointer events off so it never blocks the page. */}
                     <View style={styles.watermark} pointerEvents="none">
-                      <Text style={styles.watermarkText}>Mems Marketplace</Text>
+                      <Text style={styles.watermarkText}>Picture Board Marketplace</Text>
                     </View>
                   </View>
                   <View style={styles.photoFooter}>

@@ -52,7 +52,7 @@ function escapeHtml(s: string): string {
 async function sendEmail(to: string, subject: string, html: string) {
   const key = Deno.env.get("RESEND_API_KEY");
   if (!key) return;
-  const from = Deno.env.get("MARKETPLACE_EMAIL_FROM") ?? "Mems <hello@mems-app.com>";
+  const from = Deno.env.get("MARKETPLACE_EMAIL_FROM") ?? "Picture Board <hello@mems-app.com>";
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },

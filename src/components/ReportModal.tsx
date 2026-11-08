@@ -12,7 +12,7 @@ import {
 import { useAuth } from "../contexts/AuthContext";
 import { REPORT_REASONS, reportListing } from "../utils/listings";
 
-// "Report" dialog for marketplace content. Reports are emailed to the Mems
+// "Report" dialog for marketplace content. Reports are emailed to the Picture Board
 // team (contact@mems-app.com) by the report-content function.
 export default function ReportModal({
   visible,
@@ -85,7 +85,7 @@ export default function ReportModal({
           {sent ? (
             <View style={{ gap: 14 }}>
               <Text style={styles.body}>
-                Thank you. Your report has been sent to the Mems team and we'll review it.
+                Thank you. Your report has been sent to the Picture Board team and we'll review it.
               </Text>
               <TouchableOpacity style={styles.primary} onPress={close}>
                 <Text style={styles.primaryText}>Done</Text>

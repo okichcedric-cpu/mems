@@ -1,3 +1,4 @@
+import PushPin from "../components/PushPin";
 import { AntDesign } from "@expo/vector-icons";
 import { makeRedirectUri } from "expo-auth-session";
 import { useRouter } from "expo-router";
@@ -226,6 +227,7 @@ function DesktopHeroPanel() {
           },
         ]}
       >
+        <PushPin size={16} top={-6} />
         <View style={[heroStyles.polaroidCard, { width: size }]}>
           <Image
             source={photo.source}
@@ -243,11 +245,11 @@ function DesktopHeroPanel() {
       {/* ── Logo row — no banner, just clean on white ── */}
       <View style={heroStyles.logoRow}>
         <Image
-          source={require("@/assets/images/icon.png")}
+          source={require("@/assets/images/logo.png")}
           style={heroStyles.logoIcon}
           resizeMode="contain"
         />
-        <Text style={heroStyles.logoName}>Mems</Text>
+        <Text style={heroStyles.logoName}>Picture Board</Text>
       </View>
 
       {/* ── Top row — two photos side by side ── */}
@@ -279,7 +281,7 @@ function DesktopHeroPanel() {
         {/* Text block — centred between the two flanking photos */}
         <View style={heroStyles.textBlock}>
           <Text style={heroStyles.headline}>
-            Your Digital Album{"\n"}for Life's Most{"\n"}Precious Moments
+            Got a memory?{"\n"}Pin it, frame it,{"\n"}and pass it on.
           </Text>
           <View style={heroStyles.accentLine} />
           <Text style={heroStyles.sub}>
@@ -606,12 +608,12 @@ export default function LoginScreen() {
       {!IS_DESKTOP && (
         <View style={styles.mobileLogoContainer}>
           <Image
-            source={require("@/assets/images/icon.png")}
+            source={require("@/assets/images/logo.png")}
             style={styles.mobileLogo}
             resizeMode="contain"
           />
           <Text style={styles.mobileTagline}>
-            Your life's best moments,{"\n"}all in one place.
+            Got a memory? Pin it, frame it,{"\n"}and pass it on.
           </Text>
           <View style={[styles.sectionDivider, { width: FORM_WIDTH }]} />
         </View>
@@ -636,7 +638,7 @@ export default function LoginScreen() {
           activeOpacity={0.75}
         >
           <Text style={styles.quickLinkIcon}>✦</Text>
-          <Text style={styles.quickLinkText}>What is Mems?</Text>
+          <Text style={styles.quickLinkText}>What is Picture Board?</Text>
         </TouchableOpacity>
 
         <View style={styles.quickLinkDivider} />
@@ -889,8 +891,8 @@ const heroStyles = StyleSheet.create({
     marginBottom: 8,
   },
   logoIcon: {
-    width: 42,
-    height: 42,
+    width: 56,
+    height: 64,
     borderRadius: 0,
   },
   logoName: {

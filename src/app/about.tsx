@@ -38,13 +38,13 @@ export default function AboutPage() {
           {/* Hero */}
           <View style={styles.hero}>
             <Image
-              source={require("@/assets/images/icon.png")}
+              source={require("@/assets/images/logo.png")}
               style={styles.heroLogo}
               resizeMode="contain"
             />
-            <Text style={styles.heroTitle}>Mems</Text>
+            <Text style={styles.heroTitle}>Picture Board</Text>
             <Text style={styles.heroTagline}>
-              Your Digital Album for Life's Best Moments
+              Got a memory? Pin it, frame it, and pass it on.
             </Text>
           </View>
 
@@ -87,9 +87,9 @@ export default function AboutPage() {
           {/* Solution section */}
           <View style={styles.section}>
             <Text style={styles.sectionEmoji}>✨</Text>
-            <Text style={styles.sectionTitle}>Mems Brings the Album Back</Text>
+            <Text style={styles.sectionTitle}>Picture Board Brings the Album Back</Text>
             <Text style={styles.sectionBody}>
-              Mems is a modern take on the photo album you grew up with; Simple,
+              Picture Board is a modern take on the photo album you grew up with; Simple,
               Beautiful, and built to last. Create a collection for any chapter
               of your life. A holiday. A wedding. The first year of a child's
               life. Your grandmother's 80th birthday.
@@ -97,7 +97,7 @@ export default function AboutPage() {
             <Text style={styles.sectionBody}>
               Then share it with the people who were there. Not a link that will
               expire. Not a download they'll forget to open. A shared album that
-              lives on their Mems too, always there when they want to remember.
+              lives on their Picture Board too, always there when they want to remember.
             </Text>
           </View>
 
@@ -109,7 +109,7 @@ export default function AboutPage() {
             </Text>
             <Text style={styles.sectionBody}>
               The photos you take today are the history your children and
-              grandchildren will look back to. Mems is built with that in mind.
+              grandchildren will look back to. Picture Board is built with that in mind.
               Your collections are stored securely in the cloud, accessible
               across devices, not just tied to a device that can break, a phone
               that can be stolen, or a hard drive that can get lost.

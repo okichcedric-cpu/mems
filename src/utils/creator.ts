@@ -112,6 +112,22 @@ export async function listCreators(limit = 60): Promise<CreatorProfile[]> {
   return (data as Row[]).map(fromRow);
 }
 
+// Live seller search by display name or handle (case-insensitive, partial).
+export async function searchCreators(term: string, limit = 30): Promise<CreatorProfile[]> {
+  // Strip characters that have special meaning in PostgREST filters/LIKE.
+  const clean = term.trim().replace(/^@/, "").replace(/[%*_,()"'\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 60);
+  if (clean.length === 0) return [];
+  const { data, error } = await supabase
+    .from("creator_profiles")
+    .select("user_id, handle, display_name, bio, status")
+    .eq("status", "active")
+    .or(`display_name.ilike.%${clean}%,handle.ilike.%${clean}%`)
+    .order("display_name", { ascending: true })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  return (data as Row[]).map(fromRow);
+}
+
 // ── Write ────────────────────────────────────────────────────────────────
 // Creates or updates the signed-in user's profile. Throws an Error whose
 // message is safe to show directly to the user.

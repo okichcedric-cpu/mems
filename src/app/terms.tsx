@@ -46,7 +46,7 @@ export default function TermsOfService() {
           {/* Intro */}
           <View style={styles.introCard}>
             <Text style={styles.introText}>
-              By using Mems, you're agreeing to these terms. We've written them
+              By using Picture Board, you're agreeing to these terms. We've written them
               in plain language because we believe the people who use our app
               deserve to understand what they're agreeing to.
             </Text>
@@ -57,12 +57,12 @@ export default function TermsOfService() {
             {
               emoji: "👋",
               title: "1. Who We Are",
-              body: "Mems is a digital photo album app that lets you create, store, and share photo collections with the people you love. We're a small team that cares deeply about preserving your memories.",
+              body: "Picture Board is a digital photo album app that lets you create, store, and share photo collections with the people you love. We're a small team that cares deeply about preserving your memories.",
             },
             {
               emoji: "✅",
               title: "2. Accepting These Terms",
-              body: "By creating an account or using Mems in any way, you agree to be bound by these terms. If you don't agree, please don't use the app; though we'd love to know why so we can do better.",
+              body: "By creating an account or using Picture Board in any way, you agree to be bound by these terms. If you don't agree, please don't use the app; though we'd love to know why so we can do better.",
             },
             {
               emoji: "🗂️",
@@ -72,12 +72,12 @@ export default function TermsOfService() {
             {
               emoji: "💳",
               title: "4. Payments",
-              body: "Payments are processed securely by Pesapal and support M-Pesa, Visa, and Mastercard. Mems never stores your card or payment details. All transactions are subject to Pesapal's own terms and conditions.",
+              body: "Payments are processed securely by Pesapal and support M-Pesa, Visa, and Mastercard. Picture Board never stores your card or payment details. All transactions are subject to Pesapal's own terms and conditions.",
             },
             {
               emoji: "📸",
               title: "5. Your Content",
-              body: "Every photo you upload belongs entirely to you. We don't claim ownership of your memories. By uploading content, you grant Mems a licence to store your photos solely to provide the service to you, nothing more.",
+              body: "Every photo you upload belongs entirely to you. We don't claim ownership of your memories. By uploading content, you grant Picture Board a licence to store your photos solely to provide the service to you, nothing more.",
             },
             {
               emoji: "🤝",
@@ -87,17 +87,17 @@ export default function TermsOfService() {
             {
               emoji: "🚫",
               title: "7. What You Cannot Do",
-              body: "You agree not to use Mems to upload or share illegal, harmful, or copyright-infringing content. You may not attempt to reverse engineer the app, scrape data, or use Mems in ways that could harm other users. We reserve the right to suspend accounts that violate these terms.",
+              body: "You agree not to use Picture Board to upload or share illegal, harmful, or copyright-infringing content. You may not attempt to reverse engineer the app, scrape data, or use Picture Board in ways that could harm other users. We reserve the right to suspend accounts that violate these terms.",
             },
             {
               emoji: "⚖️",
               title: "8. Limitation of Liability",
-              body: 'Mems is provided on an "as is" basis. While we work hard to keep your memories safe, we cannot be held liable for any loss of data, loss of revenue, or indirect damages arising from your use of the app. Please back up anything truly irreplaceable.',
+              body: 'Picture Board is provided on an "as is" basis. While we work hard to keep your memories safe, we cannot be held liable for any loss of data, loss of revenue, or indirect damages arising from your use of the app. Please back up anything truly irreplaceable.',
             },
             {
               emoji: "🔄",
               title: "9. Changes to These Terms",
-              body: "We may update these terms as the app grows. When we do, we'll let you know by email or in-app notification. Continuing to use Mems after changes are posted means you accept the updated terms.",
+              body: "We may update these terms as the app grows. When we do, we'll let you know by email or in-app notification. Continuing to use Picture Board after changes are posted means you accept the updated terms.",
             },
             {
               emoji: "📬",

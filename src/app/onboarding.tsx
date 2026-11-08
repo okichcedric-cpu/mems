@@ -69,7 +69,7 @@ const SLIDES: Slide[] = [
   {
     gif: require("@/assets/images/onboarding/onboarding-browse-home-v2.gif"),
     aspectRatio: 1000 / 576,
-    title: "Welcome to Mems",
+    title: "Welcome to Picture Board",
     body: "Your memories, organised into beautiful collections you can revisit any time.",
   },
   {

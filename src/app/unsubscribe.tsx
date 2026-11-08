@@ -47,7 +47,7 @@ export default function UnsubscribePage() {
   return (
     <View style={styles.container}>
       <View style={styles.card}>
-        <Text style={styles.logo}>Mems</Text>
+        <Text style={styles.logo}>Picture Board</Text>
 
         {status === "done" ? (
           <>
@@ -71,7 +71,7 @@ export default function UnsubscribePage() {
             <Text style={styles.title}>Unsubscribe from reminders?</Text>
             <Text style={styles.body}>
               You'll stop getting the reminder email about creating your first
-              collection. You'll still get emails about things you do in Mems,
+              collection. You'll still get emails about things you do in Picture Board,
               like shares and subscription notices.
             </Text>
 
@@ -101,7 +101,7 @@ export default function UnsubscribePage() {
           onPress={() => Linking.openURL("https://www.mems-app.com")}
           style={styles.homeLink}
         >
-          <Text style={styles.homeLinkText}>Go to Mems</Text>
+          <Text style={styles.homeLinkText}>Go to Picture Board</Text>
         </TouchableOpacity>
       </View>
     </View>

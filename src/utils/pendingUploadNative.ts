@@ -4,7 +4,7 @@
 // while the in-app payment browser is open. That's not a rare edge case —
 // aggressively battery-optimized Android skins (MIUI/Xiaomi in particular)
 // are known to reclaim memory from backgrounded apps eagerly, and opening
-// a Custom Tab for Pesapal backgrounds Mems for exactly that kind of
+// a Custom Tab for Pesapal backgrounds Picture Board for exactly that kind of
 // window. When the process gets killed mid-payment, the deep link that
 // brings the user back triggers a cold start rather than resuming the
 // still-running app, so every bit of in-memory React state — selected

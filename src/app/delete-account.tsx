@@ -132,7 +132,7 @@ export default function DeleteAccountPage() {
       >
         <View style={[styles.card, IS_DESKTOP && styles.cardDesktop]}>
           <Text style={styles.icon}>🗑️</Text>
-          <Text style={styles.title}>Delete your Mems account</Text>
+          <Text style={styles.title}>Delete your Picture Board account</Text>
           <Text style={styles.sub}>
             We're sorry to see you go. Before you continue, here's exactly what
             happens when you delete your account.

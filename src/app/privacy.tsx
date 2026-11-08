@@ -46,7 +46,7 @@ export default function PrivacyPolicy() {
           {/* Intro */}
           <View style={styles.introCard}>
             <Text style={styles.introText}>
-              Privacy isn't a legal formality for us, it's a promise. Mems was
+              Privacy isn't a legal formality for us, it's a promise. Picture Board was
               built on the belief that your photos and personal moments deserve
               to be protected. Here's exactly how we do that.
             </Text>
@@ -71,7 +71,7 @@ export default function PrivacyPolicy() {
             {
               emoji: "📖",
               title: "1. Who This Applies To",
-              body: "This policy applies to everyone who uses Mems; on Web, Android, or iOS. By using the app, you agree to the practices explained here.",
+              body: "This policy applies to everyone who uses Picture Board; on Web, Android, or iOS. By using the app, you agree to the practices explained here.",
             },
             {
               emoji: "📦",
@@ -101,12 +101,12 @@ export default function PrivacyPolicy() {
             {
               emoji: "🍪",
               title: "7. Cookies",
-              body: "The Mems web app uses only the cookies required for authentication — nothing more. We don't use advertising cookies, third-party trackers, or any technology designed to follow you around the internet.",
+              body: "The Picture Board web app uses only the cookies required for authentication — nothing more. We don't use advertising cookies, third-party trackers, or any technology designed to follow you around the internet.",
             },
             {
               emoji: "👶",
               title: "8. Children's Privacy",
-              body: "Mems is not designed for or directed at children under 13. We don't knowingly collect personal data from children. If you believe a child has created an account, please contact us immediately and we will remove it.",
+              body: "Picture Board is not designed for or directed at children under 13. We don't knowingly collect personal data from children. If you believe a child has created an account, please contact us immediately and we will remove it.",
             },
             {
               emoji: "🔄",

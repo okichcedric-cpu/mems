@@ -43,14 +43,14 @@ const MAX_NUDGES = 2;
 
 const TITLE = "Every memory deserves a home ❤️";
 const BODY =
-  "Start your first collection on Mems and keep your favourite moments together.";
+  "Start your first collection on Picture Board and keep your favourite moments together.";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 const SITE_URL = "https://www.mems-app.com";
 // A separate address from contact@ (used for share/billing mail) — override
 // with the NUDGE_EMAIL_FROM secret. Any @mems-app.com address works once the
 // domain is verified in Resend.
-const EMAIL_FROM = "Mems <hello@mems-app.com>";
+const EMAIL_FROM = "Picture Board <hello@mems-app.com>";
 const EMAIL_REPLY_TO = "contact@mems-app.com";
 
 const EMAIL_PAGE_SIZE = 100;
@@ -77,10 +77,10 @@ ${BODY}
 
 Create your first collection: ${SITE_URL}
 
-You received this email because you have a Mems account.
+You received this email because you have a Picture Board account.
 Unsubscribe from these reminders: ${unsubscribeUrl}
 ${footerAddress ? `\n${footerAddress}\n` : ""}
-— The Mems Team
+— The Picture Board Team
 `.trim();
 }
 
@@ -103,7 +103,7 @@ function buildEmailHtml(unsubscribeUrl: string, footerAddress: string): string {
 
           <tr>
             <td style="background:#111111;padding:28px 32px;text-align:center;">
-              <p style="margin:0;font-size:28px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">Mems</p>
+              <p style="margin:0;font-size:28px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;">Picture Board</p>
               <p style="margin:6px 0 0;font-size:13px;color:rgba(255,255,255,0.6);font-style:italic;">
                 Your life's best moments, all in one place.
               </p>
@@ -134,7 +134,7 @@ function buildEmailHtml(unsubscribeUrl: string, footerAddress: string): string {
           <tr>
             <td style="background:#f9f9f9;padding:20px 32px;border-top:1px solid #eeeeee;">
               <p style="margin:0;font-size:12px;color:#bbbbbb;line-height:18px;text-align:center;">
-                You received this email because you have a Mems account.<br/>
+                You received this email because you have a Picture Board account.<br/>
                 <a href="${unsubscribeUrl}" style="color:#999999;">Unsubscribe from these reminders</a><br/><br/>
                 ${addressHtml}<a href="${SITE_URL}" style="color:#999999;">mems-app.com</a>
               </p>

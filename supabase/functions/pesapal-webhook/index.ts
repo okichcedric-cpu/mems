@@ -12,9 +12,9 @@ const PESAPAL_BASE =
     ? "https://cybqa.pesapal.com/pesapalv3"
     : "https://pay.pesapal.com/v3";
 
-// Derive tier from merchant reference e.g. MEMS-MEDIUM-abc123-timestamp
+// Derive tier from merchant reference e.g. PB-MEDIUM-abc123-timestamp (older MEMS- references still accepted)
 function tierFromReference(reference: string): string | null {
-  const match = reference.match(/^MEMS-([A-Z]+)-/);
+  const match = reference.match(/^(?:PB|MEMS)-([A-Z]+)-/);
   if (!match) return null;
   const name = match[1].toLowerCase();
   return ["small", "medium", "big"].includes(name) ? name : null;
@@ -131,7 +131,7 @@ serve(async (req) => {
           tierFromReference(merchantReference) ||
           tierFromAmount(statusData.amount ?? 0);
 
-        // Extract partial user ID from reference: MEMS-SMALL-{userId8chars}-{timestamp}
+        // Extract partial user ID from reference: PB-SMALL-{userId8chars}-{timestamp}
         const refParts = merchantReference.split("-");
         const userIdPrefix = refParts[2] ?? "";
 
